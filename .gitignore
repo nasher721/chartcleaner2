@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+cleaned_charts/
+Clean Medical Chart.app/
+
+.cursor/
+.DS_Store

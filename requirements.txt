@@ -1,0 +1,8 @@
+# Medical chart cleaner — install into a venv (see install.sh)
+pyperclip>=1.8.0
+tqdm>=4.65.0
+thefuzz[speedup]>=0.22.0
+presidio-analyzer>=2.2.33
+presidio-anonymizer>=2.2.33
+# Install the model with pip (avoids `python -m spacy download`, which fails if spaCy cannot find pip/uv)
+en-core-web-sm>=3.8.0,<3.9.0
