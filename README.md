@@ -2,10 +2,14 @@
 
 Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation — now as a **local desktop app** for macOS and Windows, with the original CLI still included.
 
-- **Clean page** — paste or drop a chart, clean it, and inspect a **side-by-side diff**, per-run stats (characters/words/PHI/duration), and a table showing exactly what each cleaning stage did.
+- **Clean page** — paste or drop a chart, clean it, and inspect a **side-by-side diff**, per-run stats (characters/words/PHI/duration), and a table showing exactly what each cleaning stage did. **Drop .docx or .pdf files** — they're converted automatically (Word via the built-in reader or markitdown; PDFs via PyMuPDF with OCR fallback and page header/footer removal).
 - **Post-run review** — after every clean, an audit scans the *surviving* text for leftovers (long digit runs, DOB-style lines, phones/emails, identity labels, Epic chrome) and lists them as review chips, with flagged lines highlighted in the diff and a one-click **Build rule** for any finding.
 - **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever.
+- **Rule packs** — curated rule sets shipped with the app: *HIPAA Safe Harbor (strict)* and *Philter core PHI* (ported from the published UCSF pipeline). Install as a preset or apply directly from the Pipeline page.
+- **Reversible tokenization** — optionally swap PHI for stable `[[T1]]`-style codes instead of deleting it. Value→token maps are saved locally and can restore the original text later (Settings → Token maps, or `clean-chart --untoken`).
 - **Pipeline & Rules page** — every cleaning rule is editable in the app: enable/disable, reorder, add/edit regex patterns (with live match counts against a sample), tune NLP redaction entities and thresholds, tune the review checks, and save any rule set as a named **preset** (import/export as JSON).
+- **Evaluation report card** — generate synthetic charts with known PHI and measure how much your current rules actually catch (per-type recall), right on the Statistics page or with `clean-chart --evaluate`.
+- **Folder watcher** — point it at a folder; every chart file dropped in is cleaned automatically to an output folder (Settings page, or `clean-chart --watch DIR`).
 - **Custom Scripts** — write your own cleaning stage in Python (`clean(text, ctx)`) in the built-in editor; anything is possible: block removal, redactions, restructuring, counters for the stats tracker.
 - **Statistics dashboard** — every run is recorded locally: total characters removed, average reduction, PHI redactions by type, a per-day chart, and **which stages clean the most**.
 - **Config backups** — every rules save keeps a timestamped copy (`data/backups/`, newest 5) with a restore list in Settings.
@@ -41,8 +45,11 @@ The app picks the first free port from 8765 and prints the URL; close the termin
 ```bash
 ./clean-chart                 # macOS/Linux: clipboard in → cleaned out
 clean-chart.cmd               # Windows
-./clean-chart -f chart.txt    # single file  (-d dir for batch, -o out, --no-wrap)
+./clean-chart -f chart.txt    # single file — .txt/.md/.docx/.pdf (-d dir, -o out, --no-wrap)
 ./clean-chart --audit         # also print post-run review findings
+./clean-chart --evaluate 50   # synthetic benchmark: recall report card for current rules
+./clean-chart --watch ~/Inbox/charts   # auto-clean every file dropped in the folder
+./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
 ```
 
 The CLI prints the same per-stage statistics as the app.
@@ -63,9 +70,11 @@ Stages run top-to-bottom (you can reorder them in the app):
 | 6 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs. |
 | 7 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
 | 8 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
-| 9 | Header promotion | Turns known section headers into `## Header`. |
+| 9 | Header promotion | Turns known section headers into `## Header` — or lets medspaCy's sectionizer detect them (`headers_engine: medspacy`). |
 | 10 | Bullet normalization | Normalizes •, *, - bullets. |
 | 11+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
+
+Off by default, between stages 2 and 3: **Reversible tokenization** — swaps structured PHI for stable `[[T1]]` codes (same value ⇒ same token) and saves the value→token map so the text can be restored later.
 
 Output is wrapped in `<patient_chart>…</patient_chart>` unless disabled (Settings page or `--no-wrap`).
 
@@ -113,14 +122,31 @@ def clean(text: str, ctx) -> str:
 
 | Path | Contents |
 |------|----------|
-| `config.json` | Cleaning rules (presets in `presets/`) |
+| `config.json` | Cleaning rules (presets in `presets/`, packs in `chartcleaner/packs/`) |
 | `data/stats.jsonl` | One line per cleaning run — the statistics history |
 | `data/audit_hits.jsonl` | One line per run — which leftover patterns the audit saw |
 | `data/backups/` | Timestamped config backups (newest 5, restorable in Settings) |
+| `data/tokens/` | Reversible-tokenization maps (newest 10) — **these undo your cleaning** |
+| `data/evaluation.json` | The last recall report card from the evaluation harness |
+| `data/watch.json` | Folder-watcher configuration |
 | `data/exports/` | Downloaded results (auto-pruned after 24 h) |
 | `custom_rules/` | Your Python cleaning stages |
 
 Everything stays on this machine. Delete `data/` to reset all history.
+
+---
+
+## Files in, files out (v2.2)
+
+The Clean page upload, batch folders, and `-f` all accept `.txt`, `.md`, `.docx`, and `.pdf`:
+
+- **.docx** — built-in zero-dependency reader; if `markitdown` is installed it is preferred (better tables/headings).
+- **.pdf** — text extracted with PyMuPDF; repeated page headers/footers and stray `#` heading markers are stripped automatically. Scanned PDFs (no text layer) fall back to OCR when `ocrmypdf` is available, and are flagged as needing OCR otherwise.
+- Optional engines (`markitdown`, `docling`, `ocrmypdf`, `medspacy`) are **auto-detected** — install any of them and the Settings page shows them light up. The app works without them.
+
+## The evaluation harness
+
+`--evaluate` (CLI) or the Statistics page generates N synthetic Epic-style charts with *known* planted PHI — names, MRNs, DOBs, phones, emails, SSNs, URLs, addresses, ages > 89 — runs your current rules, and reports **recall**: how many PHI items are actually gone from the output, per type. Missed items are listed so you know exactly which rules to tighten (the shipped packs are a good next step). Deterministic per seed, so scores are comparable over time.
 
 ---
 

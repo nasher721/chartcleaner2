@@ -6,8 +6,17 @@ presidio-analyzer>=2.2.33
 presidio-anonymizer>=2.2.33
 # spaCy models are NOT published to PyPI; install the official wheel directly.
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
-# Local web app UI
-nicegui>=2.14.0,<3.0.0
+# Local web app UI (v2.2 runs on NiceGUI 3.x — ex4nicegui 0.9+ requires it)
+nicegui>=2.14.0,<4.0.0
+# File ingest (.pdf text) + folder watcher (v2.2 ecosystem pack)
+pymupdf>=1.24.0
+watchdog>=4.0.0
+# Optional engines (auto-detected — install any of these for extra power):
+#   markitdown   — advanced Word/PDF conversion
+#   docling      — layout-aware document parsing (large download)
+#   ocrmypdf     — OCR for scanned PDFs (needs the tesseract system package)
+#   medspacy     — clinical section detection for the Header stage
+ex4nicegui>=0.9.0   # reactive live stats; app works without it too
 # Tests (run: python -m pytest from this folder)
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

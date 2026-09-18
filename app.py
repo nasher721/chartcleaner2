@@ -57,6 +57,14 @@ from chartcleaner.engine import (
     save_config,
     validate_config,
 )
+from chartcleaner.ingest import IngestError, converters_status, load_file, supported_extensions
+from chartcleaner import rulepacks
+from chartcleaner import tokens as tokens_mod
+from chartcleaner import watcher as watcher_mod
+from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TEST
+from chartcleaner.benchmark import generate as generate_benchmark
+from chartcleaner.evaluate import evaluate as evaluate_samples
+from chartcleaner.evaluate import load_last_evaluation, save_evaluation
 
 store.ensure_dirs()
 store.seed_frozen_assets()
@@ -73,12 +81,20 @@ CONFIG_PATH = store.CONFIG_PATH
 CUSTOM_DIR = store.CUSTOM_RULES_DIR
 
 PREFS = store.load_prefs()
-CLEAN_STATE: dict = {"input": "", "result": None, "result_text": "", "audit": None}
-AUTO_LAST: dict = {"text": None}
-PIPE_TEST: dict = {"text": (BASE_DIR / "sample_chart.txt").read_text(encoding="utf-8")
-                   if (BASE_DIR / "sample_chart.txt").exists() else ""}
-# Draft rule handed from the Clean page / suggestion cards to the Pipeline editor
-PENDING_RULE: dict = {}
+PIPE_TEST["text"] = (BASE_DIR / "sample_chart.txt").read_text(encoding="utf-8") \
+    if (BASE_DIR / "sample_chart.txt").exists() else ""
+
+# Folder watcher singleton + mirrored config (created by the Settings page)
+WATCHER: dict = {"obj": None}
+WATCHER_CONFIG: dict = store.load_watch_config()
+
+# Optional reactive UI helpers (ex4nicegui); the app works fine without it.
+try:
+    from ex4nicegui.reactive import rxui
+    HAS_EX4 = True
+except Exception:  # pragma: no cover - optional dependency
+    rxui = None
+    HAS_EX4 = False
 
 
 def start_pending_rule(pattern: str, replacement: str | None, stage: str) -> None:
@@ -286,6 +302,14 @@ async def clean_page():
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(source))
+            # persist reversible-token maps produced by the tokenize stage
+            try:
+                for st in result.stages:
+                    tmap = st.details.get("token_map")
+                    if tmap:
+                        store.save_token_map(tmap, source)
+            except Exception:
+                pass  # map saving must never break a run
             try:
                 store.append_audit_hits(f.signature for f in audit.findings)
             except Exception:
@@ -434,16 +458,46 @@ async def clean_page():
 
     async def handle_upload(e) -> None:
         try:
-            text = e.content.read().decode("utf-8", errors="replace")
+            data = e.content.read()
         except Exception as ex:
             ui.notify(f"Could not read {e.name}: {ex}", type="negative")
+            return
+        suffix = Path(e.name).suffix.lower()
+        if suffix not in supported_extensions():
+            ui.notify(f"Unsupported file type '{suffix}'", type="negative")
+            return
+
+        def work() -> tuple[str, str, list[str]]:
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tf:
+                tf.write(data)
+                tmp_path = Path(tf.name)
+            try:
+                ing = load_file(tmp_path, load_config(CONFIG_PATH))
+                return ing.text, ing.engine, ing.warnings
+            finally:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        try:
+            text, engine, warns = await run.io_bound(work)
+        except IngestError as ex:
+            ui.notify(f"Could not ingest {e.name}: {ex}", type="negative")
+            return
+        except Exception as ex:
+            report_error(f"Ingesting {e.name} failed", ex)
             return
         if CLEAN_STATE["input"].strip():
             CLEAN_STATE["input"] += "\n\n===== " + e.name + " =====\n" + text
         else:
             CLEAN_STATE["input"] = text
         input_area.set_value(CLEAN_STATE["input"])
-        ui.notify(f"Loaded {e.name}", type="positive")
+        note = f"Loaded {e.name} via {engine}"
+        if warns:
+            note += " — " + " | ".join(warns[:2])
+        ui.notify(note, type="positive")
 
     async def on_preset_change(e) -> None:
         name = e.value
@@ -467,9 +521,11 @@ async def clean_page():
         if not folder.is_dir():
             ui.notify("Folder not found.", type="negative")
             return
-        files = sorted(folder.glob("*.txt"))
+        exts = set(supported_extensions())
+        files = sorted(f for f in folder.iterdir()
+                       if f.is_file() and f.suffix.lower() in exts)
         if not files:
-            ui.notify("No .txt files in that folder.", type="warning")
+            ui.notify(f"No supported files ({', '.join(sorted(exts))}) in that folder.", type="warning")
             return
         batch_btn.set_enabled(False)
         try:
@@ -481,12 +537,17 @@ async def clean_page():
                 pipe = Pipeline(cfg, custom_dir=CUSTOM_DIR)
                 out = []
                 for f in files[:500]:
-                    raw = f.read_text(encoding="utf-8", errors="replace")
-                    r = pipe.run(raw)
+                    try:
+                        ing = load_file(f, cfg)
+                    except IngestError as ex:
+                        out.append({"file": f.name, "before": 0, "after": 0,
+                                    "reduction": f"skipped: {ex}"})
+                        continue
+                    r = pipe.run(ing.text)
                     out_name = f"{f.stem}_cleaned.txt"
                     (out_dir / out_name).write_text(r.text, encoding="utf-8")
                     store.append_run(r.to_history_dict(f"batch:{folder.name}"))
-                    out.append({"file": f.name, "before": len(raw), "after": len(r.text),
+                    out.append({"file": f.name, "before": len(ing.text), "after": len(r.text),
                                 "reduction": f"{r.reduction:+.1f}%"})
                 return out
 
@@ -555,19 +616,32 @@ async def clean_page():
                   on_change=lambda e: (PREFS.update(auto_clean=e.value), save_prefs()))
         ui.label("Tip: Ctrl/⌘+Enter cleans.").classes("text-xs opacity-60 ml-auto")
 
-        input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
-                                 value=CLEAN_STATE["input"],
-                                 on_change=lambda e: CLEAN_STATE.update(input=e.value))
-        input_area.props("outlined input-style='min-height: 220px'").classes("w-full cc-mono")
+        if HAS_EX4:
+            # ex4nicegui gives the textarea a reactive value signal; the plain
+            # NiceGUI element underneath keeps every existing code path intact.
+            _rx_input = rxui.textarea(
+                "Chart text (paste an Epic export, drop a file, or load the sample)",
+                value=CLEAN_STATE["input"],
+                on_change=lambda e: CLEAN_STATE.update(input=e.value))
+            input_area = _rx_input.element
+            input_area.props("outlined input-style='min-height: 220px'").classes("w-full cc-mono")
+            rxui.label(lambda: (lambda t: f"{len(t):,} chars · {len(t.split()):,} words")(
+                _rx_input.value or "")).classes("text-xs opacity-60")
+        else:
+            input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
+                                     value=CLEAN_STATE["input"],
+                                     on_change=lambda e: CLEAN_STATE.update(input=e.value))
+            input_area.props("outlined input-style='min-height: 220px'").classes("w-full cc-mono")
+            ui.label("").classes("text-xs opacity-60")
 
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True) \
-                .props("accept=.txt,.md,text/plain flat").classes("max-w-xs")
+                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("max-w-xs")
             ui.button("Load sample chart", icon="science", on_click=load_sample).props("flat")
 
         results_col = ui.column().classes("w-full gap-3")
 
-        with ui.expansion("Batch folder (.txt files)", icon="folder_open").classes("w-full"):
+        with ui.expansion("Batch folder (.txt/.md/.docx/.pdf files)", icon="folder_open").classes("w-full"):
             ui.label("Clean every .txt in a folder on this computer. Outputs are saved to a timestamped "
                      "folder inside data/exports, downloadable below.").classes("text-xs opacity-70")
             with ui.row().classes("w-full items-center gap-2"):
@@ -596,6 +670,7 @@ STAGE_EDITORS = {
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
     "fuzzy_dedup": ("fuzzy", "fuzzy_dedup"),
     "nlp_redaction": ("nlp", None),
+    "tokenize_phi": ("tokenize", "tokenization"),
     "whitespace": ("fixed", None),
     "bullets": ("fixed", None),
 }
@@ -603,13 +678,14 @@ STAGE_EDITORS = {
 STAGE_DESCRIPTIONS = {
     "metadata_lines": "Whole lines to delete (author/pager/version lines, Epic chrome). Case-insensitive regex per line.",
     "boilerplate": "Blocks to delete anywhere (disclaimers, empty SmartSections). Dot matches newlines.",
+    "tokenize_phi": "Reversible tokenization: swaps structured PHI for [[T1]]-style codes and saves the value→token map (Settings → Token maps). Runs before redaction, so enable it instead of — not on top of — the PHI patterns you want tokenized.",
     "phi_patterns": "Regex → replacement pairs for structured PHI (MRN, DOB, phone lines).",
     "nlp_redaction": "Presidio NLP redaction: entity types, replacements, confidence threshold and allow-list.",
     "literal_replacements": "Regex → replacement pairs for abbreviations and text fixes.",
     "whitespace": "Trims trailing spaces and collapses 3+ blank lines. Always sensible.",
     "duplicate_notes": "Folds near-duplicate Epic note blocks (same note pasted twice) by comparing bodies.",
     "fuzzy_dedup": "Collapses paragraphs that are nearly identical (copy-forwarded text).",
-    "headers": "Lines matching one of these names become Markdown '## Header' headings.",
+    "headers": "Lines matching one of these names become Markdown '## Header' headings. Optionally let medspaCy detect section titles instead.",
     "bullets": "Normalizes •, * and - bullet prefixes to '- '.",
 }
 
@@ -817,6 +893,8 @@ def pipeline_page():
             return bool((draft.get("custom_rules") or {}).get(sid.split(":", 1)[1], {}).get("enabled", True))
         if sid == "nlp_redaction":
             return bool((draft.get("nlp_redaction") or {}).get("enabled", True))
+        if sid == "tokenize_phi":
+            return bool((draft.get("tokenization") or {}).get("enabled", False))
         if sid == "duplicate_notes":
             return bool((draft.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":
@@ -836,6 +914,8 @@ def pipeline_page():
             draft.setdefault("custom_rules", {}).setdefault(sid.split(":", 1)[1], {})["enabled"] = flag
         elif sid == "nlp_redaction":
             draft.setdefault("nlp_redaction", {})["enabled"] = flag
+        elif sid == "tokenize_phi":
+            draft.setdefault("tokenization", {})["enabled"] = flag
         elif sid == "duplicate_notes":
             draft.setdefault("duplicate_note_detection", {})["enabled"] = flag
         elif sid == "fuzzy_dedup":
@@ -994,8 +1074,34 @@ def pipeline_page():
             ui.button("Add " + ("pair" if is_pairs else "pattern"), icon="add", on_click=add_row) \
                 .props("outline dense")
 
+        elif kind == "tokenize":
+            t = draft.setdefault("tokenization", {})
+            ui.label("Swaps structured PHI (the patterns below in 'Structured PHI patterns', "
+                     "plus identity-label values) for reversible [[T1]]-style codes. Same value "
+                     "⇒ same token, so repeated names stay consistent. Value→token maps are saved "
+                     "under data/tokens and can restore the text later (Settings → Token maps, or "
+                     "clean-chart --untoken).").classes("text-xs opacity-70")
+            ui.input("Token prefix", value=str(t.get("prefix") or "T"),
+                     on_change=lambda e: t.update(prefix=(e.value or "T").strip())) \
+                .props("outlined dense").classes("w-40")
+            ui.label("Tokens are issued before redaction runs — while this stage is on, the "
+                     "pattern stages will simply find nothing left to replace.").classes("text-xs opacity-60")
+
         elif kind == "headers":
             lst = draft.setdefault(key, [])
+            try:
+                from chartcleaner.nlp_medspacy import medspacy_available
+                ms_ok = medspacy_available()
+            except Exception:
+                ms_ok = False
+            eng = draft.get("headers_engine", "regex")
+            eng_sel = ui.select(options={"regex": "Regex header list", "medspacy": "medspaCy sectionizer"},
+                                value=eng if (ms_ok or eng == "regex") else "regex",
+                                label="Header detection engine").classes("w-72")
+            eng_sel.on_value_change(lambda e: draft.update(headers_engine=e.value))
+            if not ms_ok:
+                ui.label("medspaCy is not installed — choosing its engine will fall back to this "
+                         "regex list. pip install medspacy to enable.").classes("text-xs opacity-60")
 
             def add_header() -> None:
                 lst.append("New Header")
@@ -1150,6 +1256,41 @@ def pipeline_page():
         except Exception as ex:
             ui.notify(str(ex), type="negative")
 
+    def render_packs() -> None:
+        packs_holder.clear()
+        try:
+            packs = rulepacks.list_packs()
+        except Exception:
+            packs = []
+        with packs_holder:
+            if not packs:
+                ui.label("No packs found.").classes("text-xs opacity-60")
+            for p in packs:
+                with ui.card().classes("w-full gap-1"):
+                    ui.label(f"{p['name']} — {p['rules']} rule entries").classes("font-medium")
+                    ui.label(p["description"]).classes("text-xs opacity-70 -mt-2")
+                    if p["source"]:
+                        ui.label(f"Source: {p['source']}").classes("text-xs opacity-50 -mt-1")
+
+                    def install(name=p["name"]) -> None:
+                        _n, msg = rulepacks.install_pack(name)
+                        ui.notify(msg, type="positive")
+
+                    def apply(name=p["name"]) -> None:
+                        def do_it() -> None:
+                            ok, msg = rulepacks.apply_pack(name)
+                            ui.notify(msg, type="positive" if ok else "negative")
+                            if ok:
+                                ui.navigate.to("/pipeline")
+                        confirm_dialog(f"Replace the current rules with pack '{name}'? "
+                                       "(a config backup is kept)", do_it)
+
+                    with ui.row().classes("gap-2"):
+                        ui.button("Install as preset", icon="save_as", on_click=install) \
+                            .props("outline dense")
+                        ui.button("Apply now", icon="bolt", on_click=apply) \
+                            .props("outline dense color=orange")
+
     # ---- UI ------------------------------------------------------------------
     resolve_order()
 
@@ -1190,6 +1331,13 @@ def pipeline_page():
             audit_holder = ui.column().classes("w-full gap-2")
             with audit_holder:
                 render_audit_card()
+
+        with ui.expansion("Rule packs (curated, read-only rule sets)", icon="inventory_2").classes("w-full"):
+            ui.label("Complete rule sets shipped with the app — install one as a preset, or apply it "
+                     "directly (your current rules are backed up first).").classes("text-xs opacity-60")
+            packs_holder = ui.column().classes("w-full gap-2")
+            with packs_holder:
+                render_packs()
 
         stages_container = ui.column().classes("w-full gap-1")
 
@@ -1290,6 +1438,66 @@ def stats_page():
             ui.button("Clear history", icon="delete_forever",
                       on_click=lambda: confirm_dialog("Delete the entire cleaning history?", store.clear_runs)) \
                 .props("flat color=negative")
+
+        # ---- evaluation: how well does the current rule set actually clean? ----
+        eval_state: dict = {"running": False}
+
+        with ui.expansion("Evaluation — recall report card", icon="verified").classes("w-full"):
+            ui.label("Generates synthetic charts with known PHI, runs your current rules on them, "
+                     "and reports how many PHI items were actually removed. A real exam, not a vibe.") \
+                .classes("text-xs opacity-70")
+            eval_holder = ui.column().classes("w-full gap-2")
+            with eval_holder:
+                last = load_last_evaluation()
+                if last:
+                    ui.label(f"Last run: {last.get('ts', '')} — recall {last.get('recall', 0)}% "
+                             f"over {last.get('samples', 0)} sample chart(s).") \
+                        .classes("text-sm opacity-80")
+
+            n_sel = ui.number("Charts to generate", value=25, min=5, max=200, format="%.0f").classes("w-44")
+            eval_btn = ui.button("Run evaluation", icon="play_arrow")
+
+            async def run_eval() -> None:
+                if eval_state["running"]:
+                    return
+                eval_state["running"] = True
+                eval_btn.set_enabled(False)
+
+                def work():
+                    cfg = load_config(CONFIG_PATH)
+                    samples = generate_benchmark(n=int(n_sel.value or 25))
+                    rep = evaluate_samples(cfg, samples, custom_dir=CUSTOM_DIR)
+                    save_evaluation(rep)
+                    return rep
+
+                try:
+                    rep = await run.io_bound(work)
+                    eval_holder.clear()
+                    with eval_holder:
+                        stat_chip_row = ui.row().classes("gap-3 flex-wrap")
+                        stat_chip(stat_chip_row, "overall recall", f"{rep['recall']}%",
+                                  "green" if rep["recall"] >= 90 else "orange")
+                        stat_chip(stat_chip_row, "PHI items caught",
+                                  f"{rep['caught']}/{rep['items']}", "indigo")
+                        for t, b in list(rep["by_type"].items())[:9]:
+                            stat_chip(stat_chip_row, t, f"{b['recall']}%",
+                                      "green" if b["recall"] >= 90 else "red")
+                        if rep["missed"]:
+                            ui.label("Missed items (tighten these rules — see the packs on the "
+                                     "Pipeline page):").classes("text-sm font-semibold")
+                            for m in rep["missed"][:12]:
+                                ui.label(f"• [{m['type']}] {m['value']}  ({m['sample']})") \
+                                    .classes("text-xs cc-mono opacity-80")
+                        ui.label("Synthetic charts are approximations — a high recall is encouraging, "
+                                 "not a guarantee.").classes("text-xs opacity-60")
+                    ui.notify("Evaluation complete.", type="positive")
+                except Exception as e:
+                    report_error("Evaluation failed", e)
+                finally:
+                    eval_state["running"] = False
+                    eval_btn.set_enabled(True)
+
+            eval_btn.on("click", lambda: asyncio.get_running_loop().create_task(run_eval()))
 
 
 # ===========================================================================
@@ -1517,6 +1725,108 @@ def settings_page():
                 ui.label("✗ Presidio or the spaCy model is missing; the NLP stage will be skipped. "
                          "Re-run install.sh (macOS) or install.bat (Windows).").classes("text-orange-600 text-sm")
 
+        # ---- converters & optional engines ------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("File converters & optional engines").classes("font-semibold")
+            ui.label("Core parts are always available. Optional engines are picked up "
+                     "automatically when installed (pip install …) — the app works fine without them.") \
+                .classes("text-xs opacity-60 -mt-1")
+            status = converters_status()
+            engine_info = {
+                "pymupdf": ("PDF text extraction", True, ""),
+                "watchdog": ("Folder watcher", True, ""),
+                "ex4nicegui": ("Reactive live stats (Clean page)", True, ""),
+                "markitdown": ("Word/PDF → Markdown (advanced converter)", False, "pip install markitdown"),
+                "docling": ("Layout-aware document parsing", False, "pip install docling (large download)"),
+                "ocrmypdf": ("OCR for scanned PDFs", False, "pip install ocrmypdf (or the ocrmypdf CLI)"),
+                "medspacy": ("Clinical section detection (Header stage)", False, "pip install medspacy"),
+            }
+            for key, (desc, core, howto) in engine_info.items():
+                ok = bool(status.get(key))
+                with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                    ui.icon("check_circle" if ok else "radio_button_unchecked",
+                            ).classes("text-green-600" if ok else "opacity-30")
+                    ui.label(desc).classes("text-sm flex-grow")
+                    if ok:
+                        ui.badge("available", color="green").props("outline")
+                    elif core:
+                        ui.badge("install with install.sh", color="blue-grey").props("outline")
+                    else:
+                        ui.badge(howto, color="grey").props("outline").classes("text-[10px]")
+
+        # ---- folder watcher -----------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Folder watcher — auto-clean as you drop files").classes("font-semibold")
+            ui.label("Any .txt/.md/.docx/.pdf dropped into the watched folder is ingested, cleaned "
+                     "with your current rules, and written to the output folder as "
+                     "<name>_cleaned.txt. Runs continue to appear in Statistics.") \
+                .classes("text-xs opacity-60 -mt-1")
+            if not find_spec("watchdog"):
+                ui.label("watchdog is not installed — run install.sh / install.bat to enable.") \
+                    .classes("text-orange-600 text-sm")
+            else:
+                wcfg = store.load_watch_config()
+                wd_in = ui.input("Watched folder", value=wcfg.get("watch_dir", ""),
+                                 placeholder="/path/to/drop charts here").classes("w-full cc-mono")
+                od_in = ui.input("Output folder (empty = data/watched_out)",
+                                 value=wcfg.get("out_dir", "")).classes("w-full cc-mono")
+
+                def watcher_status_text() -> str:
+                    fw = WATCHER.get("obj")
+                    if fw is None:
+                        return "Not running."
+                    s = fw.status
+                    base = f"{s.state} · processed {s.processed}"
+                    if s.last_file:
+                        base += f" · last: {s.last_file} at {s.last_ts}"
+                    if s.errors:
+                        base += f" · {len(s.errors)} note(s)"
+                    return base
+
+                status_lbl = ui.label(watcher_status_text()).classes("text-xs opacity-70")
+
+                def start_watcher() -> None:
+                    watch_dir = Path(wd_in.value or "").expanduser()
+                    if not watch_dir.is_dir():
+                        ui.notify("Watched folder does not exist.", type="negative")
+                        return
+                    out_dir = Path(od_in.value).expanduser() if od_in.value.strip() \
+                        else store.DATA_DIR / "watched_out"
+                    WATCHER_CONFIG.update(enabled=True, watch_dir=str(watch_dir), out_dir=str(out_dir))
+                    try:
+                        store.save_watch_config(WATCHER_CONFIG)
+                        fw = watcher_mod.FolderWatcher(
+                            watcher_mod.WatchSpec(watch_dir=watch_dir, out_dir=out_dir),
+                            load_config(CONFIG_PATH), custom_dir=CUSTOM_DIR)
+                        fw.start()
+                        WATCHER["obj"] = fw
+                    except Exception as e:
+                        report_error("Could not start folder watcher", e)
+                        return
+                    ui.notify(f"Watching {watch_dir}", type="positive")
+                    status_lbl.set_text(watcher_status_text())
+
+                def stop_watcher() -> None:
+                    fw = WATCHER.get("obj")
+                    if fw is not None:
+                        fw.stop()
+                        WATCHER["obj"] = None
+                    WATCHER_CONFIG.update(enabled=False)
+                    store.save_watch_config(WATCHER_CONFIG)
+                    status_lbl.set_text("Stopped.")
+                    ui.notify("Folder watcher stopped.", type="info")
+
+                with ui.row().classes("gap-2"):
+                    ui.button("Start watching", icon="play_arrow", on_click=start_watcher) \
+                        .props("unelevated color=primary")
+                    ui.button("Stop", icon="stop", on_click=stop_watcher).props("outline")
+                    if wcfg.get("watch_dir"):
+                        ui.button("Open output folder", icon="folder",
+                                  on_click=lambda: open_folder(
+                                      Path(wcfg.get("out_dir") or store.DATA_DIR / "watched_out"))) \
+                            .props("flat")
+                ui.timer(2.0, lambda: status_lbl.set_text(watcher_status_text()))
+
         with ui.card().classes("w-full gap-2"):
             ui.label("Data on this computer").classes("font-semibold")
             ui.label(f"Config: {CONFIG_PATH}").classes("text-xs font-mono opacity-70")
@@ -1576,19 +1886,65 @@ def settings_page():
             ui.markdown(
                 f"**Chart Cleaner v{__version__}** — cleans Epic-style EMR exports for safer LLM sharing.\n\n"
                 "- Everything runs locally; the app listens only on 127.0.0.1 and makes no network calls.\n"
+                "- Inputs: .txt / .md / .docx / .pdf (Word via built-in reader or markitdown; PDFs via "
+                "PyMuPDF, OCR when ocrmypdf is installed).\n"
                 "- This tool **reduces** obvious PHI and noise; it is **not** a HIPAA de-identification guarantee.\n"
                 "- Review output before sharing. You are responsible for what you send to third parties."
             ).classes("text-sm")
 
         with ui.card().classes("w-full gap-1"):
-            ui.label("Ideas for further enhancements").classes("font-semibold")
+            ui.label("Ideas still on the roadmap").classes("font-semibold")
             ui.markdown(
-                "- **Folder watcher** — auto-clean files dropped into a watched folder.\n"
-                "- **.docx / .pdf input** via python-docx / pdfplumber.\n"
-                "- **Rule packs** — one-click community presets with a review workflow.\n"
+                "- **Code signing / notarization** of the macOS .app bundle.\n"
                 "- **Weekly summary** — scheduled stats report.\n"
                 "- **Recent runs** — reopen or re-run yesterday's cleaned output."
             ).classes("text-sm")
+
+        # ---- token maps (reversible tokenization) -------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Token maps (reversible tokenization)").classes("font-semibold")
+            ui.label("When the 'Reversible tokenization' stage is on, each run's value→token map "
+                     "is saved here (newest 10). Restore text with the button below, or "
+                     "clean-chart --untoken. Treat maps as PHI — they undo the cleaning.") \
+                .classes("text-xs opacity-60 -mt-1")
+
+            def restore_tokens(file: str) -> None:
+                try:
+                    mapping = store.load_token_map(file)
+                    current = CLEAN_STATE.get("result_text") or ""
+                    if not current:
+                        ui.notify("Clean a chart first — its output is what gets restored.",
+                                  type="warning")
+                        return
+                    restored, n = tokens_mod.untokenize(current, mapping)
+                    CLEAN_STATE["result_text"] = restored
+                    if CLEAN_STATE.get("result") is not None:
+                        CLEAN_STATE["result"].text = restored
+                    copy_to_clipboard(restored, f"Restored {n} token(s) — copied to clipboard")
+                except Exception as e:
+                    ui.notify(f"Could not restore: {e}", type="negative")
+
+            maps = store.list_token_maps()
+            if not maps:
+                ui.label("No maps yet — enable the tokenization stage on the Pipeline page "
+                         "and clean a chart.").classes("text-sm opacity-60")
+            for m in maps[:10]:
+                with ui.row().classes("w-full items-center gap-3 flex-nowrap"):
+                    ui.icon("vpn_key").classes("opacity-60")
+                    ui.label(m["ts"]).classes("text-xs w-40")
+                    count = f"{m['count']} value(s)" if m["count"] >= 0 else "⚠ unreadable"
+                    ui.label(count).classes("text-xs opacity-70 w-28")
+
+                    def restore(f=m["file"]) -> None:
+                        confirm_dialog("Restore the current cleaned output using this map? "
+                                       "(the result will contain real PHI — it stays on this "
+                                       "machine)", lambda: restore_tokens(f))
+
+                    ui.button("Restore into result", icon="lock_open", on_click=restore) \
+                        .props("outline dense")
+            with ui.row().classes("gap-2"):
+                ui.button("Open tokens folder", icon="folder",
+                          on_click=lambda: open_folder(store.TOKENS_DIR)).props("flat")
 
 
 # ---------------------------------------------------------------------------
@@ -1643,6 +1999,12 @@ def _is_chart_cleaner(port: int) -> bool:
 
 
 def main():
+    if os.environ.get("NICEGUI_USER_SIMULATION"):
+        # Test harness (nicegui.testing): pages are registered at import; ui.run
+        # is intercepted, but it must still be called so run config is marked.
+        ui.run(title="Chart Cleaner")
+        return
+
     if getattr(sys, "frozen", False):
         # macOS .app launches can inject multiprocessing bootstrap args
         # (--keep-parent / resource_tracker -c ...); strip them before argparse.

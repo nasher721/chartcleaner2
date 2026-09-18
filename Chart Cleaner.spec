@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('/Users/Nash/Documents/Remix/chart cleaner/chart-cleaner/.venv/lib/python3.12/site-packages/nicegui', 'nicegui'), ('chartcleaner/default_config.json', 'chartcleaner'), ('custom_rules', 'custom_rules'), ('sample_chart.txt', '.')]
+datas = [('/Users/Nash/Documents/Remix/chart cleaner/chart-cleaner/.venv/lib/python3.12/site-packages/nicegui', 'nicegui'), ('chartcleaner/default_config.json', 'chartcleaner'), ('chartcleaner/packs', 'chartcleaner/packs'), ('custom_rules', 'custom_rules'), ('sample_chart.txt', '.')]
 binaries = []
 hiddenimports = ['en_core_web_sm']
 tmp_ret = collect_all('spacy')
@@ -43,6 +43,12 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('rapidfuzz')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pyperclip')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('pymupdf')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('watchdog')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('ex4nicegui')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

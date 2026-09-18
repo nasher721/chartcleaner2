@@ -52,6 +52,7 @@ REQUIRED_CONFIG_KEYS = (
 BUILTIN_STAGE_IDS = [
     "metadata_lines",
     "boilerplate",
+    "tokenize_phi",
     "phi_patterns",
     "nlp_redaction",
     "literal_replacements",
@@ -67,6 +68,7 @@ STAGE_LABELS = {
     "boilerplate": "Boilerplate blocks",
     "phi_patterns": "Structured PHI patterns",
     "nlp_redaction": "NLP redaction (Presidio)",
+    "tokenize_phi": "Reversible tokenization",
     "literal_replacements": "Literal replacements",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -81,6 +83,7 @@ STAGE_KINDS = {
     "boilerplate": "regex_lines",
     "phi_patterns": "regex_pairs",
     "nlp_redaction": "nlp",
+    "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
     "whitespace": "fixed",
     "duplicate_notes": "dedup_notes",
@@ -259,6 +262,28 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
     if al is not None and (not isinstance(al, list) or not all(isinstance(x, str) for x in al)):
         errors.append("nlp_allow_list: must be a list of strings")
 
+    t = cfg.get("tokenization")
+    if t is not None:
+        if not isinstance(t, dict):
+            errors.append("tokenization: must be an object")
+        else:
+            if not isinstance(t.get("enabled", False), bool):
+                errors.append("tokenization.enabled: must be true/false")
+            pfx = t.get("prefix")
+            if pfx is not None and (not isinstance(pfx, str) or not re.fullmatch(r"[A-Za-z0-9_]{0,8}", pfx)):
+                errors.append("tokenization.prefix: must be 0–8 letters/digits/_")
+
+    he = cfg.get("headers_engine")
+    if he is not None and he not in ("regex", "medspacy"):
+        errors.append("headers_engine: must be 'regex' or 'medspacy'")
+
+    ing = cfg.get("ingest")
+    if ing is not None:
+        if not isinstance(ing, dict):
+            errors.append("ingest: must be an object")
+        elif "engine" in ing and ing["engine"] not in ("auto", "builtin", "markitdown", "docling"):
+            errors.append("ingest.engine: must be one of auto, builtin, markitdown, docling")
+
     a = cfg.get("audit")
     if a is not None:
         if not isinstance(a, dict):
@@ -325,6 +350,7 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
     known_keys = set(REQUIRED_CONFIG_KEYS) | {
         "duplicate_note_detection", "fuzzy_dedup", "nlp_redaction", "nlp_allow_list",
         "wrap_output", "wrap_tag", "stage_order", "custom_rules", "audit",
+        "tokenization", "headers_engine", "ingest",
     }
     for k in cfg:
         if k not in known_keys:
@@ -401,6 +427,12 @@ class RunResult:
                 f"({self.reduction:+.1f}%), {phi} PHI item(s) redacted")
 
     def to_history_dict(self, source: str) -> dict:
+        def slim_details(details: dict) -> dict:
+            # the token map can be large and sensitive — counts only in history
+            if "token_map" in details:
+                details = {k: v for k, v in details.items() if k != "token_map"}
+            return details
+
         return {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "source": source,
@@ -413,7 +445,8 @@ class RunResult:
             "reduction": self.reduction,
             "duration_ms": round(self.duration_ms, 1),
             "wrapped": self.wrapped,
-            "stages": [s.to_dict() for s in self.stages],
+            "stages": [{**s.to_dict(), "details": slim_details(s.details)}
+                       for s in self.stages],
             "warnings": self.warnings,
         }
 
@@ -470,6 +503,20 @@ def _run_whitespace(text: str, cfg: dict, ctx: CleanContext):
 
 def _run_headers(text: str, cfg: dict, ctx: CleanContext):
     total = 0
+    engine = (cfg.get("headers_engine") or "regex").lower()
+    if engine == "medspacy":
+        try:
+            from .nlp_medspacy import medspacy_sections
+            sections = medspacy_sections(text)
+            if sections:
+                # Replace longest-first so nested title fragments are safe.
+                out, n = text, 0
+                for title, start, end in sorted(sections, key=lambda s: -s[1]):
+                    out = out[:start] + f"## {title}" + out[end:]
+                    n += 1
+                return out, n, {"engine": "medspacy"}
+        except Exception as e:
+            ctx.log(f"medspaCy section engine unavailable ({e}); using regex headers.")
     for h in cfg["clinical_headers"]:
         r = _compile(rf"^\s*({h})\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
         text, n = r.subn(r"## \1", text)
@@ -607,11 +654,34 @@ def _run_nlp(text: str, cfg: dict, ctx: CleanContext):
     return new_text, len(filtered), {"phi": counts}
 
 
+def _run_tokenize(text: str, cfg: dict, ctx: CleanContext):
+    """Reversible tokenization: PHI values → [[Tn]] codes (map in details)."""
+    from .tokens import DEFAULT_TOKEN_CONFIG, tokenize
+
+    tcfg = {**DEFAULT_TOKEN_CONFIG, **(cfg.get("tokenization") or {})}
+    labels: list[str] = []
+    try:
+        from .audit import DEFAULT_NAME_LABELS, get_audit_config
+        labels = list(get_audit_config(cfg)["checks"]["label_names"].get("labels")
+                      or DEFAULT_NAME_LABELS)
+    except Exception:
+        pass
+    new_text, mapping = tokenize(
+        text, cfg.get("epic_phi_patterns") or [], labels=labels,
+        prefix=str(tcfg.get("prefix") or "T"))
+    details: dict = {"tokens_issued": len(mapping)}
+    if mapping:
+        details["token_map"] = mapping
+        details["phi"] = {"tokenized": len(mapping)}
+    return new_text, len(mapping), details
+
+
 RUNNERS: dict[str, Callable] = {
     "regex_lines": lambda t, c, x: _run_regex_list(t, c, x, "emr_line_metadata", re.IGNORECASE | re.MULTILINE),
     "regex_lines_dotall": lambda t, c, x: _run_regex_list(t, c, x, "boilerplate", re.IGNORECASE | re.DOTALL | re.MULTILINE),
     "regex_pairs_phi": lambda t, c, x: _run_regex_pairs(t, c, x, "epic_phi_patterns", phi=True),
     "nlp": _run_nlp,
+    "tokenize": _run_tokenize,
     "regex_pairs": lambda t, c, x: _run_regex_pairs(t, c, x, "literal_replacements"),
     "whitespace": _run_whitespace,
     "dedup_notes": _run_duplicate_notes,
@@ -625,6 +695,7 @@ KIND_TO_RUNNER = {
     "boilerplate": "regex_lines_dotall",
     "phi_patterns": "regex_pairs_phi",
     "nlp_redaction": "nlp",
+    "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -770,6 +841,8 @@ class Pipeline:
         cfg = self.config
         if sid == "nlp_redaction":
             return bool((cfg.get("nlp_redaction") or {}).get("enabled", True))
+        if sid == "tokenize_phi":
+            return bool((cfg.get("tokenization") or {}).get("enabled", False))
         if sid == "duplicate_notes":
             return bool((cfg.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":

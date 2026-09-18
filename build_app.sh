@@ -29,8 +29,10 @@ rm -rf build dist "dist/Chart Cleaner.app"
   --collect-all phonenumbers --collect-all tldextract \
   --collect-all thefuzz --collect-all rapidfuzz \
   --collect-all pyperclip \
+  --collect-all pymupdf --collect-all watchdog --collect-all ex4nicegui \
   --hidden-import en_core_web_sm \
   --add-data "chartcleaner/default_config.json:chartcleaner" \
+  --add-data "chartcleaner/packs:chartcleaner/packs" \
   --add-data "custom_rules:custom_rules" \
   --add-data "sample_chart.txt:." \
   app.py
@@ -39,3 +41,6 @@ echo ""
 echo "Build complete: dist/Chart Cleaner.app"
 echo "Copy it anywhere; on first launch it creates config.json, custom_rules/,"
 echo "and data/ next to itself. Logs: data/app.log."
+echo "Bundled: PDF ingest (PyMuPDF), folder watcher (watchdog), reactive UI"
+echo "(ex4nicegui). Optional engines (markitdown, docling, ocrmypdf, medspacy)"
+echo "are venv-only extras — the app detects them at runtime."

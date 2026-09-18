@@ -45,7 +45,7 @@ DEFAULT_PREFS = {
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, EXPORTS_DIR, PRESETS_DIR, CUSTOM_RULES_DIR, BACKUPS_DIR):
+    for d in (DATA_DIR, EXPORTS_DIR, PRESETS_DIR, CUSTOM_RULES_DIR, BACKUPS_DIR, TOKENS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -400,3 +400,95 @@ def restore_config_backup(path: str | Path) -> tuple[bool, str]:
         return False, "Backup has invalid rules: " + errors[0]
     save_config(cfg, CONFIG_PATH)
     return True, f"Restored backup from {p.name} ({_rule_count(cfg)} rule entries)."
+
+
+# ---------------------------------------------------------------------------
+# reversible tokenization maps (data/tokens/)
+# ---------------------------------------------------------------------------
+
+TOKENS_DIR = DATA_DIR / "tokens"
+TOKEN_MAPS_TO_KEEP = 10
+
+WATCH_CONFIG_FILE = DATA_DIR / "watch.json"
+
+
+def save_token_map(mapping: dict[str, str], source: str = "") -> Path:
+    """Persist one run's value→token map as a timestamped JSON file."""
+    ensure_dirs()
+    dest = TOKENS_DIR / f"tokens-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    if not dest.exists():  # two runs in the same second share the file
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "source": source,
+            "map": mapping,
+        }
+        dest.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8")
+    for old in sorted(TOKENS_DIR.glob("tokens-*.json"))[:-TOKEN_MAPS_TO_KEEP]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return dest
+
+
+def list_token_maps() -> list[dict]:
+    """Newest-first token map summaries: [{file, ts, count}]."""
+    if not TOKENS_DIR.exists():
+        return []
+    out: list[dict] = []
+    for p in sorted(TOKENS_DIR.glob("tokens-*.json"), reverse=True):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            out.append({"file": str(p), "ts": str(data.get("ts") or p.stem),
+                        "count": len(data.get("map") or {})})
+        except (json.JSONDecodeError, OSError):
+            out.append({"file": str(p), "ts": p.stem, "count": -1})
+    return out
+
+
+def load_token_map(path: str | Path) -> dict[str, str]:
+    p = Path(path)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return dict(data.get("map") or {})
+
+
+def delete_token_map(path: str | Path) -> bool:
+    p = Path(path)
+    if p.exists() and p.parent == TOKENS_DIR:
+        p.unlink()
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# folder watcher configuration (data/watch.json)
+# ---------------------------------------------------------------------------
+
+DEFAULT_WATCH = {
+    "enabled": False,
+    "watch_dir": "",
+    "out_dir": "",       # empty = data/watched_out
+    "exts": [".txt", ".md", ".docx", ".pdf"],
+}
+
+
+def load_watch_config() -> dict:
+    cfg = dict(DEFAULT_WATCH)
+    if WATCH_CONFIG_FILE.exists():
+        try:
+            stored = json.loads(WATCH_CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(stored, dict):
+                for k, v in stored.items():
+                    if k in cfg:
+                        cfg[k] = v
+        except (json.JSONDecodeError, OSError):
+            pass
+    return cfg
+
+
+def save_watch_config(cfg: dict) -> None:
+    ensure_dirs()
+    WATCH_CONFIG_FILE.write_text(
+        json.dumps({k: cfg.get(k, DEFAULT_WATCH[k]) for k in DEFAULT_WATCH},
+                   indent=2) + "\n", encoding="utf-8")

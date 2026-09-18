@@ -1,0 +1,36 @@
+{
+    "_pack": {
+        "name": "Philter core PHI (UCSF-inspired)",
+        "description": "Core clinical-text PHI categories from the published Philter pipeline: patient/doctor names on label lines, dates, phone & fax numbers, medical record and ID numbers (incl. SSN), ages over 89, emails/URLs, and institution lines.",
+        "source": "Rule categories ported from Philter (UCSF): Norgeot B., Muenzen K., Peterson T.A. et al., 'Protected Health Information filter (Philter)', npj Digital Medicine 3, 57 (2020), github.com/BCHSI/philter-ucsf. Patterns re-written for Chart Cleaner's regex format.",
+        "version": "1.0"
+    },
+    "emr_line_metadata": [
+        "^\\s*(?:Author|Author Type|Cosigner|Cosign Required|Editor|Filed|Signed By|Dictated by|Overread By|Edited By)\\s*:.*$\\n?",
+        "^\\s*Version \\d+ of \\d+\\s*$\\n?",
+        "\\bPager\\s*:\\s*v?\\d+.*$\\n?"
+    ],
+    "boilerplate": [],
+    "epic_phi_patterns": [
+        ["(?im)^\\s*(?:Patient(?: Name)?|Name)\\s*:\\s*.+$", "[REDACTED_PATIENT]"],
+        ["(?im)^\\s*(?:Attending|Resident|Intern|Consultant|Overread By|Signed by|Electronically signed by)\\s*[:]\\s*Dr\\.?\\s*[A-Z][A-Za-z.\\- ]{2,30}$", "[REDACTED_DOCTOR]"],
+        ["\\b(?:DOB|Date of Birth)\\s*[:.]?\\s*(?:\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b", "[REDACTED_DATE]"],
+        ["\\b(?:0?[1-9]|1[0-2])[\\/\\-](?:0?[1-9]|[12]\\d|3[01])[\\/\\-](?:19|20)?\\d{2}\\b", "[REDACTED_DATE]"],
+        ["(?<!\\d)(?:\\+?1[\\s.\\-]?)?(?:\\(\\d{3}\\)|\\d{3})[\\s.\\-]\\d{3}[\\s.\\-]\\d{4}(?!\\d)", "[REDACTED_PHONE]"],
+        ["(?im)^\\s*Fax\\s*:\\s*.+$", "[REDACTED_FAX_LINE]"],
+        ["\\b(?:PID|MRN|MR#?|PT\\.?\\s*ID|Patient ID|Medical Record(?: Number|#)?)\\s*[:#]?\\s*\\d+\\b", "[REDACTED_MRN]"],
+        ["\\b\\d{3}-\\d{2}-\\d{4}\\b", "[REDACTED_SSN]"],
+        ["(?i)\\b\\s*age\\s*[:=]\\s*(?:9[0-9]|1[0-9]{2})\\b", "[REDACTED_AGE>89]"],
+        ["[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}", "[REDACTED_EMAIL]"],
+        ["\\bhttps?://[^\\s]+", "[REDACTED_URL]"],
+        ["(?im)^\\s*(?:Hospital|Facility|Institution|Clinic)\\s*:\\s*.+$", "[REDACTED_INSTITUTION_LINE]"]
+    ],
+    "literal_replacements": [],
+    "clinical_headers": [
+        "Subjective", "Objective", "Assessment & Plan", "Assessment", "Plan",
+        "History of Present Illness", "Past Medical History", "Medications",
+        "Allergies", "Vitals", "Labs", "Imaging", "Physical Exam", "Discharge"
+    ],
+    "wrap_output": true,
+    "wrap_tag": "patient_chart"
+}

@@ -8,6 +8,7 @@ stages, with per-stage statistics printed after each run.
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import pyperclip
@@ -81,17 +82,86 @@ def _print_audit(audit, limit: int = 10) -> None:
 
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
                  audit: bool = False) -> None:
-    """Processes a single text file and saves the output."""
+    """Processes a single file (.txt/.md/.docx/.pdf) and saves the output."""
     try:
-        raw_text = file_path.read_text(encoding="utf-8")
-        result = cleaner.clean_detailed(raw_text)
-        out_path = output_dir / f"{file_path.stem}_cleaned{file_path.suffix}"
+        from chartcleaner.ingest import IngestError, load_file
+        ing = load_file(file_path, cleaner.config)
+        if ing.engine != "text":
+            print(f"  [{file_path.name}] ingested via {ing.engine}")
+        for w in ing.warnings:
+            print(f"  ! {w}", file=sys.stderr)
+        result = cleaner.clean_detailed(ing.text)
+        out_path = output_dir / f"{file_path.stem}_cleaned.txt"
         out_path.write_text(result.text, encoding="utf-8")
         _print_summary(result, file_path.name)
         if audit:
             _print_audit(run_audit(result.text, cleaner.config))
+    except IngestError as e:
+        print(f"Cannot ingest {file_path.name}: {e}", file=sys.stderr)
     except Exception as e:
         print(f"Failed to process {file_path.name}: {e}", file=sys.stderr)
+
+
+def _run_watch(watch_dir: Path, out_dir: Path | None, cleaner: MedicalCleaner) -> None:
+    from chartcleaner.watcher import FolderWatcher, WatchSpec
+
+    out = out_dir or (watch_dir / "cleaned")
+    spec = WatchSpec(watch_dir=watch_dir, out_dir=out)
+    fw = FolderWatcher(spec, cleaner.config, custom_dir=cleaner._custom_dir)
+    print(f"Watching {watch_dir} — cleaned copies go to {out}. Ctrl+C to stop.")
+    fw.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        fw.stop()
+        print(f"\nStopped. Processed {fw.status.processed} file(s).")
+
+
+def _run_evaluate(n: int, cleaner: MedicalCleaner) -> None:
+    from chartcleaner import benchmark, evaluate as eval_mod
+
+    samples = benchmark.generate(n=n)
+    print(f"Generating {n} synthetic labeled charts and running the pipeline…")
+    report = eval_mod.evaluate(cleaner.config, samples,
+                               custom_dir=cleaner._custom_dir)
+    eval_mod.save_evaluation(report)
+    print(f"\nRecall: {report['recall']}%  ({report['caught']}/{report['items']} PHI items caught)\n")
+    print(f"{'type':<14}{'caught':>7}{'of':>6}{'recall':>9}")
+    for t, b in report["by_type"].items():
+        print(f"{t:<14}{b['caught']:>7}{b['items']:>6}{b['recall']:>8}%")
+    if report["missed"]:
+        print("\nMissed (first few):")
+        for m in report["missed"][:8]:
+            print(f"  - [{m['type']}] {m['value']}  ({m['sample']})")
+    print(f"\nReport saved to {eval_mod.evaluation_file()}")
+
+
+def _run_untoken(source: str | None, tokens_file: str | None) -> None:
+    from chartcleaner import tokens as tok_mod
+
+    if tokens_file:
+        mapping = tok_mod.load_token_map(tokens_file)
+    else:
+        found = tok_mod.newest_token_map()
+        if not found:
+            print("No saved token maps found (they are created when tokenization "
+                  "is enabled and a chart is cleaned).", file=sys.stderr)
+            sys.exit(1)
+        path, mapping = found
+        print(f"Using newest token map: {path}")
+    if source:  # a file path, or '-' for stdin
+        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    else:
+        text = pyperclip.paste()
+    restored, n = tok_mod.untokenize(text, mapping)
+    if source:
+        out = Path(source).with_suffix(".untokened.txt")
+        out.write_text(restored, encoding="utf-8")
+        print(f"Restored {n} token(s) → {out}")
+    else:
+        pyperclip.copy(restored)
+        print(f"Restored {n} token(s) — text copied back to clipboard.")
 
 
 def main():
@@ -114,18 +184,45 @@ def main():
         help="Also scan the cleaned output for leftovers and print findings.",
     )
     parser.add_argument("--version", action="version", version=f"chart-cleaner {__version__}")
+    parser.add_argument("--watch", type=str, metavar="DIR",
+                        help="Watch a folder and clean every new file automatically.")
+    parser.add_argument("--evaluate", type=int, nargs="?", const=25, metavar="N",
+                        help="Run the synthetic benchmark (N charts, default 25) and print a recall report card.")
+    parser.add_argument("--untoken", type=str, nargs="?", const="__clipboard__", metavar="FILE",
+                        help="Restore [[Tn]] tokens: FILE, '-' for stdin, or clipboard when omitted.")
+    parser.add_argument("--tokens-file", type=str,
+                        help="Explicit token map (data/tokens/*.json); default is the newest.")
     args = parser.parse_args()
 
+    if args.untoken is not None:
+        src = None if args.untoken == "__clipboard__" else args.untoken
+        _run_untoken(src, args.tokens_file)
+        return
+    if args.evaluate is not None:
+        cleaner = MedicalCleaner(wrap_output=not args.no_wrap)
+        _run_evaluate(args.evaluate, cleaner)
+        return
+
     cleaner = MedicalCleaner(wrap_output=not args.no_wrap)
+
+    if args.watch:
+        watch_dir = Path(args.watch).expanduser()
+        if not watch_dir.is_dir():
+            print(f"Not a directory: {watch_dir}", file=sys.stderr)
+            sys.exit(1)
+        _run_watch(watch_dir, Path(args.out).expanduser() if args.out else None, cleaner)
+        return
 
     if args.dir:
         input_dir = Path(args.dir)
         output_dir = Path(args.out)
         output_dir.mkdir(exist_ok=True)
 
-        files = list(input_dir.glob("*.txt"))
+        from chartcleaner.ingest import supported_extensions
+        files = sorted(f for f in input_dir.iterdir()
+                       if f.is_file() and f.suffix.lower() in (*{".txt"}, *supported_extensions()))
         if not files:
-            print("No .txt files found in directory.")
+            print("No supported files (.txt/.md/.docx/.pdf) found in directory.")
             sys.exit(0)
 
         print(f"Batch processing {len(files)} files...")
