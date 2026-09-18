@@ -74,111 +74,36 @@
         "PERSONAL INVOLVEMENT IN CARE: Reviewing initiation, responses and adjustments to therapies.*?with Staff Physician:.*?\\."
     ],
     "epic_phi_patterns": [
-        [
-            "\\b(?:PID|MRN|MR#?|PT\\.?\\s*ID|Patient ID)\\s*[:#]?\\s*\\d+\\b",
-            "[REDACTED_ID]"
-        ],
-        [
-            "\\b(?:DOB|Date of Birth)\\s*[:.]?\\s*(?:\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b",
-            "[REDACTED_DOB]"
-        ],
-        [
-            "(?im)^\\s*PATIENT NAME:\\s*.+$",
-            "[REDACTED_NAME_LINE]"
-        ],
-        [
-            "(?im)^\\s*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$",
-            "[REDACTED_NAME_LINE]"
-        ],
-        [
-            "(?im)^\\s*Primary Emergency Contact:\\s*.+$",
-            "[REDACTED_CONTACT]"
-        ],
-        [
-            "\\bMobile Phone:\\s*[0-9\\-\\(\\)\\s.]+",
-            "[REDACTED_PHONE]"
-        ],
-        [
-            "(?im)^\\s*SIGNATURE:\\s*.+$",
-            "[REDACTED_SIGNATURE_LINE]"
-        ]
+        ["\\b(?:PID|MRN|MR#?|PT\\.?\\s*ID|Patient ID)\\s*[:#]?\\s*\\d+\\b", "[REDACTED_ID]"],
+        ["\\b(?:DOB|Date of Birth)\\s*[:.]?\\s*(?:\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b", "[REDACTED_DOB]"],
+        ["(?im)^\\s*PATIENT NAME:\\s*.+$", "[REDACTED_NAME_LINE]"],
+        ["(?im)^\\s*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$", "[REDACTED_NAME_LINE]"],
+        ["(?im)^\\s*Primary Emergency Contact:\\s*.+$", "[REDACTED_CONTACT]"],
+        ["\\bMobile Phone:\\s*[0-9\\-\\(\\)\\s.]+", "[REDACTED_PHONE]"],
+        ["(?im)^\\s*SIGNATURE:\\s*.+$", "[REDACTED_SIGNATURE_LINE]"]
     ],
     "literal_replacements": [
-        [
-            "\\bImpression:\\s*IMPRESSION:",
-            "Impression:"
-        ],
-        [
-            "\\bGLUCOSE, BLOOD \\(POC\\)",
-            "POC Glucose"
-        ],
-        [
-            "\\bHeart rate\\b",
-            "HR"
-        ],
-        [
-            "\\bMRI BRAIN WO IVCON\\b",
-            "MR Brain wo contrast"
-        ],
-        [
-            "\\bhypertension\\b",
-            "HTN"
-        ],
-        [
-            "\\bhyperlipidemia\\b",
-            "HLD"
-        ],
-        [
-            "\\bCerebrovascular accident\\b",
-            "CVA"
-        ],
-        [
-            "\\bArterial Blood Gases\\b",
-            "ABGs"
-        ],
-        [
-            "\\bGlasgow Coma Scale\\b",
-            "GCS"
-        ],
-        [
-            "\\bSocial History\\b",
-            "SOCH"
-        ],
-        [
-            "\\bpast surgical history\\b",
-            "PSH"
-        ],
-        [
-            "\\bpast medical history\\b",
-            "PMH"
-        ],
-        [
-            " {2,}",
-            " "
-        ]
+        ["\\bImpression:\\s*IMPRESSION:", "Impression:"],
+        ["\\bGLUCOSE, BLOOD \\(POC\\)", "POC Glucose"],
+        ["\\bHeart rate\\b", "HR"],
+        ["\\bMRI BRAIN WO IVCON\\b", "MR Brain wo contrast"],
+        ["\\bhypertension\\b", "HTN"],
+        ["\\bhyperlipidemia\\b", "HLD"],
+        ["\\bCerebrovascular accident\\b", "CVA"],
+        ["\\bArterial Blood Gases\\b", "ABGs"],
+        ["\\bGlasgow Coma Scale\\b", "GCS"],
+        ["\\bSocial History\\b", "SOCH"],
+        ["\\bpast surgical history\\b", "PSH"],
+        ["\\bpast medical history\\b", "PMH"],
+        [" {2,}", " "]
     ],
     "clinical_headers": [
-        "Subjective",
-        "Objective",
-        "Assessment & Plan",
-        "Plan",
-        "Vitals",
-        "Labs",
-        "Imaging",
-        "Diagnostic tests",
-        "Lines, Drains, and Airways",
-        "ICU Checklist",
-        "Neurology",
-        "Neurological",
-        "Cardiovascular",
-        "Pulmonary",
-        "Gastrointestinal",
-        "Endocrinology",
-        "Infectious Disease",
-        "Hematology",
-        "Renal",
-        "EVD Data",
-        "Physical Exam"
+        "Subjective", "Objective", "Assessment & Plan", "Plan",
+        "Vitals", "Labs", "Imaging", "Diagnostic tests",
+        "Lines, Drains, and Airways", "ICU Checklist",
+        "Neurology", "Neurological", "Cardiovascular", "Pulmonary",
+        "Gastrointestinal", "Endocrinology", "Infectious Disease",
+        "Hematology", "Renal", "EVD Data", "Physical Exam"
     ],
     "duplicate_note_detection": {
         "enabled": true,
@@ -187,16 +112,29 @@
         "similarity_threshold": 90
     },
     "nlp_allow_list": [
-        "clevidipine",
-        "precedex",
-        "seroquel",
-        "keppra",
-        "gcs",
-        "evd",
-        "tpa",
-        "tnk",
-        "sah",
-        "tbi",
-        "ards"
-    ]
+        "clevidipine", "precedex", "seroquel", "keppra", "gcs", "evd", "tpa", "tnk", "sah", "tbi", "ards"
+    ],
+    "audit": {
+        "enabled": true,
+        "max_findings": 50,
+        "checks": {
+            "long_digits": {
+                "enabled": true,
+                "min_digits": 6
+            },
+            "date_like": {
+                "enabled": true
+            },
+            "phone_email": {
+                "enabled": true
+            },
+            "label_names": {
+                "enabled": true
+            },
+            "residual_chrome": {
+                "enabled": true,
+                "patterns": []
+            }
+        }
+    }
 }

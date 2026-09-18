@@ -1,242 +1,255 @@
-# Medical chart cleaner
+# Chart Cleaner
 
-Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation: strip line-level metadata and boilerplate, redact common PHI patterns, run **Microsoft Presidio** NLP redaction (names, phones, emails), normalize literals and headings, and optionally remove near-duplicate note blocks.
+Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation — now as a **local desktop app** for macOS and Windows, with the original CLI still included.
 
-**Default output** wraps the chart in `<patient_chart>…</patient_chart>` unless you pass `--no-wrap`.
+- **Clean page** — paste or drop a chart, clean it, and inspect a **side-by-side diff**, per-run stats (characters/words/PHI/duration), and a table showing exactly what each cleaning stage did.
+- **Post-run review** — after every clean, an audit scans the *surviving* text for leftovers (long digit runs, DOB-style lines, phones/emails, identity labels, Epic chrome) and lists them as review chips, with flagged lines highlighted in the diff and a one-click **Build rule** for any finding.
+- **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever.
+- **Pipeline & Rules page** — every cleaning rule is editable in the app: enable/disable, reorder, add/edit regex patterns (with live match counts against a sample), tune NLP redaction entities and thresholds, tune the review checks, and save any rule set as a named **preset** (import/export as JSON).
+- **Custom Scripts** — write your own cleaning stage in Python (`clean(text, ctx)`) in the built-in editor; anything is possible: block removal, redactions, restructuring, counters for the stats tracker.
+- **Statistics dashboard** — every run is recorded locally: total characters removed, average reduction, PHI redactions by type, a per-day chart, and **which stages clean the most**.
+- **Config backups** — every rules save keeps a timestamped copy (`data/backups/`, newest 5) with a restore list in Settings.
+- **100% local** — the app binds to `127.0.0.1` only, stores everything under the project folder (`data/`), and makes no network calls.
 
----
-
-## What you need
-
-| Requirement | Notes |
-|-------------|--------|
-| **Python 3.10+** | **3.11–3.12** is the most reliable on Windows for Presidio/spaCy wheels. |
-| **Internet (first install only)** | `pip` downloads packages and the spaCy model (`en-core-web-sm`). |
-| **Write access** | To the project folder (virtual environment lives in `.venv/`). |
-
-**Clipboard mode** uses [`pyperclip`](https://pypi.org/project/pyperclip/) (macOS, Windows, Linux with a clipboard backend).
+**Not** a guarantee of de-identification under HIPAA or other rules — review output before sharing.
 
 ---
 
-## Quick start by platform
+## Quick start
 
 ### macOS
 
-1. Open **Terminal** and go to this folder:
+```bash
+cd /path/to/chart-cleaner
+./install.sh          # once: creates .venv, installs deps (needs internet)
+./run-app.command     # the app — opens in your browser
+```
 
-   ```bash
-   cd /path/to/scripts
-   ```
-
-2. Run setup once:
-
-   ```bash
-   chmod +x install.sh clean-chart
-   ./install.sh
-   ```
-
-3. **Clipboard:** copy chart text, then:
-
-   ```bash
-   ./clean-chart
-   ```
-
-   Cleaned text replaces the clipboard. Use `./clean-chart -h` for files and folders.
+`run-app.command` is double-clickable in Finder (it runs the install automatically on first use).
 
 ### Windows
 
-1. Install Python from [python.org](https://www.python.org/downloads/) if needed:
-   - Enable **“Add python.exe to PATH”**.
-   - For PCs **without admin**: leave **“Install for all users”** unchecked (per-user install).
+1. Install Python 3.10+ from [python.org](https://www.python.org/downloads/) for **your user only**, with **"Add python.exe to PATH"** checked.
+2. Double-click **`Run Chart Cleaner.bat`** — first run installs everything into `.venv`, then the app opens in your browser.
 
-2. Open **Command Prompt** or **PowerShell**, `cd` to this folder.
+(Alternatively run `install.bat` once, then `Run Chart Cleaner.bat`.)
 
-3. Run setup **once** (pick one):
+The app picks the first free port from 8765 and prints the URL; close the terminal window (or Ctrl+C) to quit.
 
-   | Method | Command |
-   |--------|---------|
-   | **CMD only** (good for locked-down PCs, no PowerShell policy issues) | `install.bat` |
-   | **PowerShell** | `.\install.ps1` or `powershell -ExecutionPolicy Bypass -File .\install.ps1` |
-
-4. **Clipboard:** copy chart text, then run `clean-chart.cmd` from that folder, or double-click **`Clean_Medical_Chart.cmd`**.
-
----
-
-## How to run it
-
-### Clipboard (no arguments)
-
-1. Copy the raw chart from Epic (or any source) to the clipboard.
-2. Run the launcher with **no** `-f` / `-d`:
-
-   | Platform | Command |
-   |----------|---------|
-   | macOS | `./clean-chart` |
-   | Windows | `clean-chart.cmd` or double-click `Clean_Medical_Chart.cmd` |
-
-3. Paste wherever you need; the clipboard now holds the cleaned text.
-
-If the clipboard is empty, the tool exits with an error message.
-
-### Single file
+### CLI (still available)
 
 ```bash
-# macOS
-./clean-chart -f /path/to/chart.txt
-
-# Windows
-clean-chart.cmd -f C:\path\to\chart.txt
+./clean-chart                 # macOS/Linux: clipboard in → cleaned out
+clean-chart.cmd               # Windows
+./clean-chart -f chart.txt    # single file  (-d dir for batch, -o out, --no-wrap)
+./clean-chart --audit         # also print post-run review findings
 ```
 
-Output: `cleaned_charts/<name>_cleaned.txt` (see `-o` below).
+The CLI prints the same per-stage statistics as the app.
 
-### Folder batch (`.txt` only)
+---
+
+## The cleaning pipeline
+
+Stages run top-to-bottom (you can reorder them in the app):
+
+| # | Stage | What it does |
+|---|-------|--------------|
+| 1 | EMR line metadata | Deletes whole lines matching regexes (author/pager/version lines, Epic chrome). |
+| 2 | Boilerplate blocks | Deletes multi-line blocks (disclaimers, empty SmartSections). |
+| 3 | Structured PHI patterns | Regex→replacement pairs (MRN, DOB, phone lines…). |
+| 4 | NLP redaction (Presidio) | NLP-based redaction of names/phones/emails, with allow-list and confidence threshold. |
+| 5 | Literal replacements | Abbreviations and text fixes (e.g. *hypertension* → *HTN*). |
+| 6 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs. |
+| 7 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
+| 8 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
+| 9 | Header promotion | Turns known section headers into `## Header`. |
+| 10 | Bullet normalization | Normalizes •, *, - bullets. |
+| 11+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
+
+Output is wrapped in `<patient_chart>…</patient_chart>` unless disabled (Settings page or `--no-wrap`).
+
+---
+
+## Customizing — as deep as you want
+
+### 1. Edit the built-in rules (Pipeline & Rules page)
+
+Every stage is a card: toggle it, reorder it with the arrow buttons, and edit its patterns, replacements, or thresholds inline. Each pattern shows a live **hit count** against the test text so you can see exactly what a regex will catch before saving. Save writes `config.json` (a `.bak` of the previous version is kept); invalid regexes are caught before saving.
+
+`config.json` remains fully documented and hand-editable — the app simply edits it for you.
+
+### 2. Presets
+
+Save the current rules as a named preset (e.g. *"Neuro-ICU strict"*, *"Light clean"*), switch presets from the Clean page, share them as JSON files (export/import). Factory defaults can be restored with one click.
+
+### 3. Custom Python rules (Custom Scripts page)
+
+Drop a `.py` file into `custom_rules/` (or create it in the app). It becomes a reorderable pipeline stage:
+
+```python
+LABEL = "Redact long ID numbers"
+DESCRIPTION = "Masks standalone 6+ digit numbers."
+PLACEHOLDER = False
+
+import re
+
+def clean(text: str, ctx) -> str:
+    new_text, n = re.subn(r"\b\d{6,}\b", "[REDACTED_NUMBER]", text)
+    ctx.count("numbers_redacted", n)   # shows up in the Statistics tracker
+    ctx.log(f"Masked {n} long number(s).")
+    return new_text
+```
+
+- `ctx.count(key, n)` — counters for the stats tracker; `ctx.log(...)` — notes in run details; `ctx.config` — read-only view of `config.json`.
+- Use any stdlib or installed package (thefuzz, presidio, …).
+- The editor validates syntax, runs the script against the test text, and reports errors.
+- **Scripts run with your user's full privileges** — only add code you wrote or reviewed.
+- Two worked examples ship in `custom_rules/`.
+
+---
+
+## Where your data lives
+
+| Path | Contents |
+|------|----------|
+| `config.json` | Cleaning rules (presets in `presets/`) |
+| `data/stats.jsonl` | One line per cleaning run — the statistics history |
+| `data/audit_hits.jsonl` | One line per run — which leftover patterns the audit saw |
+| `data/backups/` | Timestamped config backups (newest 5, restorable in Settings) |
+| `data/exports/` | Downloaded results (auto-pruned after 24 h) |
+| `custom_rules/` | Your Python cleaning stages |
+
+Everything stays on this machine. Delete `data/` to reset all history.
+
+---
+
+## The post-run review (audit)
+
+Cleaning rules remove what they match; the review tells you what *survived*. After each
+run, five read-only checks scan the cleaned output:
+
+| Check | What it flags |
+|-------|---------------|
+| Long digit runs | Standalone numbers of 6+ digits (MRN / accession style) |
+| Label-adjacent dates | DOB-style dates on birth-date-labelled lines |
+| Phone / email | Phone-shaped numbers and email addresses |
+| Names after labels | Values after `Patient:`, `Next of Kin:` … that are not placeholders |
+| Residual EMR chrome | Known Epic noise lines (editor, pager, version stamps) |
+
+Findings appear as an expandable review strip on the Clean page and as `--audit` output
+in the CLI. Every check is toggleable on the Pipeline & Rules page ("Review checks"),
+and none of them can change the cleaned text — they only look.
+
+Findings feed the **Suggestions** section on the Pipeline page: once a finding type has
+survived 3+ runs in the last 30 days, a card proposes a ready-made rule (live match count
+included). Adopting opens the rule in the stage editor — nothing is saved without your
+confirmation. "Dismiss forever" silences a suggestion for good.
+
+Config saves are also protected: every save drops a timestamped backup into
+`data/backups/` (newest 5), restorable from Settings. And when the app starts and its
+default port is taken by **another copy of itself**, it simply opens the running one
+instead of starting a second instance.
+
+---
+
+## How the tracker works
+
+Each run records before/after counts of characters, words and lines, per-stage match counts and character deltas, PHI redactions by type, and duration. The Statistics page aggregates: total characters removed, average reduction %, top stages by contribution, PHI breakdown, and a per-day chart. The CLI prints the same summary per file.
+
+---
+
+### Standalone app (no Python needed)
+
+Build a self-contained app bundle once (on each platform), then share or copy it like any other app:
 
 ```bash
-# macOS
-./clean-chart -d /path/to/folder
-
-# Windows
-clean-chart.cmd -d C:\path\to\folder
+./build_app.sh        # macOS  → dist/Chart Cleaner.app
+build_app.bat         # Windows → dist\ChartCleaner\ChartCleaner.exe
 ```
 
-Every `*.txt` in that directory is processed. Outputs go under `cleaned_charts/` by default.
+The bundle includes Python, Presidio, and the spaCy model. On first launch it creates `config.json`, `custom_rules/`, and `data/` **next to the app**, so your rules and history stay there. Quit via Settings → "Quit app"; logs land in `data/app.log`.
 
-### CLI options
+## Requirements
 
-| Option | Description |
-|--------|-------------|
-| `-f`, `--file` | Path to one text file. |
-| `-d`, `--dir` | Path to a directory of `.txt` files. |
-| `-o`, `--out` | Output directory for file/dir modes (default: `cleaned_charts`). |
-| `--no-wrap` | Omit the `<patient_chart>` wrapper; plain cleaned text only. |
-| `-h`, `--help` | Show help. |
+| Requirement | Notes |
+|-------------|-------|
+| **Python 3.10+** (3.11–3.12 recommended) | Presidio/spaCy wheels are most reliable there. |
+| **Internet (first install only)** | pip downloads packages and the spaCy model wheel. |
+| **Write access** to this folder | The venv lives in `.venv/`. |
 
-Direct Python (after venv exists):
+Clipboard mode uses [`pyperclip`](https://pypi.org/project/pyperclip/). The app binds to `127.0.0.1` only and strips external font CDNs so it works fully offline.
+
+> **Note:** older versions of `requirements.txt` listed `en-core-web-sm` from PyPI, which does not exist — it now installs the official spaCy model wheel directly.
+
+---
+
+## Options & troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Port already in use | The app auto-picks the next free port; or run `python app.py --port 9000`. |
+| Don't want a browser window | `python app.py --no-browser`, then open the printed URL. |
+| "NLP redaction skipped" warning | Presidio or the spaCy model is missing — re-run `install.sh` / `install.bat`. |
+| Regex errors on save | The Pipeline page validates before saving; fix the highlighted pattern. |
+| Windows "cannot run scripts" | Use `Run Chart Cleaner.bat` / `install.bat` (no PowerShell policy needed). |
+| No admin rights | Everything installs under this folder with per-user Python — no elevation needed. |
+
+`python app.py --help` for all launch options.
+
+---
+
+## Roadmap — further enhancements
+
+Ideas that would take this tool further (implemented ideas live in Settings → "Ideas"):
+
+- **Folder watcher** — auto-clean files dropped into a watched directory.
+- **.docx / .pdf input** via python-docx / pdfplumber.
+- **Rule packs** — community presets with a review workflow.
+- **Recent runs** — reopen or re-run a previous cleaned output in one click.
+- **Weekly self-report** — scheduled summary of cleaning statistics.
+
+---
+
+## Tests
 
 ```bash
-# macOS
-.venv/bin/python medical_cleaner.py [args...]
-
-# Windows
-.venv\Scripts\python.exe medical_cleaner.py [args...]
+python -m pytest        # from this folder (needs the venv active)
 ```
 
+The suite covers every audit check (positives and known-safe negatives), store
+persistence (suggestions, dismissals, backup rotation and restore), a golden-file test
+so engine changes can't silently alter cleaning output (`CHARTCLEANER_REGEN_GOLDEN=1`
+regenerates it), and a build test that renders every app page.
+
 ---
 
-## macOS Dock / double-click app
+## Project layout
 
-`Clean_Medical_Chart.applescript` runs the **`clean-chart`** script in the **same folder as the app** (not a hardcoded home path). Place:
-
-- `Clean Medical Chart.app`
-- `clean-chart`
-- `medical_cleaner.py`, `config.json`, `.venv`, etc.
-
-in one directory (e.g. `~/scripts`).
-
-**Rebuild the app** after editing the AppleScript:
-
-```bash
-osacompile -o "Clean Medical Chart.app" Clean_Medical_Chart.applescript
 ```
+app.py                  # the desktop app (NiceGUI, local web UI)
+medical_cleaner.py      # CLI entrypoint (same engine)
+chartcleaner/
+  engine.py             # stage pipeline + per-stage statistics + custom-rule loader
+  audit.py              # post-run review: leftover-PHI checks + rule suggestions
+  store.py              # history, preferences, presets, exports, backups
+  default_config.json   # factory-default rules (restore from Settings)
+config.json             # your current rules (hand-editable)
+custom_rules/           # your Python cleaning stages (examples included)
+data/                   # run history + exports (gitignored)
+presets/                # named rule presets (gitignored)
+tests/                  # pytest suite + golden file
 
-On success you get a notification; on failure, a dialog with the error.
-
-### Windows optional dialog
-
-`Clean_Medical_Chart.ps1` runs clipboard mode and shows a **success** message box. If script execution is blocked, use `Clean_Medical_Chart.cmd` instead or create a shortcut:
-
-`powershell.exe -ExecutionPolicy Bypass -File "C:\path\to\Clean_Medical_Chart.ps1"`
-
----
-
-## Locked-down or no-admin computers
-
-- **Everything installs under this folder** (`.venv` + packages). You do **not** need Administrator if Python is installed **for your user only** and you can write to the project directory (Desktop, Documents, USB if allowed).
-- Prefer **`install.bat`** on Windows if PowerShell execution policy is restricted.
-- **Corporate networks:** if `pip install` fails, you may need a proxy exception or an internal PyPI mirror—ask IT.
-- **Copying a pre-built `.venv` from another machine** is fragile (paths, Python version, OS). Prefer running `install.sh` / `install.bat` on each machine when possible.
-
----
-
-## Configuration (`config.json`)
-
-Place **`config.json` next to `medical_cleaner.py`**. The file must include these **required** top-level keys (the shipped file is a working Epic-oriented example):
-
-| Key | Purpose |
-|-----|---------|
-| `emr_line_metadata` | Array of regex strings: whole lines to remove (author lines, “Filed:”, Epic chrome, etc.). |
-| `boilerplate` | Array of regex strings: multi-line or large blocks to strip (disclaimers, empty SmartSections, revision history, etc.). |
-| `epic_phi_patterns` | Array of `[pattern, replacement]` pairs for structured PHI (MRN, DOB lines, contact lines, etc.). |
-| `literal_replacements` | Array of `[pattern, replacement]` for abbreviations and small text fixes. |
-| `clinical_headers` | Header names (without regex); matching lines become Markdown-style `## Header`. |
-
-**Optional:**
-
-| Key | Purpose |
-|-----|---------|
-| `duplicate_note_detection` | `enabled` (default true), `split_pattern`, `min_body_chars`, `similarity_threshold` — fold near-duplicate Epic note blocks (uses fuzzy match on note bodies). |
-| `nlp_allow_list` | Lowercase tokens Presidio should **not** redact as person names (e.g. drug names that look like people). |
-
-Invalid JSON or missing required keys causes a clear error and exit.
-
----
-
-## Processing pipeline (order)
-
-1. Remove lines matching `emr_line_metadata`.
-2. Remove regions matching `boilerplate`.
-3. Apply `epic_phi_patterns` substitutions.
-4. **Presidio** analysis for `PERSON`, `PHONE_NUMBER`, `EMAIL_ADDRESS` (with `nlp_allow_list`).
-5. Apply `literal_replacements`.
-6. Trim trailing spaces; collapse excessive blank lines.
-7. **Duplicate note** folding (if enabled).
-8. **Fuzzy paragraph** deduplication (similar paragraphs collapsed).
-9. Promote `clinical_headers` to `## …`; normalize simple bullet prefixes.
-10. Optionally wrap in `<patient_chart>…</patient_chart>`.
-
----
-
-## Troubleshooting
-
-| Problem | What to try |
-|---------|--------------|
-| `No virtual environment found` | Run `./install.sh` (Mac) or `install.bat` / `install.ps1` (Windows) from this folder. |
-| `Clipboard is empty` | Copy text again; on Linux ensure a clipboard tool is available for `pyperclip`. |
-| `Clipboard error: …` | See stderr; sometimes another app locks the clipboard—retry. |
-| spaCy / model errors | Use the pinned stack in `requirements.txt`; do not rely on `python -m spacy download` alone if pip is not visible to spaCy. |
-| Regex errors on startup | `config.json` contains an invalid pattern; the error names the key and index. |
-| Windows: “cannot run scripts” | Use `install.bat` and `Clean_Medical_Chart.cmd`, or `powershell -ExecutionPolicy Bypass -File …`. |
-
----
+install.sh / clean-chart            # macOS/Linux venv setup + CLI launcher
+run-app.command                     # macOS app launcher (double-click)
+install.bat / install.ps1 / clean-chart.cmd / Run Chart Cleaner.bat   # Windows
+Clean_Medical_Chart.*               # clipboard-only helpers (unchanged)
+sample_chart.txt        # synthetic demo chart — try "Load sample chart" in the app
+```
 
 ## Privacy and compliance
 
-This tool **reduces** obvious PHI and EMR noise; it is **not** a guarantee of de-identification under HIPAA or other rules. **You** are responsible for what you paste, store, or send to third parties. Review output before sharing. Adjust `config.json` and Presidio settings for your institution’s policy.
-
----
-
-## Project layout (reference)
-
-```
-medical_cleaner.py      # CLI entrypoint
-config.json             # Rules and optional NLP allow-list
-requirements.txt        # Python dependencies
-
-install.sh              # macOS / Linux venv setup
-clean-chart             # macOS/Linux launcher
-
-install.bat             # Windows venv setup (CMD)
-install.ps1             # Windows venv setup (PowerShell)
-clean-chart.cmd         # Windows launcher
-Clean_Medical_Chart.cmd # Windows clipboard-only (double-click)
-Clean_Medical_Chart.ps1 # Windows clipboard + success dialog
-
-Clean_Medical_Chart.applescript   # Source for macOS app
-Clean Medical Chart.app           # Optional; rebuild with osacompile
-```
-
----
+This tool **reduces** obvious PHI and EMR noise; it is **not** a guarantee of de-identification under HIPAA or other rules. **You** are responsible for what you paste, store, or send to third parties. Review output before sharing. Adjust rules and Presidio settings for your institution's policy.
 
 ## License
 

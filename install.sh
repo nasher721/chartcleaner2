@@ -10,9 +10,11 @@ fi
 
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
+chmod +x clean-chart run-app.command 2>/dev/null || true
 
 echo ""
 echo "Setup complete. From this folder run:"
-echo "  ./clean-chart              # clipboard in → cleaned out"
-echo "  ./clean-chart -h           # file / folder options"
+echo "  ./run-app.command           # the Chart Cleaner app (opens in your browser)"
+echo "  ./clean-chart               # clipboard in -> cleaned out (CLI)"
+echo "  ./clean-chart -h            # CLI file / folder options"
 echo ""

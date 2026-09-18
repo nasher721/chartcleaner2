@@ -4,6 +4,12 @@ __pycache__/
 *.egg-info/
 cleaned_charts/
 Clean Medical Chart.app/
+data/
+presets/
+config.json.bak
 
 .cursor/
 .DS_Store
+build/
+dist/
+.mimosa/

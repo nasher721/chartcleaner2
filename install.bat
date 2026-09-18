@@ -38,8 +38,8 @@ if errorlevel 1 exit /b 1
 
 echo.
 echo Setup complete. From this folder run:
+echo   "Run Chart Cleaner.bat"     (the app - double-click, opens in browser^)
 echo   clean-chart.cmd              (clipboard in -^> cleaned out^)
 echo   clean-chart.cmd -h           (file / folder options^)
-echo   Clean_Medical_Chart.cmd      (clipboard only, double-click^)
 echo.
 exit /b 0

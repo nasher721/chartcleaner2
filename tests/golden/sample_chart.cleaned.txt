@@ -1,0 +1,64 @@
+<patient_chart>
+Note Type: Oncology Progress Note
+Filed: 09/15/2026 0712
+Date of Service: 09/15/2026
+Status: Signed
+Location 1: Neuroscience ICU Bed 4
+[REDACTED_NAME_LINE]
+[REDACTED_DOB]
+[REDACTED_ID]
+[REDACTED_PHONE][REDACTED_CONTACT]
+jane.doe@example.com
+
+Progress Notes by Sarah Chen, MD
+## Subjective
+Patient is a 58-year-old woman with HTN, HLD, and a
+subarachnoid hemorrhage (SAH) admitted following coiling of a ruptured
+anterior communicating artery aneurysm. Overnight she remained at
+neurologic baseline without new headache, nausea, or vision change.
+External ventricular drain continues to drain at 10 cm H2O, output
+approximately 40 mL over the last shift, CSF clear. • Family at bedside
+reports she is answering questions appropriately. • Denies chest pain or
+shortness of breath.
+## Objective
+## Vitals
+Temp 36.8 C, HR 72, BP 138/76, RR 16, SpO2 98% on room air.
+## Labs
+WBC 8.2, Hgb 11.4, Plt 244, Na 141, K 3.9, Glucose 108.
+POC Glucose 108. ABGs pending.
+## Imaging
+CT head without contrast (Accession 8847362519) performed 09/14 at 22:10
+demonstrates stable post-coiling changes without hydrocephalus. MRI BRAIN
+WO IVCON ordered for tomorrow to evaluate for vasospasm.
+
+TECHNIQUE: Routine noncontrast MRI protocol including diffusion and SWI
+sequences was performed. No gadolinium was administered for this
+examination.
+## Assessment & Plan
+1. SAH, Hunt-Hess 2, Fisher 3, post-coiling day 4.
+- Continue nicardipine drip, titrate SBP < 160.
+- Nimodipine 60 mg PO q4h.
+- Transcranial Dopplers daily; watch for delayed cerebral ischemia.
+2. EVD in place. Continue draining at 10 cm H2O. Overread By : Dr. Fake
+3. HTN and HLD — continue home regimen when diet resumes.
+4. Prophylaxis: VTE Prophylaxis with SCDs only given aneurysm coiled day 4;
+ will discuss chemical prophylaxis with neurosurgery today.
+## Physical Exam
+- General: alert, oriented to person, place, and year.
+- Cranial nerves II-XII grossly intact.
+- Motor: 5/5 all extremities. Sensation intact.
+- GCS 15 (GCS).
+
+Risk Factors:
+Family history of aneurysmal subarachnoid hemorrhage in mother (age 61).
+Smoking history 20 pack-years, quit 2019. HTN nonadherent with
+therapy prior to admission. Referral ID 559301882 for genetic counseling
+service follow-up.
+
+Progress Notes by Sarah Chen, MD
+## Assessment & Plan
+1. SAH, Hunt-Hess 2, Fisher 3, post-coiling day 4.
+- Continue nicardipine drip, titrate SBP < 160.
+- Nimodipine 60 mg PO q4h.
+[REDACTED_SIGNATURE_LINE]
+</patient_chart>

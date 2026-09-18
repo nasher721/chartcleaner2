@@ -26,8 +26,7 @@ if (-not (Test-Path $venvPy)) {
 
 Write-Host ""
 Write-Host "Setup complete. From this folder run:"
+Write-Host '  ."Run Chart Cleaner.bat"       # the app (double-click, opens in browser)'
 Write-Host "  .\clean-chart.cmd              # clipboard in -> cleaned out"
 Write-Host "  .\clean-chart.cmd -h           # file / folder options"
-Write-Host "  .\Clean_Medical_Chart.cmd      # clipboard only (double-click, no PowerShell)"
-Write-Host "  .\Clean_Medical_Chart.ps1      # clipboard + dialog (optional)"
 Write-Host ""
