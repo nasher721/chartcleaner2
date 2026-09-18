@@ -1976,10 +1976,17 @@ app.add_static_files("/exports", str(store.EXPORTS_DIR))
 # ---------------------------------------------------------------------------
 
 def _free_port(start: int) -> int:
-    for p in range(start, start + 25):
+    """First port uvicorn can actually bind. A connect probe is not enough:
+    a socket may be bound without listening (e.g. an outbound connection's
+    local port), which passes connect_ex but fails uvicorn's bind."""
+    for p in range(start, start + 50):
         with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", p)) != 0:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("127.0.0.1", p))
                 return p
+            except OSError:
+                continue
     return start
 
 
