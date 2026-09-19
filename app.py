@@ -47,6 +47,7 @@ from chartcleaner.engine import (
     BUILTIN_STAGE_IDS,
     CUSTOM_RULE_TEMPLATE,
     STAGE_LABELS,
+    DEFAULT_WHITESPACE,
     ConfigError,
     Pipeline,
     CleanContext,
@@ -671,8 +672,13 @@ STAGE_EDITORS = {
     "fuzzy_dedup": ("fuzzy", "fuzzy_dedup"),
     "nlp_redaction": ("nlp", None),
     "tokenize_phi": ("tokenize", "tokenization"),
-    "whitespace": ("fixed", None),
-    "bullets": ("fixed", None),
+    "unicode_normalize": ("unicode", "unicode_normalize"),
+    "timestamps": ("timestamps", "timestamp_removal"),
+    "sections": ("sections", "section_filter"),
+    "whitespace": ("whitespace", "whitespace"),
+    "caps_normalize": ("caps", "caps_normalize"),
+    "bullets": ("bullets", "bullets"),
+    "line_length": ("line_length", "line_length"),
 }
 
 STAGE_DESCRIPTIONS = {
@@ -682,11 +688,16 @@ STAGE_DESCRIPTIONS = {
     "phi_patterns": "Regex → replacement pairs for structured PHI (MRN, DOB, phone lines).",
     "nlp_redaction": "Presidio NLP redaction: entity types, replacements, confidence threshold and allow-list.",
     "literal_replacements": "Regex → replacement pairs for abbreviations and text fixes.",
-    "whitespace": "Trims trailing spaces and collapses 3+ blank lines. Always sensible.",
+    "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
+    "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
+    "sections": "Off by default. Drop only the listed sections, or keep only the listed ones. Section boundaries come from your header list unless you supply boundary headers.",
+    "whitespace": "Trims trailing spaces and collapses 3+ blank lines by default; seven further switches (CRLF, leading indent, tabs, double spaces, edge trim…).",
     "duplicate_notes": "Folds near-duplicate Epic note blocks (same note pasted twice) by comparing bodies.",
     "fuzzy_dedup": "Collapses paragraphs that are nearly identical (copy-forwarded text).",
-    "headers": "Lines matching one of these names become Markdown '## Header' headings. Optionally let medspaCy detect section titles instead.",
-    "bullets": "Normalizes •, * and - bullet prefixes to '- '.",
+    "headers": "Lines matching one of these names become Markdown headings. Choose the heading level, bold style, colon retention, or restrict to ALL-CAPS lines. Optionally let medspaCy detect section titles instead.",
+    "caps_normalize": "Off by default. Rewrites long ALL-CAPS lines into sentence case, preserving chosen acronyms.",
+    "bullets": "Normalizes •, * and - bullet prefixes to a marker you choose. Optionally converts numbered lists and drops empty bullets.",
+    "line_length": "Off by default. Truncates or wraps lines longer than a set width (wrap keeps indentation).",
 }
 
 STAGE_FLAGS = {
@@ -899,6 +910,9 @@ def pipeline_page():
             return bool((draft.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":
             return bool((draft.get("fuzzy_dedup") or {}).get("enabled", True))
+        so = (draft.get("stage_options") or {}).get(sid)
+        if isinstance(so, dict) and "enabled" in so:
+            return bool(so["enabled"])
         return True
 
     def move_stage(sid: str, delta: int) -> None:
@@ -920,6 +934,8 @@ def pipeline_page():
             draft.setdefault("duplicate_note_detection", {})["enabled"] = flag
         elif sid == "fuzzy_dedup":
             draft.setdefault("fuzzy_dedup", {})["enabled"] = flag
+        else:
+            draft.setdefault("stage_options", {}).setdefault(sid, {})["enabled"] = flag
         refresh_stages()
 
     def refresh_stages() -> None:
@@ -956,14 +972,24 @@ def pipeline_page():
             del lst[pos]
 
     def pattern_row(lst: list, pos: int, pattern: str, replacement: str | None = None,
-                    flags: int = re.IGNORECASE) -> None:
+                    flags: int = re.IGNORECASE, sid: str | None = None) -> None:
         with ui.row().classes("w-full items-center gap-2"):
             p_in = ui.input(value=pattern).props("outlined dense").classes("flex-grow cc-mono")
             r_in = None
             if replacement is not None:
                 r_in = ui.input(value=replacement).props("outlined dense label='→ replace with'") \
                     .classes("flex-grow")
+            case_sw = None
+            if sid:
+                case_sw = ui.switch("Aa", value=bool(((draft.get("stage_options") or {})
+                                                      .get(sid, {}) or {}).get("case_sensitive", False))) \
+                    .tooltip("Case sensitive matching for this stage")
             count_lbl = ui.label("").classes("text-xs opacity-70 w-24")
+
+            def current_flags() -> int:
+                if sid and case_sw is not None and case_sw.value:
+                    return flags & ~re.IGNORECASE
+                return flags
 
             def sync() -> None:
                 try:
@@ -973,12 +999,17 @@ def pipeline_page():
                         lst[pos] = p_in.value
                 except IndexError:
                     return
-                n = count_matches(p_in.value, PIPE_TEST["text"], flags)
+                n = count_matches(p_in.value, PIPE_TEST["text"], current_flags())
                 count_lbl.set_text(f"{n} hits" if n >= 0 else "bad regex")
 
             p_in.on_value_change(lambda e: sync())
             if r_in is not None:
                 r_in.on_value_change(lambda e: sync())
+            if case_sw is not None:
+                def set_case(e) -> None:
+                    draft.setdefault("stage_options", {}).setdefault(sid, {})["case_sensitive"] = e.value
+                    sync()
+                case_sw.on_value_change(set_case)
             sync()
 
             def remove() -> None:
@@ -1066,9 +1097,9 @@ def pipeline_page():
 
             for i, item in enumerate(list(lst)):
                 if is_pairs and isinstance(item, list) and len(item) == 2:
-                    pattern_row(lst, i, pattern=item[0], replacement=item[1], flags=flags)
+                    pattern_row(lst, i, pattern=item[0], replacement=item[1], flags=flags, sid=sid)
                 elif not is_pairs and isinstance(item, str):
-                    pattern_row(lst, i, pattern=item, flags=flags)
+                    pattern_row(lst, i, pattern=item, flags=flags, sid=sid)
                 else:
                     ui.label(f"⚠ malformed entry #{i}").classes("text-red-500 text-xs")
             ui.button("Add " + ("pair" if is_pairs else "pattern"), icon="add", on_click=add_row) \
@@ -1103,6 +1134,19 @@ def pipeline_page():
                 ui.label("medspaCy is not installed — choosing its engine will fall back to this "
                          "regex list. pip install medspacy to enable.").classes("text-xs opacity-60")
 
+            ho = draft.setdefault("header_options", {})
+            with ui.grid().classes("grid-cols-2 gap-3 w-full mt-2"):
+                ui.select(options={1: "H1 (# Header)", 2: "H2 (## Header)", 3: "H3 (### Header)",
+                                   4: "H4 (#### Header)", 5: "H5 (##### Header)", 6: "H6 (###### Header)"},
+                          value=int(ho.get("level") or 2), label="Heading level",
+                          on_change=lambda e: ho.update(level=int(e.value))).classes("w-full")
+                ui.switch("Bold style (**Header**)", value=bool(ho.get("bold")),
+                          on_change=lambda e: ho.update(bold=e.value))
+                ui.switch("Keep trailing colon", value=bool(ho.get("keep_colon")),
+                          on_change=lambda e: ho.update(keep_colon=e.value))
+                ui.switch("Only ALL-CAPS lines", value=bool(ho.get("uppercase_only")),
+                          on_change=lambda e: ho.update(uppercase_only=e.value))
+
             def add_header() -> None:
                 lst.append("New Header")
                 refresh_stages()
@@ -1115,6 +1159,158 @@ def pipeline_page():
                               on_click=lambda p=i: (list_del(lst, p), refresh_stages())) \
                         .props("flat dense round color=grey")
             ui.button("Add header", icon="add", on_click=add_header).props("outline dense")
+
+        elif kind == "whitespace":
+            o = draft.setdefault("whitespace", {})
+            ui.label("Trailing-space trim, blank-line collapse and final trim are on by default "
+                     "(the long-standing behavior); everything else is opt-in.") \
+                .classes("text-xs opacity-70")
+            with ui.grid().classes("grid-cols-2 gap-2 w-full"):
+                for opt, desc in (("crlf_to_lf", "Convert CRLF / CR line endings to LF"),
+                                  ("trim_trailing", "Trim trailing spaces/tabs per line"),
+                                  ("collapse_blank_lines", "Collapse 3+ blank lines to one blank line"),
+                                  ("collapse_spaces", "Collapse runs of 2+ spaces to one space"),
+                                  ("strip_leading", "Strip leading indentation on every line"),
+                                  ("normalize_tabs", "Convert tabs to four spaces"),
+                                  ("final_trim", "Trim blank lines at start/end of the chart")):
+                    ui.switch(desc, value=bool(o.get(opt, DEFAULT_WHITESPACE[opt])),
+                              on_change=lambda e, k=opt: o.update({k: e.value}))
+
+        elif kind == "bullets":
+            o = draft.setdefault("bullets", {})
+            with ui.grid().classes("grid-cols-2 gap-3 w-full"):
+                ui.select(options={"- ": "- (dash)", "• ": "• (bullet)", "* ": "* (asterisk)", "": "(strip marker)"},
+                          value=str(o.get("style") if o.get("style") is not None else "- "),
+                          label="Replacement marker",
+                          on_change=lambda e: o.update(style=e.value)).classes("w-full")
+                ui.input("Extra bullet glyphs (e.g. ›,»)",
+                         value="".join(o.get("extra_glyphs") or []),
+                         on_change=lambda e: o.update(extra_glyphs=list(e.value or ""))) \
+                    .props("outlined dense").classes("w-full")
+                ui.switch("Normalize numbered lists (1. / 1) → marker)",
+                          value=bool(o.get("normalize_numbered")),
+                          on_change=lambda e: o.update(normalize_numbered=e.value))
+                ui.switch("Drop empty bullet lines", value=bool(o.get("skip_empty")),
+                          on_change=lambda e: o.update(skip_empty=e.value))
+
+        elif kind == "unicode":
+            o = draft.setdefault("unicode_normalize", {})
+            ui.label("All off by default — flip on what your charts need. Runs before the "
+                     "regex stages, so patterns can assume plain characters.") \
+                .classes("text-xs opacity-70")
+            with ui.grid().classes("grid-cols-2 gap-2 w-full"):
+                for opt, desc in (("quotes", "Curly quotes → straight (\u201c \u201d \u2019 …)"),
+                                  ("dashes", "En/em dashes & minus → hyphen (– — −)"),
+                                  ("nbsp", "Non-breaking spaces → normal spaces"),
+                                  ("zero_width", "Strip zero-width characters & BOM"),
+                                  ("ellipsis", "… → ..."),
+                                  ("ligatures", "Ligatures → letters (ﬁ → fi)")):
+                    ui.switch(desc, value=bool(o.get(opt)),
+                              on_change=lambda e, k=opt: o.update({k: e.value}))
+
+        elif kind == "timestamps":
+            o = draft.setdefault("timestamp_removal", {})
+            ui.switch("Remove dates/times", value=bool(o.get("enabled")),
+                      on_change=lambda e: o.update(enabled=e.value))
+            ui.input("Replace with (empty = delete)", value=str(o.get("replacement") or ""),
+                     on_change=lambda e: o.update(replacement=e.value)) \
+                .props("outlined dense").classes("w-full")
+            with ui.row().classes("w-full items-center gap-4 flex-wrap"):
+                ui.switch("Include built-in date patterns (ISO, US, 'Mar 5, 2024')",
+                          value=bool(o.get("builtin_patterns", True)),
+                          on_change=lambda e: o.update(builtin_patterns=e.value))
+                ui.switch("Also remove clock times (12:30, 9:45 pm)",
+                          value=bool(o.get("remove_clock_times")),
+                          on_change=lambda e: o.update(remove_clock_times=e.value))
+            ui.label("Extra patterns (one regex per row, run after the built-ins):") \
+                .classes("text-xs opacity-70 mt-1")
+            pats = o.setdefault("extra_patterns", [])
+
+            for i, p in enumerate(list(pats)):
+                if not isinstance(p, str):
+                    continue
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.input(value=p, on_change=lambda e, k=i: list_set(pats, k, e.value)) \
+                        .props("outlined dense").classes("flex-grow cc-mono")
+                    ui.button(icon="delete",
+                              on_click=lambda k=i: (list_del(pats, k), refresh_stages())) \
+                        .props("flat dense round color=grey")
+
+            def add_ts_pattern() -> None:
+                pats.append("")
+                refresh_stages()
+
+            ui.button("Add pattern", icon="add", on_click=add_ts_pattern).props("outline dense")
+
+        elif kind == "sections":
+            o = draft.setdefault("section_filter", {})
+            ui.select(options={"off": "Off", "drop": "Drop listed sections",
+                               "keep": "Keep only listed sections"},
+                      value=str(o.get("mode") or "off"), label="Mode",
+                      on_change=lambda e: o.update(mode=e.value)).classes("w-64")
+            ui.label("Section header names, one per row:") \
+                .classes("text-xs opacity-70 mt-1")
+            names = o.setdefault("sections", [])
+            for i, h in enumerate(list(names)):
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.input(value=h, on_change=lambda e, k=i: list_set(names, k, e.value)) \
+                        .props("outlined dense").classes("flex-grow")
+                    ui.button(icon="delete",
+                              on_click=lambda k=i: (list_del(names, k), refresh_stages())) \
+                        .props("flat dense round color=grey")
+
+            def add_section() -> None:
+                names.append("")
+                refresh_stages()
+
+            ui.button("Add section name", icon="add", on_click=add_section).props("outline dense")
+
+            ui.label("Section boundaries: text between one boundary header and the next is one "
+                     "section. Leave empty to reuse the Header stage's header list. 'Keep text "
+                     "before the first section' preserves the preamble.") \
+                .classes("text-xs opacity-70 mt-2")
+            ui.switch("Keep text before the first section", value=bool(o.get("keep_preamble", True)),
+                      on_change=lambda e: o.update(keep_preamble=e.value))
+            bounds = o.setdefault("boundary_headers", [])
+            for i, h in enumerate(list(bounds)):
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.input(value=h, on_change=lambda e, k=i: list_set(bounds, k, e.value)) \
+                        .props("outlined dense").classes("flex-grow")
+                    ui.button(icon="delete",
+                              on_click=lambda k=i: (list_del(bounds, k), refresh_stages())) \
+                        .props("flat dense round color=grey")
+
+            def add_boundary() -> None:
+                bounds.append("")
+                refresh_stages()
+
+            ui.button("Add boundary header", icon="add", on_click=add_boundary).props("outline dense")
+
+        elif kind == "caps":
+            o = draft.setdefault("caps_normalize", {})
+            ui.select(options={"off": "Off", "sentence": "Rewrite to sentence case"},
+                      value=str(o.get("mode") or "off"), label="Mode",
+                      on_change=lambda e: o.update(mode=e.value)).classes("w-64")
+            ui.number("Minimum line length (shorter ALL-CAPS lines like headings are kept)",
+                      value=int(o.get("min_chars") or 40), min=1, format="%.0f",
+                      on_change=lambda e: o.update(min_chars=int(e.value or 40))).classes("w-96")
+            ui.input("Acronyms to preserve (comma-separated, e.g. MRI, ICU, SAH)",
+                     value=", ".join(o.get("preserve_words") or []),
+                     on_change=lambda e: o.update(
+                         preserve_words=[w.strip() for w in (e.value or "").split(",") if w.strip()])) \
+                .props("outlined dense").classes("w-full")
+
+        elif kind == "line_length":
+            o = draft.setdefault("line_length", {})
+            ui.select(options={"off": "Off", "truncate": "Truncate long lines",
+                               "wrap": "Wrap long lines"},
+                      value=str(o.get("mode") or "off"), label="Mode",
+                      on_change=lambda e: o.update(mode=e.value)).classes("w-64")
+            ui.number("Max characters per line", value=int(o.get("max_chars") or 200),
+                      min=10, format="%.0f",
+                      on_change=lambda e: o.update(max_chars=int(e.value or 200))).classes("w-72")
+            ui.input("Truncation marker", value=str(o.get("marker") or "…"),
+                     on_change=lambda e: o.update(marker=e.value)).props("outlined dense").classes("w-40")
 
         elif kind == "dedup_notes":
             d = draft.setdefault("duplicate_note_detection", {})

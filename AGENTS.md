@@ -7,6 +7,7 @@
 ## Learned Workspace Facts
 
 - Core cleaner lives in `medical_cleaner.py` beside `config.json`; rules (regex lists, headers, `nlp_allow_list`, duplicate-note settings) stay in JSON, not hardcoded in Python.
+- Every builtin stage is option-driven now: whitespace/bullets/headers have option groups (`whitespace`, `bullets`, `header_options` in config.json), the four regex stages honor `stage_options.<stage_id>.case_sensitive` and `stage_options.<stage_id>.enabled`, and five opt-in stages exist (`unicode_normalize`, `timestamps` → `timestamp_removal`, `sections` → `section_filter`, `caps_normalize`, `line_length`). Defaults all reproduce pre-option behavior — `tests/golden` depends on that; `tests/test_options.py` covers each group.
 - Clipboard workflow uses a `clean-chart` helper script beside the app; `Clean_Medical_Chart.applescript` resolves the parent folder of the app/script and runs that `clean-chart`, then shows a notification (re-run `osacompile` after editing the applescript).
 - Stack includes Presidio plus spaCy `en_core_web_sm`; downloading or verifying spaCy models requires `pip` or `uv` available in the environment (spaCy’s installer errors if neither is found).
 - Pipeline targets Epic-style exports: strip line-level metadata and boilerplate, optional structuring for LLMs, and configurable near-duplicate note folding per `config.json`.

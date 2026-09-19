@@ -67,12 +67,17 @@ Stages run top-to-bottom (you can reorder them in the app):
 | 3 | Structured PHI patterns | Regex→replacement pairs (MRN, DOB, phone lines…). |
 | 4 | NLP redaction (Presidio) | NLP-based redaction of names/phones/emails, with allow-list and confidence threshold. |
 | 5 | Literal replacements | Abbreviations and text fixes (e.g. *hypertension* → *HTN*). |
-| 6 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs. |
-| 7 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
-| 8 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
-| 9 | Header promotion | Turns known section headers into `## Header` — or lets medspaCy's sectionizer detect them (`headers_engine: medspacy`). |
-| 10 | Bullet normalization | Normalizes •, *, - bullets. |
-| 11+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
+| 6 | Unicode normalization | *New, off by default.* Curly quotes, en/em dashes, non-breaking spaces, zero-width chars, ellipses and ligatures → plain equivalents. |
+| 7 | Timestamp removal | *New, off by default.* Removes dates (ISO, US, "Mar 5, 2024") and optionally clock times, with your own extra patterns and replacement text. |
+| 8 | Section keep/drop | *New, off by default.* Drop only the listed sections, or keep only those — great for "labs only" or "no imaging" exports. |
+| 9 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs — plus opt-in CRLF→LF, double-space collapse, de-indent, and tab conversion. |
+| 10 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
+| 11 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
+| 12 | Header promotion | Turns known section headers into Markdown headings — pick the level (`#`…`######`), bold `**Header**` style, colon retention, or restrict to ALL-CAPS lines. medspaCy sectionizer still optional (`headers_engine: medspacy`). |
+| 13 | ALL-CAPS normalization | *New, off by default.* Rewrites long shouting lines into sentence case, preserving acronyms you list (MRI, ICU…). |
+| 14 | Bullet normalization | Normalizes •, *, - bullets — pick the marker, convert numbered lists, drop empty bullets, add your own glyphs. |
+| 15 | Long-line handling | *New, off by default.* Truncates or wraps lines over a width; wrapping keeps indentation. |
+| 16+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
 
 Off by default, between stages 2 and 3: **Reversible tokenization** — swaps structured PHI for stable `[[T1]]` codes (same value ⇒ same token) and saves the value→token map so the text can be restored later.
 
@@ -86,7 +91,16 @@ Output is wrapped in `<patient_chart>…</patient_chart>` unless disabled (Setti
 
 Every stage is a card: toggle it, reorder it with the arrow buttons, and edit its patterns, replacements, or thresholds inline. Each pattern shows a live **hit count** against the test text so you can see exactly what a regex will catch before saving. Save writes `config.json` (a `.bak` of the previous version is kept); invalid regexes are caught before saving.
 
-`config.json` remains fully documented and hand-editable — the app simply edits it for you.
+**Every stage has knobs now** — roughly forty options across the built-ins:
+
+- *Per-stage case sensitivity* — each regex stage (metadata, boilerplate, PHI patterns, literal replacements) has an `Aa` switch; flip it on when letter case matters.
+- *Whitespace* — seven switches: CRLF→LF, trailing trim, blank-line collapse, double-space collapse, de-indent, tabs→spaces, edge trim.
+- *Bullets* — replacement marker (`- ` / `• ` / `* ` / strip), numbered-list conversion, empty-bullet dropping, extra glyphs.
+- *Headers* — heading level, bold style, keep the colon, ALL-CAPS-only promotion.
+- *Unicode / timestamps / sections / caps / line length* — the five newer stages above, all opt-in with straightforward editors.
+- *Any stage* can be disabled via `stage_options.<stage_id>.enabled: false` in `config.json`, same as the Enabled toggle in the app.
+
+`config.json` remains fully documented and hand-editable — the app simply edits it for you. All option groups validate on save; unknown keys and values are reported, never silently dropped.
 
 ### 2. Presets
 

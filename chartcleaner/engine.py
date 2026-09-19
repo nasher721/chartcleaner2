@@ -37,6 +37,14 @@ __all__ = [
     "CUSTOM_RULE_TEMPLATE",
     "BUILTIN_STAGE_IDS",
     "STAGE_LABELS",
+    "DEFAULT_WHITESPACE",
+    "DEFAULT_BULLETS",
+    "DEFAULT_HEADER_OPTIONS",
+    "DEFAULT_UNICODE",
+    "DEFAULT_TIMESTAMPS",
+    "DEFAULT_SECTIONS",
+    "DEFAULT_CAPS",
+    "DEFAULT_LINE_LENGTH",
 ]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -56,11 +64,16 @@ BUILTIN_STAGE_IDS = [
     "phi_patterns",
     "nlp_redaction",
     "literal_replacements",
+    "unicode_normalize",
+    "timestamps",
+    "sections",
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
     "headers",
+    "caps_normalize",
     "bullets",
+    "line_length",
 ]
 
 STAGE_LABELS = {
@@ -70,11 +83,16 @@ STAGE_LABELS = {
     "nlp_redaction": "NLP redaction (Presidio)",
     "tokenize_phi": "Reversible tokenization",
     "literal_replacements": "Literal replacements",
+    "unicode_normalize": "Unicode normalization",
+    "timestamps": "Timestamp removal",
+    "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
     "fuzzy_dedup": "Fuzzy paragraph dedup",
     "headers": "Header promotion",
+    "caps_normalize": "ALL-CAPS normalization",
     "bullets": "Bullet normalization",
+    "line_length": "Long-line handling",
 }
 
 # kind drives the editor the app shows for a stage
@@ -85,11 +103,16 @@ STAGE_KINDS = {
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
-    "whitespace": "fixed",
+    "unicode_normalize": "unicode",
+    "timestamps": "timestamps",
+    "sections": "sections",
+    "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
     "fuzzy_dedup": "fuzzy",
     "headers": "headers",
-    "bullets": "fixed",
+    "caps_normalize": "caps",
+    "bullets": "bullets",
+    "line_length": "line_length",
 }
 
 DEFAULT_NOTE_SPLIT = r"(?=^(?:Progress Notes by .+|Attestation signed by .+)$)"
@@ -98,6 +121,62 @@ DEFAULT_NLP_ENTITIES = {
     "PERSON": "[REDACTED_NAME]",
     "PHONE_NUMBER": "[REDACTED_PHONE]",
     "EMAIL_ADDRESS": "[REDACTED_EMAIL]",
+}
+
+# Per-stage option groups. Every default below reproduces the stage's original
+# hardcoded behavior, so existing configs are unaffected until a key is set.
+DEFAULT_WHITESPACE = {
+    "crlf_to_lf": False,        # convert CRLF / lone CR to LF
+    "trim_trailing": True,      # remove trailing spaces/tabs per line
+    "collapse_blank_lines": True,  # 3+ newlines -> one blank line
+    "collapse_spaces": False,   # runs of 2+ spaces -> one space
+    "strip_leading": False,     # remove leading indentation on every line
+    "normalize_tabs": False,    # tabs -> four spaces
+    "final_trim": True,         # strip blank edges of the whole text
+}
+DEFAULT_BULLETS = {
+    "style": "- ",              # replacement marker ("" strips the marker)
+    "normalize_numbered": False,  # "1." / "1)" prefixes -> style marker
+    "skip_empty": False,        # drop bullet lines that have no text
+    "extra_glyphs": [],         # extra leading chars treated as bullets
+}
+DEFAULT_HEADER_OPTIONS = {
+    "level": 2,                 # markdown heading level (# = 1, ## = 2, ...)
+    "bold": False,              # emit "**Header**" instead of markdown "#"
+    "keep_colon": False,        # keep a trailing colon on promoted headers
+    "uppercase_only": False,    # only promote lines written in ALL CAPS
+}
+DEFAULT_UNICODE = {
+    "quotes": False,            # curly quotes -> straight
+    "dashes": False,            # en/em/minus dashes -> hyphen
+    "nbsp": False,              # non-breaking spaces -> normal spaces
+    "zero_width": False,        # strip zero-width joiners/BOM characters
+    "ellipsis": False,          # … -> ...
+    "ligatures": False,         # ﬁ/ﬂ/... -> fi/fl/...
+}
+DEFAULT_TIMESTAMPS = {
+    "enabled": False,
+    "replacement": "",
+    "builtin_patterns": True,   # include the shipped date/time patterns
+    "extra_patterns": [],       # user regexes, run after the built-ins
+    "remove_clock_times": False,  # also strip 12:30 / 12:30:45 pm style times
+}
+DEFAULT_SECTIONS = {
+    "mode": "off",              # off | drop (remove listed) | keep (only listed)
+    "sections": [],             # header names to drop or keep
+    "boundary_headers": [],     # what counts as a section header (empty = use
+                                # the Header stage's clinical_headers list)
+    "keep_preamble": True,      # text before the first section header
+}
+DEFAULT_CAPS = {
+    "mode": "off",              # off | sentence
+    "min_chars": 40,            # only lines at least this long are rewritten
+    "preserve_words": [],       # acronyms kept uppercase (MRI, ICU, ...)
+}
+DEFAULT_LINE_LENGTH = {
+    "mode": "off",              # off | truncate | wrap
+    "max_chars": 200,
+    "marker": "…",              # appended when truncating
 }
 
 
@@ -210,6 +289,116 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
                 re.compile(rf"^\s*({h})\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
             except re.error as e:
                 errors.append(f"clinical_headers[{h!r}]: invalid regex ({e})")
+
+    def check_option_group(key: str, defaults: dict, types: dict[str, tuple]) -> dict | None:
+        val = cfg.get(key)
+        if val is None:
+            return None
+        if not isinstance(val, dict):
+            errors.append(f"{key}: must be an object")
+            return None
+        for fname, (ok_types, extra) in types.items():
+            if fname not in val:
+                continue
+            v = val[fname]
+            if not isinstance(v, ok_types):
+                errors.append(f"{key}.{fname}: wrong type (expected {extra})")
+        for k in val:
+            if k not in defaults:
+                warnings.append(f"{key}.{k}: unknown option (kept as-is, ignored)")
+        return val
+
+    def check_name_list(val: Any, context: str) -> None:
+        if not isinstance(val, list) or not all(isinstance(x, str) and x for x in val):
+            errors.append(f"{context}: must be a list of non-empty names")
+            return
+        for i, name in enumerate(val):
+            try:
+                re.compile(rf"^\s*({name})\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
+            except re.error as e:
+                errors.append(f"{context}[{i}] {name!r}: invalid regex ({e})")
+
+    check_option_group("whitespace", DEFAULT_WHITESPACE,
+                       {k: ((bool,), "true/false") for k in DEFAULT_WHITESPACE})
+
+    check_option_group("bullets", DEFAULT_BULLETS, {
+        "style": ((str,), "a short string"),
+        "normalize_numbered": ((bool,), "true/false"),
+        "skip_empty": ((bool,), "true/false"),
+    })
+
+    ho = check_option_group("header_options", DEFAULT_HEADER_OPTIONS, {
+        "level": ((int,), "integer 1–6"),
+        "bold": ((bool,), "true/false"),
+        "keep_colon": ((bool,), "true/false"),
+        "uppercase_only": ((bool,), "true/false"),
+    })
+    if ho is not None and isinstance(ho.get("level"), int) and not 1 <= ho["level"] <= 6:
+        warnings.append("header_options.level: expected 1–6")
+
+    check_option_group("unicode_normalize", DEFAULT_UNICODE,
+                       {k: ((bool,), "true/false") for k in DEFAULT_UNICODE})
+
+    ts = check_option_group("timestamp_removal", DEFAULT_TIMESTAMPS, {
+        "enabled": ((bool,), "true/false"),
+        "replacement": ((str,), "a string"),
+        "builtin_patterns": ((bool,), "true/false"),
+        "extra_patterns": ((list,), "a list of regex strings"),
+        "remove_clock_times": ((bool,), "true/false"),
+    })
+    if ts is not None and isinstance(ts.get("extra_patterns"), list):
+        for i, p in enumerate(ts["extra_patterns"]):
+            check_regex(p, f"timestamp_removal.extra_patterns[{i}]", re.IGNORECASE)
+
+    sf = check_option_group("section_filter", DEFAULT_SECTIONS, {
+        "mode": ((str,), "'off', 'drop' or 'keep'"),
+        "sections": ((list,), "a list of header names"),
+        "boundary_headers": ((list,), "a list of header names"),
+        "keep_preamble": ((bool,), "true/false"),
+    })
+    if sf is not None:
+        mode = sf.get("mode", "off")
+        if isinstance(mode, str) and mode not in ("off", "drop", "keep"):
+            errors.append("section_filter.mode: must be 'off', 'drop' or 'keep'")
+        check_name_list(sf.get("sections"), "section_filter.sections")
+        if sf.get("boundary_headers"):
+            check_name_list(sf.get("boundary_headers"), "section_filter.boundary_headers")
+
+    cp = check_option_group("caps_normalize", DEFAULT_CAPS, {
+        "mode": ((str,), "'off' or 'sentence'"),
+        "min_chars": ((int,), "a positive integer"),
+        "preserve_words": ((list,), "a list of words"),
+    })
+    if cp is not None:
+        if isinstance(cp.get("mode"), str) and cp["mode"] not in ("off", "sentence"):
+            errors.append("caps_normalize.mode: must be 'off' or 'sentence'")
+        if isinstance(cp.get("min_chars"), int) and cp["min_chars"] < 1:
+            warnings.append("caps_normalize.min_chars: expected a positive integer")
+
+    ll = check_option_group("line_length", DEFAULT_LINE_LENGTH, {
+        "mode": ((str,), "'off', 'truncate' or 'wrap'"),
+        "max_chars": ((int,), "an integer ≥ 10"),
+        "marker": ((str,), "a short string"),
+    })
+    if ll is not None:
+        if isinstance(ll.get("mode"), str) and ll["mode"] not in ("off", "truncate", "wrap"):
+            errors.append("line_length.mode: must be 'off', 'truncate' or 'wrap'")
+        if isinstance(ll.get("max_chars"), int) and ll["max_chars"] < 10:
+            warnings.append("line_length.max_chars: expected an integer ≥ 10")
+
+    so = cfg.get("stage_options")
+    if so is not None:
+        if not isinstance(so, dict):
+            errors.append("stage_options: must be an object mapping stage id -> options")
+        else:
+            for sid, opts in so.items():
+                if not isinstance(opts, dict):
+                    errors.append(f"stage_options.{sid}: must be an object")
+                    continue
+                if "case_sensitive" in opts and not isinstance(opts["case_sensitive"], bool):
+                    errors.append(f"stage_options.{sid}.case_sensitive: must be true/false")
+                if "enabled" in opts and not isinstance(opts["enabled"], bool):
+                    errors.append(f"stage_options.{sid}.enabled: must be true/false")
 
     d = cfg.get("duplicate_note_detection") or {}
     if not isinstance(d, dict):
@@ -351,6 +540,9 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "duplicate_note_detection", "fuzzy_dedup", "nlp_redaction", "nlp_allow_list",
         "wrap_output", "wrap_tag", "stage_order", "custom_rules", "audit",
         "tokenization", "headers_engine", "ingest",
+        "whitespace", "bullets", "header_options", "unicode_normalize",
+        "timestamp_removal", "section_filter", "caps_normalize", "line_length",
+        "stage_options",
     }
     for k in cfg:
         if k not in known_keys:
@@ -477,7 +669,19 @@ class CleanContext:
 # builtin stage runners: fn(text, config, ctx) -> (text, matches, details)
 # ---------------------------------------------------------------------------
 
-def _run_regex_list(text: str, cfg: dict, ctx: CleanContext, key: str, flags: int):
+def _stage_opts(cfg: dict, sid: str) -> dict:
+    """Per-stage options from config['stage_options'][sid] (missing -> {})."""
+    so = cfg.get("stage_options")
+    if not isinstance(so, dict):
+        return {}
+    opts = so.get(sid)
+    return opts if isinstance(opts, dict) else {}
+
+
+def _run_regex_list(text: str, cfg: dict, ctx: CleanContext, key: str, flags: int,
+                    sid: str | None = None):
+    if sid and _stage_opts(cfg, sid).get("case_sensitive"):
+        flags &= ~re.IGNORECASE
     total = 0
     for pattern in cfg[key]:
         r = _compile(pattern, flags)
@@ -486,22 +690,87 @@ def _run_regex_list(text: str, cfg: dict, ctx: CleanContext, key: str, flags: in
     return text, total, {}
 
 
-def _run_regex_pairs(text: str, cfg: dict, ctx: CleanContext, key: str, phi: bool = False):
+def _run_regex_pairs(text: str, cfg: dict, ctx: CleanContext, key: str, phi: bool = False,
+                     sid: str | None = None):
+    flags = re.IGNORECASE
+    if sid and _stage_opts(cfg, sid).get("case_sensitive"):
+        flags = 0
     total = 0
     for pattern, replacement in cfg[key]:
-        r = _compile(pattern, re.IGNORECASE)
+        r = _compile(pattern, flags)
         text, n = r.subn(replacement, text)
         total += n
     return text, total, ({"phi": {"pattern_redactions": total}} if phi else {})
 
 
 def _run_whitespace(text: str, cfg: dict, ctx: CleanContext):
-    text, n1 = re.subn(r"[ \t]+$", "", text, flags=re.MULTILINE)
-    text, n2 = re.subn(r"\n{3,}", "\n\n", text)
-    return text.strip(), n1 + n2, {}
+    o = {**DEFAULT_WHITESPACE, **(cfg.get("whitespace") or {})}
+    n = 0
+    if o.get("crlf_to_lf"):
+        text, k = re.subn(r"\r\n?", "\n", text)
+        n += k
+    if o.get("strip_leading"):
+        text, k = re.subn(r"^[ \t]+", "", text, flags=re.MULTILINE)
+        n += k
+    if o.get("normalize_tabs"):
+        text, k = re.subn(r"\t", "    ", text)
+        n += k
+    if o.get("trim_trailing"):
+        text, k = re.subn(r"[ \t]+$", "", text, flags=re.MULTILINE)
+        n += k
+    if o.get("collapse_spaces"):
+        text, k = re.subn(r"[ ]{2,}", " ", text)
+        n += k
+    if o.get("collapse_blank_lines"):
+        text, k = re.subn(r"\n{3,}", "\n\n", text)
+        n += k
+    if o.get("final_trim"):
+        stripped = text.strip()
+        if stripped != text:
+            n += 1
+        text = stripped
+    return text, n, {}
+
+
+def _run_bullets(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_BULLETS, **(cfg.get("bullets") or {})}
+    style = str(o.get("style") if o.get("style") is not None else "- ")
+    glyphs = "[•\\-*" + re.escape("".join(g for g in (o.get("extra_glyphs") or []) if isinstance(g, str))) + "]"
+    total = 0
+    if o.get("skip_empty"):
+        text, k = re.subn(rf"^\s*{glyphs}[ \t]*$\n?", "", text, flags=re.MULTILINE)
+        total += k
+    if o.get("normalize_numbered"):
+        text, k = re.subn(rf"^\s*\d+[.)]\s+", style, text, flags=re.MULTILINE)
+        total += k
+    text, k = re.subn(rf"^\s*{glyphs}\s+", style, text, flags=re.MULTILINE)
+    total += k
+    return text, total, {}
 
 
 def _run_headers(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_HEADER_OPTIONS, **(cfg.get("header_options") or {})}
+    try:
+        level = max(1, min(6, int(o.get("level") or 2)))
+    except (TypeError, ValueError):
+        level = 2
+    bold = bool(o.get("bold"))
+    keep_colon = bool(o.get("keep_colon"))
+    upper_only = bool(o.get("uppercase_only"))
+
+    def styled(title: str, colon: str) -> str:
+        if bold:
+            return f"**{title}{colon}**"
+        return f"{'#' * level} {title}{colon}"
+
+    def make_replacement(match: re.Match) -> str:
+        if upper_only:
+            letters = [c for c in match.group(1) if c.isalpha()]
+            if letters and not all(c.isupper() for c in letters):
+                return match.group(0)
+        colon = (match.group(2) or "") if keep_colon else ""
+        return styled(match.group(1), colon)
+
     total = 0
     engine = (cfg.get("headers_engine") or "regex").lower()
     if engine == "medspacy":
@@ -512,21 +781,17 @@ def _run_headers(text: str, cfg: dict, ctx: CleanContext):
                 # Replace longest-first so nested title fragments are safe.
                 out, n = text, 0
                 for title, start, end in sorted(sections, key=lambda s: -s[1]):
-                    out = out[:start] + f"## {title}" + out[end:]
+                    out = out[:start] + styled(title, "") + out[end:]
                     n += 1
                 return out, n, {"engine": "medspacy"}
         except Exception as e:
             ctx.log(f"medspaCy section engine unavailable ({e}); using regex headers.")
     for h in cfg["clinical_headers"]:
-        r = _compile(rf"^\s*({h})\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
-        text, n = r.subn(r"## \1", text)
+        pat = rf"^\s*({h})(\s*:)?\s*$" if keep_colon else rf"^\s*({h})\s*:?\s*$"
+        r = _compile(pat, re.IGNORECASE | re.MULTILINE)
+        text, n = r.subn(make_replacement, text)
         total += n
     return text, total, {}
-
-
-def _run_bullets(text: str, cfg: dict, ctx: CleanContext):
-    text, n = re.subn(r"^\s*[•\-*]\s+", "- ", text, flags=re.MULTILINE)
-    return text, n, {}
 
 
 def _run_duplicate_notes(text: str, cfg: dict, ctx: CleanContext):
@@ -598,6 +863,168 @@ def _run_fuzzy_dedup(text: str, cfg: dict, ctx: CleanContext):
         else:
             deduped.append(p)
     return "\n\n".join(deduped), dropped, {"paragraphs_kept": len(deduped)}
+
+
+# --- new optional stages -----------------------------------------------------
+
+_UNICODE_MAPS = {
+    "quotes": [("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
+               ("\u201a", ","), ("\u201e", '"')],
+    "dashes": [("\u2013", "-"), ("\u2014", "-"), ("\u2212", "-")],
+    "nbsp": [("\u00a0", " ")],
+    "zero_width": [("\u200b", ""), ("\u200c", ""), ("\u200d", ""), ("\ufeff", "")],
+    "ellipsis": [("\u2026", "...")],
+    "ligatures": [("\ufb00", "ff"), ("\ufb01", "fi"), ("\ufb02", "fl"),
+                  ("\ufb03", "ffi"), ("\ufb04", "ffl")],
+}
+
+
+def _run_unicode(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_UNICODE, **(cfg.get("unicode_normalize") or {})}
+    total = 0
+    for opt, pairs in _UNICODE_MAPS.items():
+        if not o.get(opt):
+            continue
+        for old, new in pairs:
+            text, k = re.subn(re.escape(old), new, text)
+            total += k
+    return text, total, {}
+
+
+BUILTIN_TIMESTAMP_PATTERNS = [
+    r"\b\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?(?:\s?(?:Z|[+-]\d{2}:?\d{2}))?\b",
+    r"\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\b",
+    r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}"
+    r"(?:,?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:[APap]\.?[Mm]\.?)?)?\b",
+]
+CLOCK_TIME_PATTERN = r"(?<![\d:])\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[APap]\.?[Mm]\.?)?\b(?![\d:])"
+
+
+def _run_timestamps(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_TIMESTAMPS, **(cfg.get("timestamp_removal") or {})}
+    if not o.get("enabled"):
+        return text, 0, {}
+    repl = str(o.get("replacement") or "")
+    pats = list(o.get("extra_patterns") or [])
+    if o.get("builtin_patterns", True):
+        pats = BUILTIN_TIMESTAMP_PATTERNS + pats
+    total = 0
+    for p in pats:
+        if not isinstance(p, str) or not p:
+            continue
+        try:
+            r = re.compile(p, re.IGNORECASE)
+        except re.error:
+            ctx.log(f"bad timestamp pattern skipped: {p!r}")
+            continue
+        text, k = r.subn(repl, text)
+        total += k
+    if o.get("remove_clock_times"):
+        text, k = re.subn(CLOCK_TIME_PATTERN, repl, text)
+        total += k
+    return text, total, {}
+
+
+def _run_sections(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_SECTIONS, **(cfg.get("section_filter") or {})}
+    mode = str(o.get("mode") or "off")
+    if mode not in ("drop", "keep"):
+        return text, 0, {}
+    names = [n for n in (o.get("sections") or []) if isinstance(n, str) and n]
+    if not names:
+        return text, 0, {}
+    boundary = [b for b in (o.get("boundary_headers") or []) if isinstance(b, str) and b]
+    if not boundary:
+        boundary = [h for h in (cfg.get("clinical_headers") or []) if isinstance(h, str) and h]
+    if not boundary:
+        boundary = names
+    flags = re.IGNORECASE | re.MULTILINE
+    try:
+        bounds = [(m.start(), m.group(1))
+                  for m in re.finditer(rf"^[ \t]*({'|'.join(boundary)})[ \t]*:?[ \t]*$", text, flags)]
+        member_re = re.compile(rf"^[ \t]*(?:{'|'.join(names)})[ \t]*:?[ \t]*$", flags)
+    except re.error as e:
+        ctx.log(f"section_filter: bad header name ({e}); stage skipped.")
+        return text, 0, {}
+    if not bounds:
+        return text, 0, {}
+
+    keep_preamble = bool(o.get("keep_preamble", True))
+    first_start = bounds[0][0]
+    out = text[:first_start] if keep_preamble else ""
+    pos = first_start
+    removed: list[str] = []
+    for i, (start, header) in enumerate(bounds):
+        seg_end = bounds[i + 1][0] if i + 1 < len(bounds) else len(text)
+        is_member = member_re.match(text[start:seg_end].split("\n", 1)[0] + "\n") is not None
+        remove = is_member if mode == "drop" else not is_member
+        if remove:
+            removed.append(header.strip())
+            pos = seg_end
+        else:
+            out += text[pos:seg_end]
+            pos = seg_end
+    out += text[pos:]
+    return out, len(removed), {"sections_removed": removed}
+
+
+def _run_caps(text: str, cfg: dict, ctx: CleanContext):
+    o = {**DEFAULT_CAPS, **(cfg.get("caps_normalize") or {})}
+    if str(o.get("mode") or "off") != "sentence":
+        return text, 0, {}
+    try:
+        min_chars = max(1, int(o.get("min_chars") or 40))
+    except (TypeError, ValueError):
+        min_chars = 40
+    keep = [w for w in (o.get("preserve_words") or []) if isinstance(w, str) and w]
+    keep_re = (re.compile(r"\b(" + "|".join(re.escape(w) for w in keep) + r")\b", re.IGNORECASE)
+               if keep else None)
+    changed = 0
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if len(s) < min_chars or not s.isupper() or not any(c.isalpha() for c in s):
+            continue
+        low = s.lower()
+        low = low[0].upper() + low[1:]
+        if keep_re:
+            low = keep_re.sub(lambda m: m.group(1).upper(), low)
+        indent = line[:len(line) - len(line.lstrip())]
+        lines[i] = indent + low
+        changed += 1
+    return "\n".join(lines), changed, {}
+
+
+def _run_line_length(text: str, cfg: dict, ctx: CleanContext):
+    import textwrap
+
+    o = {**DEFAULT_LINE_LENGTH, **(cfg.get("line_length") or {})}
+    mode = str(o.get("mode") or "off")
+    try:
+        max_chars = int(o.get("max_chars") or 0)
+    except (TypeError, ValueError):
+        max_chars = 0
+    if mode == "off" or max_chars < 10:
+        return text, 0, {}
+    marker = str(o.get("marker") or "…")
+    count = 0
+    out: list[str] = []
+    for line in text.split("\n"):
+        if len(line) <= max_chars:
+            out.append(line)
+            continue
+        if mode == "truncate":
+            out.append(line[:max_chars].rstrip() + marker)
+        else:  # wrap, re-adding the line's own indentation to every piece
+            indent = line[:len(line) - len(line.lstrip())]
+            body = line[len(indent):]
+            wrapped = textwrap.wrap(body, width=max(1, max_chars - len(indent)),
+                                    break_long_words=False, break_on_hyphens=False,
+                                    subsequent_indent=indent) or [""]
+            out.append(indent + wrapped[0])
+            out.extend(wrapped[1:])
+        count += 1
+    return "\n".join(out), count, {}
 
 
 # --- Presidio NLP stage -----------------------------------------------------
@@ -677,17 +1104,22 @@ def _run_tokenize(text: str, cfg: dict, ctx: CleanContext):
 
 
 RUNNERS: dict[str, Callable] = {
-    "regex_lines": lambda t, c, x: _run_regex_list(t, c, x, "emr_line_metadata", re.IGNORECASE | re.MULTILINE),
-    "regex_lines_dotall": lambda t, c, x: _run_regex_list(t, c, x, "boilerplate", re.IGNORECASE | re.DOTALL | re.MULTILINE),
-    "regex_pairs_phi": lambda t, c, x: _run_regex_pairs(t, c, x, "epic_phi_patterns", phi=True),
+    "regex_lines": lambda t, c, x: _run_regex_list(t, c, x, "emr_line_metadata", re.IGNORECASE | re.MULTILINE, sid="metadata_lines"),
+    "regex_lines_dotall": lambda t, c, x: _run_regex_list(t, c, x, "boilerplate", re.IGNORECASE | re.DOTALL | re.MULTILINE, sid="boilerplate"),
+    "regex_pairs_phi": lambda t, c, x: _run_regex_pairs(t, c, x, "epic_phi_patterns", phi=True, sid="phi_patterns"),
     "nlp": _run_nlp,
     "tokenize": _run_tokenize,
-    "regex_pairs": lambda t, c, x: _run_regex_pairs(t, c, x, "literal_replacements"),
+    "regex_pairs": lambda t, c, x: _run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
+    "unicode": _run_unicode,
+    "timestamps": _run_timestamps,
+    "sections": _run_sections,
     "whitespace": _run_whitespace,
     "dedup_notes": _run_duplicate_notes,
     "fuzzy": _run_fuzzy_dedup,
     "headers": _run_headers,
+    "caps": _run_caps,
     "bullets": _run_bullets,
+    "line_length": _run_line_length,
 }
 
 KIND_TO_RUNNER = {
@@ -697,11 +1129,16 @@ KIND_TO_RUNNER = {
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
+    "unicode_normalize": "unicode",
+    "timestamps": "timestamps",
+    "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
     "fuzzy_dedup": "fuzzy",
     "headers": "headers",
+    "caps_normalize": "caps",
     "bullets": "bullets",
+    "line_length": "line_length",
 }
 
 
@@ -847,6 +1284,9 @@ class Pipeline:
             return bool((cfg.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":
             return bool((cfg.get("fuzzy_dedup") or {}).get("enabled", True))
+        so = _stage_opts(cfg, sid)
+        if "enabled" in so:
+            return bool(so["enabled"])
         return True
 
     def _build(self) -> list[StageSpec]:
