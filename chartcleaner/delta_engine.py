@@ -19,9 +19,10 @@ from thefuzz import fuzz
 __all__ = ["NoteSegment", "DeltaResult", "extract_note_deltas", "format_delta_timeline"]
 
 _DATE_HEADER_RE = re.compile(
-    r"(?im)^(?:Progress\s+Notes?\s+by\s+[^\n]+?(?:on\s+)?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})|"
+    r"(?im)^(?:Progress\s+Notes?\s+by\s+[^\n]+?(?:on|at)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})|"
     r"(?:Note\s+Date|Date\s+of\s+Service|DOS)\s*[:#]\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})|"
-    r"^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:Progress\s+Note|Daily\s+Note|SOAP\s+Note))"
+    r"^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:Progress\s+Note|Daily\s+Note|SOAP\s+Note)|"
+    r"^[A-Z][a-zA-Z,.\s\-]+ at (\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+\d{1,2}:\d{2})"
 )
 
 

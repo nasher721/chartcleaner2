@@ -88,6 +88,11 @@ def test_vital_signs_not_flagged_as_phone():
     assert count(r, "phone_email") == 0
 
 
+def test_fluid_balance_numbers_not_flagged_as_phone():
+    r = audit("Fluid Balance: 1250 500 1243\nIntake 1000 Output 500 Net +500")
+    assert count(r, "phone_email") == 0
+
+
 # -- label names ----------------------------------------------------------------
 
 def test_label_value_flagged():

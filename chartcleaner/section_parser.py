@@ -160,9 +160,9 @@ def _build_combined_regex() -> tuple[re.Pattern, dict[str, str]]:
     for domain, aliases in SECTION_TAXONOMY.items():
         for alias in aliases:
             grp_name = f"sec_{idx}"
-            # Matches header at start of line, optional markdown hash/bold, optional colon, and optional inline body
+            # Matches header at start of line, optional markdown hash/bold, word boundaries, and line end or colon
             pattern_parts.append(
-                rf"(?P<{grp_name}>^[ \t]*(?:#+[ \t]*|\*\*)?(?:{alias})(?:\*\*)?[ \t]*[:#]?[ \t]*(?=[^\n]*$))"
+                rf"(?P<{grp_name}>^[ \t]*(?:#+[ \t]*|\*\*)?(?:\b{alias}\b)(?:\*\*)?[ \t]*(?::[ \t]*$|:\s+[^\n]+$|$))"
             )
             group_to_domain[grp_name] = domain
             idx += 1

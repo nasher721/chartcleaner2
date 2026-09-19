@@ -1,6 +1,6 @@
 {
     "emr_line_metadata": [
-        "^\\s*(?:Frequency|Number of Occurrences|Order Comments|Linked Order|Dose|Route|Dispense|Refill|Auth\\.|Assoc\\. diagnoses):\\s*.*$\\n?",
+        "^\\s*(?:Frequency|Timing|Number of Occurrences|Order Comments|Linked Order|Dose|Route|Dispense|Refill|Auth\\.|Assoc\\. diagnoses|Referral Priority|Referral Type|Referral Reason|Number of Visits Requested|Expiration Date):\\s*.*$\\n?",
         "^\\s*Present on Admission:\\s*(?:Yes|No|Unknown).*$\\n?",
         "^\\s*Filed:.*?Date of Service:.*?Status:.*$\\n?",
         "^\\s*Editor:.*?(?:\\(.*?\\)|\\n)",
@@ -40,7 +40,9 @@
         "^\\s*SIGNED BY:\\s*.*$\\n?",
         "^\\s*Dictated by\\s*:.*$\\n?",
         "(?i)^\\s*electronically signed by:\\s*.*$\\n?",
-        "^THE NEURO ICU MANAGEMENT OF THIS PATIENT WAS DISCUSSED WITH THE NICU TEAM UNDER DR\\. BARRON\\s*$\\n?"
+        "^THE NEURO ICU MANAGEMENT OF THIS PATIENT WAS DISCUSSED WITH THE NICU TEAM UNDER DR\\. BARRON\\s*$\\n?",
+        "^\\s*(?:Process Instructions Reviewed By|STAT Orders Reviewed by|Admitting Provider|Ordering Party|Full Code Order Discussed With|Surrogate Decision Maker Relationship|Requestor Contact Info|AK Location|Transferring to)::?\\s*.*$\\n?",
+        "^\\s*(?:Implement nurse driven protocol|Follow nursing urinary catheter|Indication for Catheter|Discontinue urinary catheter when|Curved \\(Coud\u00e9\\) Catheter|Connected? to|Inserted?(?: in Surgery)?|Date of Surgery|Patient has an Artificial|Irrigate|Condition for Release of Order|Assessment type|Reason for Social Work|Consult Type|Enter Reassessment date\\.?|Was the Nursing Swallow Screen|Is respiratory status stable|Is patent NPO|Case Classification|Add-On|Line Type|Arterial line location)::?\\s*.*$\\n?"
     ],
     "boilerplate": [
         "The American Diabetes Association \\(ADA\\) provides guidance for cutoff values.*?meet the criteria for diagnosis of diabetes\\.",
@@ -71,48 +73,145 @@
         "I have repeated the examination and confirm the findings except as documented\\.",
         "PATIENT PROBLEMS I REVIEWED, REVISED AND/OR INITIATED: The care of this patient required my full attention and direct personal management of:",
         "STAFF COORDINATION OF CRITICAL CARE",
-        "PERSONAL INVOLVEMENT IN CARE: Reviewing initiation, responses and adjustments to therapies.*?with Staff Physician:.*?\\."
+        "PERSONAL INVOLVEMENT IN CARE: Reviewing initiation, responses and adjustments to therapies.*?with Staff Physician:.*?\\.",
+        "\\{[A-Za-z0-9\\s/_\\-\u2013:]+:\\d+\\}",
+        "\\.[A-Z0-9_]+\\[[^\\]\\n]*",
+        "@[A-Z0-9_]+@",
+        "This SmartSection is not supported in the current editor\\..*?(?=\\n|$)",
+        "The Accu-Chek Inform II glucose meter has not been approved.*?(?:Core lab, blood gas|instrument in the above situations\\.)",
+        "Estimated Glomerular Filtration Rate \\(eGFR\\) is calculated using the 2021 CKD-EPI creatinine equation.*?actual GFR\\.",
+        "This test is intended to aid in the early detection of pregnancy.*?presumptive diagnosis for pregnancy\\.",
+        "Viscoelastic testing is not intended for the monitoring of anticoagulation.*?platelet function\\.",
+        "Vitamin K Antagonist \\(VKA\\) Therapeutic Range:.*?(?:Nishimura RA, et al\\. JACC 2017.*?(\\n\\s*)+\\n|target INR of 2\\.5\\)\\n?)",
+        "Comment:\\s*Location:\\s*Cleveland Clinic[^\\n]*\\n?",
+        "={20,}\\s*\\n\\d{4}(?:\\s+[A-Za-z]+)?\\s*\\n(?:Empty\\s*\\n)?={20,}",
+        "STROKE 9 CARE AND PREVENTION CHECKLIST\\s*(?:\\d+\\.\\s*\\n+)+"
     ],
     "epic_phi_patterns": [
-        ["\\b(?:PID|MRN|MR#?|PT\\.?\\s*ID|Patient ID)\\s*[:#]?\\s*\\d+\\b", "[REDACTED_ID]"],
-        ["\\b(?:DOB|Date of Birth)\\s*[:.]?\\s*(?:\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b", "[REDACTED_DOB]"],
-        ["(?im)^\\s*PATIENT NAME:\\s*.+$", "[REDACTED_NAME_LINE]"],
-        ["(?im)^\\s*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$", "[REDACTED_NAME_LINE]"],
-        ["(?im)^\\s*Primary Emergency Contact:\\s*.+$", "[REDACTED_CONTACT]"],
-        ["\\bMobile Phone:\\s*[0-9\\-\\(\\)\\s.]+", "[REDACTED_PHONE]"],
-        ["(?im)^\\s*SIGNATURE:\\s*.+$", "[REDACTED_SIGNATURE_LINE]"]
+        [
+            "\\b(?:PID|MRN|MR#?|PT\\.?\\s*ID|Patient ID)\\s*[:#]?\\s*\\d+\\b",
+            "[REDACTED_ID]"
+        ],
+        [
+            "\\b(?:DOB|Date of Birth)\\s*[:.]?\\s*(?:\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?\\s+\\d{1,2},?\\s+\\d{4})\\b",
+            "[REDACTED_DOB]"
+        ],
+        [
+            "(?im)^\\s*PATIENT NAME:\\s*.+$",
+            "[REDACTED_NAME_LINE]"
+        ],
+        [
+            "(?im)^\\s*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$",
+            "[REDACTED_NAME_LINE]"
+        ],
+        [
+            "(?im)^\\s*Primary Emergency Contact:\\s*.+$",
+            "[REDACTED_CONTACT]"
+        ],
+        [
+            "\\bMobile Phone:\\s*[0-9\\-\\(\\)\\s.]+",
+            "[REDACTED_PHONE]"
+        ],
+        [
+            "(?im)^\\s*SIGNATURE:\\s*.+$",
+            "[REDACTED_SIGNATURE_LINE]"
+        ]
     ],
     "literal_replacements": [
-        ["\\bImpression:\\s*IMPRESSION:", "Impression:"],
-        ["\\bGLUCOSE, BLOOD \\(POC\\)", "POC Glucose"],
-        ["\\bHeart rate\\b", "HR"],
-        ["\\bMRI BRAIN WO IVCON\\b", "MR Brain wo contrast"],
-        ["\\bhypertension\\b", "HTN"],
-        ["\\bhyperlipidemia\\b", "HLD"],
-        ["\\bCerebrovascular accident\\b", "CVA"],
-        ["\\bArterial Blood Gases\\b", "ABGs"],
-        ["\\bGlasgow Coma Scale\\b", "GCS"],
-        ["\\bSocial History\\b", "SOCH"],
-        ["\\bpast surgical history\\b", "PSH"],
-        ["\\bpast medical history\\b", "PMH"],
-        [" {2,}", " "]
+        [
+            "\\bImpression:\\s*IMPRESSION:",
+            "Impression:"
+        ],
+        [
+            "\\bGLUCOSE, BLOOD \\(POC\\)",
+            "POC Glucose"
+        ],
+        [
+            "\\bHeart rate\\b",
+            "HR"
+        ],
+        [
+            "\\bMRI BRAIN WO IVCON\\b",
+            "MR Brain wo contrast"
+        ],
+        [
+            "\\bhypertension\\b",
+            "HTN"
+        ],
+        [
+            "\\bhyperlipidemia\\b",
+            "HLD"
+        ],
+        [
+            "\\bCerebrovascular accident\\b",
+            "CVA"
+        ],
+        [
+            "\\bArterial Blood Gases\\b",
+            "ABGs"
+        ],
+        [
+            "\\bGlasgow Coma Scale\\b",
+            "GCS"
+        ],
+        [
+            "\\bSocial History\\b",
+            "SOCH"
+        ],
+        [
+            "\\bpast surgical history\\b",
+            "PSH"
+        ],
+        [
+            "\\bpast medical history\\b",
+            "PMH"
+        ],
+        [
+            " {2,}",
+            " "
+        ]
     ],
     "clinical_headers": [
-        "Subjective", "Objective", "Assessment & Plan", "Plan",
-        "Vitals", "Labs", "Imaging", "Diagnostic tests",
-        "Lines, Drains, and Airways", "ICU Checklist",
-        "Neurology", "Neurological", "Cardiovascular", "Pulmonary",
-        "Gastrointestinal", "Endocrinology", "Infectious Disease",
-        "Hematology", "Renal", "EVD Data", "Physical Exam"
+        "Subjective",
+        "Objective",
+        "Assessment & Plan",
+        "Plan",
+        "Vitals",
+        "Labs",
+        "Imaging",
+        "Diagnostic tests",
+        "Lines, Drains, and Airways",
+        "ICU Checklist",
+        "Neurology",
+        "Neurological",
+        "Cardiovascular",
+        "Pulmonary",
+        "Gastrointestinal",
+        "Endocrinology",
+        "Infectious Disease",
+        "Hematology",
+        "Renal",
+        "EVD Data",
+        "Physical Exam"
     ],
     "duplicate_note_detection": {
         "enabled": true,
-        "split_pattern": "(?=^(?:Progress Notes by .+|Attestation signed by .+)$)",
+        "split_pattern": "(?=^(?:Progress Notes by .+|Attestation signed by .+|[A-Z][a-zA-Z,.\\s\\-]+ at \\d{1,2}/\\d{1,2}/\\d{2,4}\\s+\\d{1,2}:\\d{2}\\s*(?:[APap]\\.?[Mm]\\.?)?.*)$)",
         "min_body_chars": 400,
         "similarity_threshold": 90
     },
     "nlp_allow_list": [
-        "clevidipine", "precedex", "seroquel", "keppra", "gcs", "evd", "tpa", "tnk", "sah", "tbi", "ards"
+        "clevidipine",
+        "precedex",
+        "seroquel",
+        "keppra",
+        "gcs",
+        "evd",
+        "tpa",
+        "tnk",
+        "sah",
+        "tbi",
+        "ards"
     ],
     "audit": {
         "enabled": true,

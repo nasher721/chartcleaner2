@@ -13,3 +13,5 @@ config.json.bak
 build/
 dist/
 .mimosa/
+raw_chart*.txt
+cleaned_chart*.txt

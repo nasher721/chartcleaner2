@@ -80,7 +80,7 @@ DEFAULT_CHROME_PATTERNS = [
     r"^\s*Filed\s*:.*$",
 ]
 
-_PHONE_RE = r"(?<!\d)(?:\+?1[\s.\-]?)?(?:\(\d{3}\)|\d{3})[\s.\-]\d{3}[\s.\-]\d{4}(?!\d)"
+_PHONE_RE = r"(?<!\d)(?:(?:\+?1[\s.\-])|(?:\+1))?(?:\(\d{3}\)|\d{3})[\s.\-]\d{3}[\s.\-]\d{4}(?!\d)"
 _EMAIL_RE = r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"
 _DATE_LABEL_RE = r"(?im)^\s*(?:DOB|D\.O\.B\.|Date of Birth|Born\s*:)[^\n]{0,60}$"
 

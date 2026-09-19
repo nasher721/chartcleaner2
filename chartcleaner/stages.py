@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from .engine import CleanContext
 
-DEFAULT_NOTE_SPLIT = r"(?=^(?:Progress Notes by .+|Attestation signed by .+)$)"
+DEFAULT_NOTE_SPLIT = (
+    r"(?=^(?:Progress Notes by .+|Attestation signed by .+|"
+    r"[A-Z][a-zA-Z,.\s\-]+ at \d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2}\s*(?:[APap]\.?[Mm]\.?)?.*)$)"
+)
 
 DEFAULT_NLP_ENTITIES = {
     "PERSON": "[REDACTED_NAME]",
@@ -621,13 +624,17 @@ def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     if threshold is not None:
         results = [r for r in results if r.score >= threshold]
 
-    from .clinical_whitelist import is_clinical_term
+    from .clinical_whitelist import is_clinical_term, is_non_person_text
 
     protect_clinical = bool(ncfg.get("protect_clinical_terms", True))
     filtered = [
         r for r in results
         if text[r.start:r.end].lower() not in allow
-        and not (protect_clinical and r.entity_type == "PERSON" and is_clinical_term(text[r.start:r.end]))
+        and not (
+            protect_clinical
+            and r.entity_type == "PERSON"
+            and (is_clinical_term(text[r.start:r.end]) or is_non_person_text(text[r.start:r.end]))
+        )
     ]
 
     operators = {

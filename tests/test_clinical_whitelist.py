@@ -68,3 +68,33 @@ def test_nlp_stage_preserves_clinical_terms():
     assert "Plavix" in res.text
     assert "Levophed" in res.text
     assert "Colon" in res.text
+
+
+def test_is_non_person_text():
+    from chartcleaner.clinical_whitelist import is_non_person_text
+
+    # Punctuation / structural indicators
+    assert is_non_person_text("q1h\n- SBP<180") is True
+    assert is_non_person_text("APRN.CNP\tPATIENT NAME") is True
+    assert is_non_person_text("Creatine Kinase/CK") is True
+    assert is_non_person_text("SBP < 160") is True
+    assert is_non_person_text("pO2 > 80") is True
+    assert is_non_person_text("Dose: 50mg") is True
+    assert is_non_person_text("{Stroke Labs:211000880}") is True
+    assert is_non_person_text("10mg") is True
+    assert is_non_person_text("q4h") is True
+
+    # Genuine person names should not be rejected
+    assert is_non_person_text("John Smith") is False
+    assert is_non_person_text("Sarah Chen") is False
+    assert is_non_person_text("Sharleen Gaj") is False
+
+
+def test_expanded_clinical_whitelist():
+    assert is_clinical_term("straight cath") is True
+    assert is_clinical_term("Whole Blood") is True
+    assert is_clinical_term("Base Deficit") is True
+    assert is_clinical_term("carboxyhemoglobin") is True
+    assert is_clinical_term("Ventricular Rate") is True
+    assert is_clinical_term("Chlorhexidine Bath") is True
+    assert is_clinical_term("calcium ionized") is True
