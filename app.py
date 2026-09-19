@@ -666,6 +666,7 @@ STAGE_EDITORS = {
     "metadata_lines": ("regex_lines", "emr_line_metadata"),
     "boilerplate": ("regex_lines", "boilerplate"),
     "phi_patterns": ("regex_pairs", "epic_phi_patterns"),
+    "clinical_identifiers": ("clinical_identifiers", "clinical_identifiers"),
     "literal_replacements": ("regex_pairs", "literal_replacements"),
     "headers": ("headers", "clinical_headers"),
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
@@ -686,6 +687,7 @@ STAGE_DESCRIPTIONS = {
     "boilerplate": "Blocks to delete anywhere (disclaimers, empty SmartSections). Dot matches newlines.",
     "tokenize_phi": "Reversible tokenization: swaps structured PHI for [[T1]]-style codes and saves the value→token map (Settings → Token maps). Runs before redaction, so enable it instead of — not on top of — the PHI patterns you want tokenized.",
     "phi_patterns": "Regex → replacement pairs for structured PHI (MRN, DOB, phone lines).",
+    "clinical_identifiers": "Off by default. Algorithmically recognizes and redacts verified National Provider IDs (NPI via Luhn checksum), DEA numbers (checksum verified), and UDI medical device barcodes.",
     "nlp_redaction": "Presidio NLP redaction: entity types, replacements, confidence threshold and allow-list.",
     "literal_replacements": "Regex → replacement pairs for abbreviations and text fixes.",
     "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
@@ -1333,6 +1335,23 @@ def pipeline_page():
                 ui.number("min paragraph chars", value=f.get("min_chars", 100), format="%.0f",
                           on_change=lambda e: f.update(min_chars=int(e.value or 100)))
 
+        elif kind == "clinical_identifiers":
+            ci = draft.setdefault("clinical_identifiers", {})
+            ui.label(
+                "Detects verified clinical identifiers using algorithmic checksums (Luhn-24 for NPI, "
+                "checksum digit for DEA) and FDA UDI device barcode specifications."
+            ).classes("text-xs opacity-70 mb-2")
+            with ui.row().classes("gap-4 items-center"):
+                ui.switch("Redact NPI numbers", value=bool(ci.get("redact_npi", True)),
+                          on_change=lambda e: ci.update(redact_npi=e.value))
+                ui.switch("Redact DEA numbers", value=bool(ci.get("redact_dea", True)),
+                          on_change=lambda e: ci.update(redact_dea=e.value))
+                ui.switch("Redact UDI device codes", value=bool(ci.get("redact_udi", True)),
+                          on_change=lambda e: ci.update(redact_udi=e.value))
+            ui.input("Custom replacement (leave empty for [REDACTED_<TYPE>])",
+                     value=str(ci.get("replacement") or ""),
+                     on_change=lambda e: ci.update(replacement=e.value if e.value else None)).classes("w-96")
+
         elif kind == "nlp":
             render_nlp_editor()
 
@@ -1673,14 +1692,28 @@ def stats_page():
                         stat_chip_row = ui.row().classes("gap-3 flex-wrap")
                         stat_chip(stat_chip_row, "overall recall", f"{rep['recall']}%",
                                   "green" if rep["recall"] >= 90 else "orange")
+                        stat_chip(stat_chip_row, "safety F2-score", f"{rep.get('f2', 0.0)}%", "purple")
+                        cp_rate = rep.get("clinical_preservation", {}).get("preservation_rate", 100.0)
+                        stat_chip(stat_chip_row, "clinical terms kept", f"{cp_rate}%", "teal")
+                        eq_ratio = rep.get("fairness", {}).get("disparate_impact_ratio", 1.0)
+                        stat_chip(stat_chip_row, "demographic equity", f"{eq_ratio}x", "blue")
                         stat_chip(stat_chip_row, "PHI items caught",
                                   f"{rep['caught']}/{rep['items']}", "indigo")
                         for t, b in list(rep["by_type"].items())[:9]:
                             stat_chip(stat_chip_row, t, f"{b['recall']}%",
                                       "green" if b["recall"] >= 90 else "red")
+
+                        demog = rep.get("demographics", {})
+                        if demog:
+                            ui.label("Demographic Fairness & Cohort Breakdown:").classes("text-sm font-semibold mt-2")
+                            cohort_row = ui.row().classes("gap-2 flex-wrap")
+                            for cname, cstat in sorted(demog.items()):
+                                stat_chip(cohort_row, cname.replace("_", " ").title(), f"{cstat.get('recall', 0)}%",
+                                          "green" if cstat.get("recall", 0) >= 85 else "orange")
+
                         if rep["missed"]:
                             ui.label("Missed items (tighten these rules — see the packs on the "
-                                     "Pipeline page):").classes("text-sm font-semibold")
+                                     "Pipeline page):").classes("text-sm font-semibold mt-1")
                             for m in rep["missed"][:12]:
                                 ui.label(f"• [{m['type']}] {m['value']}  ({m['sample']})") \
                                     .classes("text-xs cc-mono opacity-80")

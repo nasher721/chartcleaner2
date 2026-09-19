@@ -43,6 +43,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "caps_normalize",
         "line_length",
         "stage_options",
+        "clinical_identifiers",
     }
 )
 

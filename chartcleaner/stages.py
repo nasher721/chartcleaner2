@@ -620,7 +620,15 @@ def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     results = analyzer.analyze(text=text, entities=list(entities), language="en")
     if threshold is not None:
         results = [r for r in results if r.score >= threshold]
-    filtered = [r for r in results if text[r.start:r.end].lower() not in allow]
+
+    from .clinical_whitelist import is_clinical_term
+
+    protect_clinical = bool(ncfg.get("protect_clinical_terms", True))
+    filtered = [
+        r for r in results
+        if text[r.start:r.end].lower() not in allow
+        and not (protect_clinical and r.entity_type == "PERSON" and is_clinical_term(text[r.start:r.end]))
+    ]
 
     operators = {
         etype: OperatorConfig("replace", {"new_value": repl})
@@ -632,6 +640,53 @@ def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     for r in filtered:
         counts[r.entity_type] = counts.get(r.entity_type, 0) + 1
     return new_text, len(filtered), {"phi": counts}
+
+
+DEFAULT_CLINICAL_IDENTIFIERS = {
+    "enabled": False,
+    "replacement": None,  # None defaults to [REDACTED_{TYPE}]
+    "redact_npi": True,
+    "redact_dea": True,
+    "redact_udi": True,
+}
+
+
+def run_clinical_identifiers(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
+    """Redact algorithmic clinical identifiers (NPI, DEA, UDI) with checksum verification."""
+    options = {**DEFAULT_CLINICAL_IDENTIFIERS, **(cfg.get("clinical_identifiers") or {})}
+    if not options.get("enabled"):
+        return text, 0, {}
+
+    from .clinical_identifiers import scan_clinical_identifiers
+
+    entities = scan_clinical_identifiers(text)
+    if not entities:
+        return text, 0, {}
+
+    redact_npi = bool(options.get("redact_npi", True))
+    redact_dea = bool(options.get("redact_dea", True))
+    redact_udi = bool(options.get("redact_udi", True))
+    custom_repl = options.get("replacement")
+
+    counts: dict[str, int] = {}
+    out = text
+    matched = 0
+
+    # Sort descending by start to safely replace in-place
+    for ent in sorted(entities, key=lambda e: -e.start):
+        if ent.entity_type == "NPI" and not redact_npi:
+            continue
+        if ent.entity_type == "DEA_NUMBER" and not redact_dea:
+            continue
+        if ent.entity_type in ("UDI_DEVICE_ID", "ACCESSION_NUMBER") and not redact_udi:
+            continue
+
+        repl = str(custom_repl) if custom_repl is not None else f"[REDACTED_{ent.entity_type}]"
+        out = out[:ent.start] + repl + out[ent.end:]
+        counts[ent.entity_type] = counts.get(ent.entity_type, 0) + 1
+        matched += 1
+
+    return out, matched, {"phi": counts} if counts else {}
 
 
 def run_tokenize(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
@@ -667,6 +722,7 @@ RUNNERS: dict[str, Callable] = {
     "regex_lines": lambda t, c, x: run_regex_list(t, c, x, "emr_line_metadata", re.IGNORECASE | re.MULTILINE, sid="metadata_lines"),
     "regex_lines_dotall": lambda t, c, x: run_regex_list(t, c, x, "boilerplate", re.IGNORECASE | re.DOTALL | re.MULTILINE, sid="boilerplate"),
     "regex_pairs_phi": lambda t, c, x: run_regex_pairs(t, c, x, "epic_phi_patterns", phi=True, sid="phi_patterns"),
+    "clinical_identifiers": run_clinical_identifiers,
     "nlp": run_nlp,
     "tokenize": run_tokenize,
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
@@ -686,6 +742,7 @@ KIND_TO_RUNNER = {
     "metadata_lines": "regex_lines",
     "boilerplate": "regex_lines_dotall",
     "phi_patterns": "regex_pairs_phi",
+    "clinical_identifiers": "clinical_identifiers",
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",

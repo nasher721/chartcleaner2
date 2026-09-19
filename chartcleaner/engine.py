@@ -76,6 +76,7 @@ BUILTIN_STAGE_IDS = [
     "boilerplate",
     "tokenize_phi",
     "phi_patterns",
+    "clinical_identifiers",
     "nlp_redaction",
     "literal_replacements",
     "unicode_normalize",
@@ -94,6 +95,7 @@ STAGE_LABELS = {
     "metadata_lines": "EMR line metadata",
     "boilerplate": "Boilerplate blocks",
     "phi_patterns": "Structured PHI patterns",
+    "clinical_identifiers": "Clinical identifiers (NPI/DEA/UDI)",
     "nlp_redaction": "NLP redaction (Presidio)",
     "tokenize_phi": "Reversible tokenization",
     "literal_replacements": "Literal replacements",
@@ -114,6 +116,7 @@ STAGE_KINDS = {
     "metadata_lines": "regex_lines",
     "boilerplate": "regex_lines",
     "phi_patterns": "regex_pairs",
+    "clinical_identifiers": "clinical_identifiers",
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
@@ -354,6 +357,8 @@ class Pipeline:
             return bool((cfg.get("nlp_redaction") or {}).get("enabled", True))
         if sid == "tokenize_phi":
             return bool((cfg.get("tokenization") or {}).get("enabled", False))
+        if sid == "clinical_identifiers":
+            return bool((cfg.get("clinical_identifiers") or {}).get("enabled", False))
         if sid == "duplicate_notes":
             return bool((cfg.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":

@@ -80,8 +80,29 @@ def _print_audit(audit, limit: int = 10) -> None:
         print(f"    … {len(audit.findings) - limit} more")
 
 
+def _format_output(text: str, delta: bool, fmt: str) -> str:
+    out = text
+    if delta:
+        from chartcleaner.delta_engine import extract_note_deltas
+        delta_res = extract_note_deltas(out)
+        out = delta_res.compact_text
+        if delta_res.notes_found > 1:
+            print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed")
+
+    if fmt != "text":
+        from chartcleaner.section_parser import parse_clinical_sections
+        parsed = parse_clinical_sections(out)
+        if fmt == "markdown":
+            out = parsed.to_markdown()
+        elif fmt == "json":
+            out = parsed.to_json()
+        elif fmt == "xml":
+            out = parsed.to_llm_xml()
+    return out
+
+
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
-                 audit: bool = False) -> None:
+                 audit: bool = False, delta: bool = False, out_format: str = "text") -> None:
     """Processes a single file (.txt/.md/.docx/.pdf) and saves the output."""
     try:
         from chartcleaner.ingest import IngestError, load_file
@@ -91,8 +112,11 @@ def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
         for w in ing.warnings:
             print(f"  ! {w}", file=sys.stderr)
         result = cleaner.clean_detailed(ing.text)
-        out_path = output_dir / f"{file_path.stem}_cleaned.txt"
-        out_path.write_text(result.text, encoding="utf-8")
+        final_text = _format_output(result.text, delta, out_format)
+
+        ext = ".json" if out_format == "json" else (".xml" if out_format == "xml" else ".txt")
+        out_path = output_dir / f"{file_path.stem}_cleaned{ext}"
+        out_path.write_text(final_text, encoding="utf-8")
         _print_summary(result, file_path.name)
         if audit:
             _print_audit(run_audit(result.text, cleaner.config))
@@ -126,14 +150,33 @@ def _run_evaluate(n: int, cleaner: MedicalCleaner) -> None:
     report = eval_mod.evaluate(cleaner.config, samples,
                                custom_dir=cleaner._custom_dir)
     eval_mod.save_evaluation(report)
-    print(f"\nRecall: {report['recall']}%  ({report['caught']}/{report['items']} PHI items caught)\n")
+    print(f"\nRecall: {report['recall']}%  ({report['caught']}/{report['items']} PHI items caught)")
+    print(f"Safety F2-Score: {report.get('f2', 0.0)}%  |  F1-Score: {report.get('f1', 0.0)}%")
+    cp = report.get("clinical_preservation", {})
+    if cp.get("tested_terms"):
+        print(f"Clinical Term Preservation: {cp.get('preservation_rate', 100.0)}% "
+              f"({cp.get('preserved_terms')}/{cp.get('tested_terms')} medical terms kept)")
+
+    fairness = report.get("fairness", {})
+    if fairness:
+        print(f"Demographic Equity: {fairness.get('equity_status', 'N/A')} "
+              f"(Disparate Impact Ratio: {fairness.get('disparate_impact_ratio', 1.0)})\n")
+
     print(f"{'type':<14}{'caught':>7}{'of':>6}{'recall':>9}")
     for t, b in report["by_type"].items():
         print(f"{t:<14}{b['caught']:>7}{b['items']:>6}{b['recall']:>8}%")
+
+    demographics = report.get("demographics", {})
+    if demographics:
+        print("\nDemographic Cohort Breakdown:")
+        print(f"{'cohort':<18}{'caught':>7}{'of':>6}{'recall':>9}")
+        for cname, cstat in sorted(demographics.items()):
+            print(f"{cname:<18}{cstat['caught']:>7}{cstat['items']:>6}{cstat['recall']:>8}%")
+
     if report["missed"]:
         print("\nMissed (first few):")
         for m in report["missed"][:8]:
-            print(f"  - [{m['type']}] {m['value']}  ({m['sample']})")
+            print(f"  - [{m['type']}] {m['value']}  ({m.get('sample', '')} - {m.get('cohort', '')})")
     print(f"\nReport saved to {eval_mod.evaluation_file()}")
 
 
@@ -192,6 +235,14 @@ def main():
                         help="Restore [[Tn]] tokens: FILE, '-' for stdin, or clipboard when omitted.")
     parser.add_argument("--tokens-file", type=str,
                         help="Explicit token map (data/tokens/*.json); default is the newest.")
+    parser.add_argument(
+        "--delta", action="store_true",
+        help="Extract semantic copy-forward deltas between sequential daily progress notes.",
+    )
+    parser.add_argument(
+        "--format", choices=["text", "markdown", "json", "xml"], default="text",
+        help="Structured export format for LLMs (text, markdown, json, xml).",
+    )
     args = parser.parse_args()
 
     if args.untoken is not None:
@@ -227,7 +278,7 @@ def main():
 
         print(f"Batch processing {len(files)} files...")
         for file in tqdm(files, desc="Cleaning Charts"):
-            process_file(file, cleaner, output_dir, audit=args.audit)
+            process_file(file, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     elif args.file:
@@ -236,7 +287,7 @@ def main():
         output_dir.mkdir(exist_ok=True)
 
         print(f"Processing {file_path.name}...")
-        process_file(file_path, cleaner, output_dir, audit=args.audit)
+        process_file(file_path, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     else:
@@ -248,7 +299,8 @@ def main():
 
             print("Processing clipboard text...")
             result = cleaner.clean_detailed(input_text)
-            pyperclip.copy(result.text)
+            final_text = _format_output(result.text, args.delta, args.format)
+            pyperclip.copy(final_text)
 
             _print_summary(result, "Clipboard")
             if args.audit:

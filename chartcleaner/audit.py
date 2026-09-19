@@ -34,7 +34,8 @@ DEFAULT_AUDIT_CONFIG: dict = {
         "date_like": {"enabled": True},
         "phone_email": {"enabled": True},
         "label_names": {"enabled": True, "labels": []},      # [] = built-in label set
-        "residual_chrome": {"enabled": True, "patterns": []}  # [] = built-in patterns
+        "residual_chrome": {"enabled": True, "patterns": []}, # [] = built-in patterns
+        "clinical_identifiers": {"enabled": True},            # NPI, DEA, UDI
     },
 }
 
@@ -44,6 +45,7 @@ CHECK_LABELS = {
     "phone_email": "Phone / email",
     "label_names": "Names after labels",
     "residual_chrome": "Residual EMR chrome",
+    "clinical_identifiers": "Clinical identifiers (NPI/DEA/UDI)",
 }
 
 AUDIT_CHECK_IDS = frozenset(CHECK_LABELS)
@@ -54,6 +56,7 @@ CHECK_DESCRIPTIONS = {
     "phone_email": "Phone numbers or email addresses still present in the output.",
     "label_names": "Values after identity labels (Patient:, Next of Kin:, …) that are not placeholders.",
     "residual_chrome": "Known Epic noise patterns (editor, pager, version lines) the rules did not remove.",
+    "clinical_identifiers": "Verified National Provider IDs (NPI), DEA numbers, or UDI medical device codes.",
 }
 
 DEFAULT_NAME_LABELS = [
@@ -294,12 +297,41 @@ def _chrome_rule_for(line: str) -> str:
     return rf"(?i)^\s*{body}\s*$"
 
 
+def _find_clinical_identifiers(lines: list[str], opts: dict) -> list[Finding]:
+    from .clinical_identifiers import scan_clinical_identifiers
+    text = "\n".join(lines)
+    entities = scan_clinical_identifiers(text)
+    out: list[Finding] = []
+
+    line_starts = [0]
+    for m in re.finditer(r"\n", text):
+        line_starts.append(m.end())
+
+    import bisect
+
+    for ent in entities:
+        line_idx = bisect.bisect_right(line_starts, ent.start)
+        out.append(
+            Finding(
+                check="clinical_identifiers",
+                line=line_idx,
+                excerpt=_mk_excerpt(f"{ent.entity_type}: {ent.value}"),
+                signature=f"clinical_identifier:{ent.entity_type.lower()}",
+                suggested_regex=rf"\b{re.escape(ent.value)}\b",
+                suggested_replacement=f"[REDACTED_{ent.entity_type}]",
+                suggested_stage="phi_patterns",
+            )
+        )
+    return out
+
+
 FINDERS = {
     "long_digits": _find_long_digits,
     "date_like": _find_date_like,
     "phone_email": _find_phone_email,
     "label_names": _find_label_names,
     "residual_chrome": _find_residual_chrome,
+    "clinical_identifiers": _find_clinical_identifiers,
 }
 
 
@@ -368,5 +400,10 @@ def suggestion_for_signature(sig: str) -> dict:
         return {"title": "Residual Epic chrome line",
                 "detail": "A known noise-line shape keeps surviving your runs.",
                 "regex": "", "replacement": None, "stage": "emr_line_metadata"}
+    if sig.startswith("clinical_identifier:"):
+        id_type = sig.split(":", 1)[1].upper()
+        return {"title": f"Surviving {id_type} identifier",
+                "detail": f"Verified {id_type} medical/provider identifier detected in output.",
+                "regex": "", "replacement": f"[REDACTED_{id_type}]", "stage": "phi_patterns"}
     return {"title": sig, "detail": "This finding keeps surviving your runs.",
             "regex": "", "replacement": None, "stage": "phi_patterns"}
