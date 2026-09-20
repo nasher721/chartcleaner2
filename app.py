@@ -467,8 +467,8 @@ async def clean_page():
                                                        ).props("unelevated color=primary")
                     summary_refs["spinner"] = ui.spinner("dots", size="sm")
                     summary_refs["spinner"].set_visibility(False)
-                custom_box = ui.textarea("", value=str(opts["custom_prompt"]),
-                                         label="Custom prompt (replaces the preset)",
+                custom_box = ui.textarea("Custom prompt (replaces the preset)",
+                                         value=str(opts["custom_prompt"]),
                                          on_change=lambda e: save_llm_pref("custom_prompt", e.value)
                                          ).props("outlined").classes("w-full cc-mono")
                 custom_box.set_visibility(str(opts["prompt_preset"]) == "custom")

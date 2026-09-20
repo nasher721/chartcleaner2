@@ -23,6 +23,18 @@ async def test_summary_panel_hidden_before_first_clean(user: User):
     await user.should_not_see('Local AI summary')
 
 
+def test_summary_panel_widget_signatures():
+    """Regression: ui.textarea's first positional arg is `label`, so the panel's
+    old `ui.textarea('', label='...')` raised TypeError (multiple values for
+    'label') the first time a clean run rendered the panel."""
+    import inspect
+
+    from nicegui import ui
+
+    inspect.signature(ui.textarea).bind("Custom prompt (replaces the preset)", value="x")
+    inspect.signature(ui.textarea).bind("")  # output box: empty label positional
+
+
 async def test_pipeline_page_builds(user: User):
     await user.open('/pipeline')
     await user.should_see('Pipeline & Rules')
