@@ -17,6 +17,12 @@ async def test_clean_page_builds(user: User):
     await user.should_see('Clean a chart')
 
 
+async def test_summary_panel_hidden_before_first_clean(user: User):
+    # The Local AI summary expansion only appears once a clean run exists.
+    await user.open('/')
+    await user.should_not_see('Local AI summary')
+
+
 async def test_pipeline_page_builds(user: User):
     await user.open('/pipeline')
     await user.should_see('Pipeline & Rules')

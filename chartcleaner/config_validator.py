@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from .audit import AUDIT_CHECK_IDS
+from .summarizer import DEFAULT_LLM
 
 REQUIRED_CONFIG_KEYS = (
     "emr_line_metadata",
@@ -44,6 +45,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "line_length",
         "stage_options",
         "clinical_identifiers",
+        "local_llm",
     }
 )
 
@@ -79,6 +81,7 @@ class ConfigValidator:
         self._validate_audit()
         self._validate_wrapper_and_order()
         self._validate_custom_rules()
+        self._validate_local_llm()
         self._check_unknown_keys()
         return self.errors, self.warnings
 
@@ -446,6 +449,19 @@ class ConfigValidator:
         cr = self.cfg.get("custom_rules")
         if cr is not None and not isinstance(cr, dict):
             self.errors.append("custom_rules: must map script name -> {enabled: bool}")
+
+    def _validate_local_llm(self) -> None:
+        self._check_option_group(
+            "local_llm",
+            DEFAULT_LLM,
+            {
+                "base_url": ((str,), "a string URL"),
+                "model": ((str,), "a string model name"),
+                "prompt_preset": ((str,), "a preset name"),
+                "custom_prompt": ((str,), "a string prompt"),
+                "grounding_threshold": (((int, float),), "a number 0-100"),
+            },
+        )
 
     def _check_unknown_keys(self) -> None:
         for k in self.cfg:

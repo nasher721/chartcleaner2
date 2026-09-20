@@ -66,6 +66,13 @@ from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TES
 from chartcleaner.benchmark import generate as generate_benchmark
 from chartcleaner.evaluate import evaluate as evaluate_samples
 from chartcleaner.evaluate import load_last_evaluation, save_evaluation
+from chartcleaner.local_llm import LocalLlmClient
+from chartcleaner.summarizer import (
+    LlmUnavailableError,
+    NoModelError,
+    merge_llm_config,
+    summarize,
+)
 
 store.ensure_dirs()
 store.seed_frozen_assets()
@@ -300,7 +307,8 @@ async def clean_page():
                 return result, run_audit(result.text, cfg)
 
             result, audit = await run.io_bound(work)
-            CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit)
+            CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
+                               summary=None)  # previous summary refers to the old cleaned text
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(source))
             # persist reversible-token maps produced by the tokenize stage
@@ -425,12 +433,133 @@ async def clean_page():
                         rows.append({"stage": s.label, "matches": s.matches,
                                      "delta": f"{delta:+,}", "status": status})
                     ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
+            # ---- local AI summary (on-device via Ollama) ----
+            summary_refs.clear()
+            with ui.expansion("Local AI summary", icon="psychology").classes("w-full"):
+                try:
+                    opts = merge_llm_config(load_config(CONFIG_PATH))
+                except Exception:
+                    opts = merge_llm_config({})
+                try:
+                    probe = LocalLlmClient(str(opts["base_url"]), timeout=2.0)
+                    listed = probe.list_models() if probe.is_available() else []
+                except Exception:
+                    listed = []
+                model_val = str(opts["model"] or (listed[0] if listed else ""))
+                if not listed:
+                    ui.label(
+                        f"No local LLM detected at {opts['base_url']} — install Ollama "
+                        "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`."
+                    ).classes("text-xs text-orange-600")
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    ui.select(listed or ([model_val] if model_val else []),
+                              value=model_val, label="Model", new_value_mode="add",
+                              on_change=lambda e: save_llm_pref("model", e.value)
+                              ).classes("min-w-[190px]")
+                    ui.select({"clinical": "Clinical sections", "brief": "Brief paragraph",
+                               "findings": "Key findings", "custom": "Custom prompt"},
+                              value=str(opts["prompt_preset"]), label="Prompt style",
+                              on_change=lambda e: (save_llm_pref("prompt_preset", e.value),
+                                                   custom_box.set_visibility(e.value == "custom"))
+                              ).classes("min-w-[190px]")
+                    summary_refs["button"] = ui.button("Summarize", icon="psychology",
+                                                       on_click=run_summarize
+                                                       ).props("unelevated color=primary")
+                    summary_refs["spinner"] = ui.spinner("dots", size="sm")
+                    summary_refs["spinner"].set_visibility(False)
+                custom_box = ui.textarea("", value=str(opts["custom_prompt"]),
+                                         label="Custom prompt (replaces the preset)",
+                                         on_change=lambda e: save_llm_pref("custom_prompt", e.value)
+                                         ).props("outlined").classes("w-full cc-mono")
+                custom_box.set_visibility(str(opts["prompt_preset"]) == "custom")
+                summary_refs["output"] = ui.textarea("").props(
+                    "outlined readonly input-style='min-height: 140px'"
+                ).classes("w-full cc-mono")
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
+                    summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
+                render_summary_output()
+
             if result.warnings:
                 ui.label("⚠ " + " | ".join(result.warnings)).classes("text-xs text-orange-600")
 
     def download_result() -> None:
         name = store.save_export(CLEAN_STATE["result_text"], "cleaned_chart")
         download_file(f"/exports/{name}", name)
+
+    # ---- local AI summary (Ollama on-device; design: .specs/plans/local-ai-summarizer) ----
+    summary_state = {"running": False}
+    summary_refs: dict = {}  # panel widgets, repopulated by render_results
+
+    def save_llm_pref(key: str, value) -> None:
+        try:
+            cfg = load_config(CONFIG_PATH)
+            cfg["local_llm"] = {**merge_llm_config(cfg), key: value}
+            save_config_with_backup(cfg)
+        except Exception:
+            pass  # preference saving must never break the panel
+
+    def render_summary_output() -> None:
+        res = CLEAN_STATE.get("summary")
+        if not res or "output" not in summary_refs:
+            return
+        summary_refs["output"].set_value(res.text)
+        summary_refs["meta"].set_text(f"model: {res.model} · {res.duration_ms:,} ms")
+        g = res.grounding
+        row = summary_refs["grounding_row"]
+        row.clear()
+        with row:
+            if not g.total_entities:
+                ui.badge("No checkable facts (no numbers/dates in output)", color="grey") \
+                    .props("outline")
+            elif not g.is_safe:
+                ui.badge(f"UNGROUNDED — only {g.grounding_score}% of numbers/dates found in chart",
+                         color="red")
+            elif g.grounding_score >= 100.0:
+                ui.badge(f"Grounded 100%", color="green")
+            else:
+                ui.badge(f"Grounded {g.grounding_score}%", color="amber")
+            for item in g.ungrounded_entities:
+                ui.button(item, icon="content_copy",
+                          on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
+                          ).props("flat dense size=sm color=red")
+
+    async def run_summarize() -> None:
+        if summary_state["running"] or not CLEAN_STATE.get("result_text"):
+            return
+        summary_state["running"] = True
+        sum_btn = summary_refs.get("button")
+        sum_spin = summary_refs.get("spinner")
+        if sum_btn:
+            sum_btn.set_enabled(False)
+        if sum_spin:
+            sum_spin.set_visibility(True)
+        try:
+            def work():
+                return summarize(CLEAN_STATE["result_text"], load_config(CONFIG_PATH))
+
+            CLEAN_STATE["summary"] = await run.io_bound(work)
+            render_summary_output()
+        except LlmUnavailableError as e:
+            ui.notify(
+                f"{e} — install Ollama from ollama.com, pull a model "
+                "(e.g. `ollama pull llama3.1`), then retry.",
+                type="warning", multi_line=True)
+        except NoModelError as e:
+            ui.notify(str(e), type="warning", multi_line=True)
+        except ConfigError as e:
+            ui.notify(str(e), type="negative")
+        except Exception as e:
+            report_error("Summarization failed", e)
+        finally:
+            summary_state["running"] = False
+            try:
+                if sum_btn:
+                    sum_btn.set_enabled(True)
+                if sum_spin:
+                    sum_spin.set_visibility(False)
+            except Exception:
+                pass  # the panel may have been re-rendered mid-run
 
     async def paste_clipboard() -> None:
         try:
@@ -445,7 +574,7 @@ async def clean_page():
             ui.notify(f"Clipboard error: {e}", type="negative")
 
     def clear_all() -> None:
-        CLEAN_STATE.update(input="", result=None, result_text="")
+        CLEAN_STATE.update(input="", result=None, result_text="", summary=None)
         AUTO_LAST["text"] = None
         input_area.set_value("")
         results_col.clear()
