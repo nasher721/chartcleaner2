@@ -10,9 +10,12 @@ summary exists verbatim in the source chart. Rejects or flags ungrounded asserti
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
@@ -93,8 +96,33 @@ class LocalLlmClient:
     """Lightweight HTTP client for local Ollama instance (100% offline)."""
 
     def __init__(self, base_url: str = DEFAULT_OLLAMA_URL, timeout: float = 15.0):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = self._validate_base_url(base_url).rstrip("/")
         self.timeout = timeout
+
+    @staticmethod
+    def _validate_base_url(base_url: str) -> str:
+        """Restrict the endpoint to the loopback interface.
+
+        The app promises 100% local processing, so a non-loopback host in
+        config.json must fail loudly rather than quietly exfiltrate chart text.
+        """
+        parsed = urllib.parse.urlparse(
+            base_url if "://" in base_url else f"http://{base_url}"
+        )
+        host = parsed.hostname or ""
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror as exc:
+            raise ValueError(f"unresolvable LLM endpoint host {host!r}") from exc
+        loopback = all(ipaddress.ip_address(i[4][0]).is_loopback for i in infos)
+        if not loopback:
+            raise ValueError(
+                f"LLM endpoint {base_url!r} is not on the loopback interface; "
+                "refusing to send chart text off-machine"
+            )
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"unsupported LLM endpoint scheme {parsed.scheme!r}")
+        return base_url
 
     def is_available(self) -> bool:
         """Check if local Ollama daemon is active."""

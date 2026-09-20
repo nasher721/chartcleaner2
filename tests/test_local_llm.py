@@ -50,3 +50,23 @@ def test_local_llm_availability_when_offline():
     client = LocalLlmClient(base_url="http://127.0.0.1:59999", timeout=0.2)
     assert client.is_available() is False
     assert client.list_models() == []
+
+
+def test_base_url_must_be_loopback():
+    with pytest.raises(ValueError, match="loopback"):
+        LocalLlmClient(base_url="http://10.1.2.3:11434")
+
+
+def test_base_url_rejects_unresolvable_host():
+    with pytest.raises(ValueError, match="unresolvable"):
+        LocalLlmClient(base_url="http://no-such-host.invalid:11434")
+
+
+def test_base_url_rejects_non_http_scheme():
+    with pytest.raises(ValueError, match="scheme"):
+        LocalLlmClient(base_url="ftp://127.0.0.1:11434")
+
+
+def test_base_url_accepts_localhost_and_loopback_ip():
+    assert LocalLlmClient(base_url="http://localhost:11434").base_url.endswith(":11434")
+    assert LocalLlmClient(base_url="http://127.0.0.1:11434").base_url.endswith(":11434")
