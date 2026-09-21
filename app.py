@@ -25,6 +25,7 @@ import socket
 import subprocess
 import sys
 import time
+import threading
 import traceback
 import webbrowser
 from contextlib import contextmanager
@@ -2361,6 +2362,35 @@ def _is_chart_cleaner(port: int) -> bool:
             return "Chart Cleaner" in r.read(8192).decode("utf-8", "ignore")
     except Exception:
         return False
+
+
+def _warm_nlp_engines() -> None:
+    """Kick off a best-effort background warmup of the Presidio/spaCy engines.
+
+    The engines are cached module-level in chartcleaner.stages; pre-building
+    them at startup means the first Clean click skips the model-load tax.
+    The signature must match what run_nlp() passes so the cache is reused.
+    """
+    def _work() -> None:
+        try:
+            if os.environ.get("NICEGUI_USER_SIMULATION"):
+                return  # test harness: never pay model-load time
+            cfg = load_config(CONFIG_PATH)
+            if not bool((cfg.get("nlp_redaction") or {}).get("enabled", True)):
+                return
+            from chartcleaner.stages import _PRESIDIO_CACHE, DEFAULT_NLP_ENTITIES
+
+            ncfg = cfg.get("nlp_redaction") or {}
+            entities = dict(ncfg.get("entities") or DEFAULT_NLP_ENTITIES)
+            allow = frozenset(t.lower() for t in (cfg.get("nlp_allow_list") or []))
+            _PRESIDIO_CACHE.get_engines(tuple(sorted(entities.items())), allow, ncfg.get("score_threshold"))
+        except Exception:
+            pass  # warmup is best-effort; the Clean page surfaces real NLP errors
+
+    threading.Thread(target=_work, daemon=True, name="nlp-warmup").start()
+
+
+app.on_startup(_warm_nlp_engines)
 
 
 def main():
