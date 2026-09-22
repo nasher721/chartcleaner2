@@ -51,7 +51,6 @@ jobs:
       PREVIOUS_FIXTURE_VERSION: ${{ vars.PREVIOUS_FIXTURE_VERSION }}
       MINIMUM_SUPPORTED_VERSION: ${{ vars.MINIMUM_SUPPORTED_VERSION }}
       GH_TOKEN: ${{ github.token }}
-      TMPDIR: ${{ runner.temp }}
     defaults:
       run:
         shell: bash
