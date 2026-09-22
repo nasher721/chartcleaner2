@@ -74,6 +74,25 @@ async def test_settings_page_builds(user: User):
     await user.should_see('Config backups')
 
 
+async def test_settings_shows_update_controls_and_local_data_boundary(user: User):
+    await user.open('/settings')
+    await user.should_see('Check for updates')
+    await user.should_see('Clinical data stays on this computer')
+
+
+async def test_source_checkout_update_status_is_local():
+    import app as cc_app
+
+    before = dict(cc_app.PREFS)
+    try:
+        _manifest, status = await cc_app._check_for_updates(automatic=False, force=True)
+        assert status["state"] == "source"
+        assert cc_app.PREFS["update_status_code"] == "source_mode"
+    finally:
+        cc_app.PREFS.clear()
+        cc_app.PREFS.update(before)
+
+
 async def test_ai_panels_render_after_clean_run(user: User):
     """The Local AI summary + Ask-this-chart expansions only appear once a clean
     run exists; drive render_results() with a real Pipeline result so the panel
@@ -97,3 +116,24 @@ async def test_ai_panels_render_after_clean_run(user: User):
     finally:
         CLEAN_STATE.update(input="", result=None, result_text="", audit=None,
                            summary=None, qa=[])
+
+
+async def test_update_confirmation_requires_confirm_click(user: User):
+    from nicegui import ui
+
+    events = []
+
+    @ui.page('/update-confirmation-fixture')
+    def confirmation_fixture():
+        ui.button('Install update', on_click=lambda: cc_app.confirm_dialog(
+            'Download and install Chart Cleaner v2.4.0?', lambda: events.append('handoff')))
+
+    await user.open('/update-confirmation-fixture')
+    user.find('Install update').click()
+    await user.should_see('Download and install Chart Cleaner v2.4.0?')
+    assert events == []
+    user.find('Cancel').click()
+    assert events == []
+    user.find('Install update').click()
+    user.find('Confirm').click()
+    assert events == ['handoff']

@@ -21,6 +21,7 @@ import html as html_mod
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -79,6 +80,9 @@ from chartcleaner.summarizer import (
     summarize,
 )
 
+from chartcleaner.update import UpdateClient
+from chartcleaner.release_identity import MANIFEST_URL, MACOS_PUBLISHER, WINDOWS_PUBLISHER
+
 store.ensure_dirs()
 store.seed_frozen_assets()
 
@@ -100,6 +104,7 @@ PIPE_TEST["text"] = (BASE_DIR / "sample_chart.txt").read_text(encoding="utf-8") 
 # Folder watcher singleton + mirrored config (created by the Settings page)
 WATCHER: dict = {"obj": None}
 WATCHER_CONFIG: dict = store.load_watch_config()
+SERVER_PORT: int | None = None
 
 # Optional reactive UI helpers (ex4nicegui); the app works fine without it.
 try:
@@ -140,6 +145,101 @@ CSS = """
 
 def save_prefs() -> None:
     store.save_prefs(PREFS)
+
+
+def _update_client():
+    if not MANIFEST_URL:
+        return None
+    publisher = MACOS_PUBLISHER if sys.platform == "darwin" else WINDOWS_PUBLISHER
+    return UpdateClient(str(__version__), MANIFEST_URL,
+                       trusted_publisher_identity=publisher)
+
+
+async def _check_for_updates(*, automatic: bool, force: bool = False, status_label=None):
+    """Run metadata-only update checking off the NiceGUI event loop."""
+    if not getattr(sys, "frozen", False):
+        status = {"state": "source", "code": "source_mode"}
+        PREFS.update(update_status="Source checkout — updates are available in installed builds",
+                     update_status_code=status["code"])
+        save_prefs()
+        if status_label:
+            status_label.set_text(PREFS["update_status"])
+        return None, status
+    client = _update_client()
+    if client is None:
+        status = {"state": "unavailable", "code": "update_unavailable"}
+        PREFS.update(update_status="Update checks unavailable", update_status_code=status["code"])
+        save_prefs()
+        if status_label:
+            status_label.set_text(PREFS["update_status"])
+        return None, status
+    previous_check = PREFS.get("update_last_checked")
+    manifest, status = await run.io_bound(
+        lambda: client.check(automatic=automatic,
+                             last_checked=previous_check if automatic else None,
+                             force=force))
+    if status.state == "throttled":
+        return manifest, status
+    PREFS["update_last_checked"] = status.checked_at or time.time()
+    text = {
+        "current": "Up to date",
+        "update_available": f"Update available: v{status.version}",
+        "error": f"Check failed ({status.code}); retry manually",
+    }.get(status.state, "Update status unavailable")
+    PREFS.update(update_status=text, update_status_code=status.code)
+    save_prefs()
+    if status_label:
+        status_label.set_text(text)
+    return manifest, status
+
+
+async def _automatic_update_check() -> None:
+    if PREFS.get("update_auto_check", True):
+        await _check_for_updates(automatic=True)
+
+
+async def _after_server_ready() -> None:
+    """Wait for the loopback route before acknowledging a companion handoff."""
+    for _ in range(300):
+        if SERVER_PORT and await run.io_bound(_is_chart_cleaner, SERVER_PORT):
+            if getattr(sys, "frozen", False):
+                from chartcleaner.updater import write_health_marker
+                write_health_marker(str(__version__))
+            asyncio.create_task(_automatic_update_check())
+            return
+        await asyncio.sleep(0.1)
+
+
+async def _update_startup() -> None:
+    asyncio.create_task(_after_server_ready())
+
+
+async def _stage_and_handoff(manifest, status, notify) -> None:
+    if manifest is None or status.state != "update_available":
+        notify("No verified update is ready.", type="warning")
+        return
+    if not getattr(sys, "frozen", False):
+        notify("Updates are unavailable in source mode.", type="warning")
+        return
+    archive = None
+    try:
+        from chartcleaner import updater
+        install = updater.default_install_path()
+        staging = updater.staging_root()
+        client = _update_client()
+        archive, _extracted = await run.io_bound(
+            lambda: client.stage(manifest.platforms[status.platform], staging,
+                                 rollback_size=updater.installation_size(install)))
+        await run.io_bound(updater.handoff_update, os.getpid(), install, archive,
+                           str(manifest.version))
+    except Exception:
+        if archive is not None and archive.parent.parent == staging and archive.parent.name.startswith("update-"):
+            await run.io_bound(shutil.rmtree, archive.parent, True)
+        notify("Update could not be staged; retry from Settings.", type="negative")
+        return
+    notify("Update verified. Restarting Chart Cleaner…", type="positive")
+    await asyncio.sleep(0.2)
+    os._exit(0)
 
 
 def esc(s: str) -> str:
@@ -2413,6 +2513,36 @@ def settings_page():
     with shell("Settings", "settings"):
         draft = dict(load_config(CONFIG_PATH))
 
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Updates").classes("font-semibold")
+            ui.label(f"Current version: v{__version__}").classes("text-sm")
+            update_status = ui.label(str(PREFS.get("update_status", "Not checked"))).classes("text-sm opacity-70")
+            last_checked = PREFS.get("update_last_checked")
+            ui.label("Last check: " + (time.strftime("%Y-%m-%d %H:%M", time.localtime(last_checked))
+                                       if last_checked else "never")).classes("text-xs opacity-60")
+
+            def toggle_auto(e) -> None:
+                PREFS["update_auto_check"] = bool(e.value)
+                save_prefs()
+
+            ui.switch("Check for updates automatically (at most once every 24 hours)",
+                      value=bool(PREFS.get("update_auto_check", True)), on_change=toggle_auto)
+
+            async def manual_check() -> None:
+                check_btn.set_enabled(False)
+                try:
+                    manifest, status = await _check_for_updates(
+                        automatic=False, force=True, status_label=update_status)
+                    if manifest is not None and status.state == "update_available":
+                        confirm_dialog(
+                            f"Download and install Chart Cleaner v{manifest.version}?",
+                            lambda: asyncio.create_task(_stage_and_handoff(
+                                manifest, status, ui.notify)))
+                finally:
+                    check_btn.set_enabled(True)
+
+            check_btn = ui.button("Check for updates", icon="refresh", on_click=manual_check).props("outline")
+
         with ui.card().classes("w-full gap-3"):
             ui.label("Output").classes("font-semibold")
             ui.switch("Wrap cleaned text in <patient_chart> tags",
@@ -2658,7 +2788,7 @@ def settings_page():
             ui.label("About").classes("font-semibold")
             ui.markdown(
                 f"**Chart Cleaner v{__version__}** — cleans Epic-style EMR exports for safer LLM sharing.\n\n"
-                "- Everything runs locally; the app listens only on 127.0.0.1 and makes no network calls.\n"
+                "- Clinical data stays on this computer; update checks are the only built-in outbound request.\n"
                 "- Inputs: .txt / .md / .docx / .pdf (Word via built-in reader or markitdown; PDFs via "
                 "PyMuPDF, OCR when ocrmypdf is installed).\n"
                 "- This tool **reduces** obvious PHI and noise; it is **not** a HIPAA de-identification guarantee.\n"
@@ -2805,9 +2935,11 @@ def _warm_nlp_engines() -> None:
 
 
 app.on_startup(_warm_nlp_engines)
+app.on_startup(_update_startup)
 
 
 def main():
+    global SERVER_PORT
     if os.environ.get("NICEGUI_USER_SIMULATION"):
         # Test harness (nicegui.testing): pages are registered at import; ui.run
         # is intercepted, but it must still be called so run config is marked.
@@ -2852,6 +2984,7 @@ def main():
         port = _free_port(port + 1)
         print(f"Port {requested} is used by another program — using {port} instead.")
 
+    SERVER_PORT = port
     ui.run(
         host=args.host,
         port=port,

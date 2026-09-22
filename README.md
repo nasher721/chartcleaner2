@@ -1,5 +1,7 @@
 # Chart Cleaner
 
+Project repository: [nasher721/chartcleaner2](https://github.com/nasher721/chartcleaner2).
+
 Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation — now as a **local desktop app** for macOS and Windows, with the original CLI still included.
 
 - **Clean page** — paste or drop a chart, clean it, and inspect a **side-by-side diff**, per-run stats (characters/words/PHI/duration), and a table showing exactly what each cleaning stage did. **Drop .docx or .pdf files** — they're converted automatically (Word via the built-in reader or markitdown; PDFs via PyMuPDF with OCR fallback and page header/footer removal).
@@ -18,7 +20,7 @@ Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation �
 - **Custom Scripts** — write your own cleaning stage in Python (`clean(text, ctx)`) in the built-in editor; anything is possible: block removal, redactions, restructuring, counters for the stats tracker.
 - **Statistics dashboard** — every run is recorded locally: total characters removed, average reduction, PHI redactions by type, a per-day chart, and **which stages clean the most**.
 - **Config backups** — every rules save keeps a timestamped copy (`data/backups/`, newest 5) with a restore list in Settings.
-- **100% local** — the app binds to `127.0.0.1` only, stores everything under the project folder (`data/`), and makes no network calls.
+- **Clinical data stays local** — the app binds to `127.0.0.1` only. Source checkouts keep data in the project folder; installed builds use the platform user-data directory. Update checks and downloads contact GitHub without sending chart content or configuration. See [desktop release and signing requirements](docs/releases.md).
 
 **Not** a guarantee of de-identification under HIPAA or other rules — review output before sharing.
 

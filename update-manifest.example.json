@@ -1,0 +1,17 @@
+{
+  "version": "2.4.0",
+  "minimum_supported_version": "2.3.0",
+  "notes_url": "https://github.com/nasher721/chartcleaner2/releases/tag/v2.4.0",
+  "platforms": {
+    "macos-arm64": {
+      "url": "https://github.com/nasher721/chartcleaner2/releases/download/v2.4.0/Chart-Cleaner-macos-arm64.zip",
+      "sha256": "REPLACE_WITH_64_HEX_DIGEST",
+      "size": 123
+    },
+    "windows-x64": {
+      "url": "https://github.com/nasher721/chartcleaner2/releases/download/v2.4.0/Chart-Cleaner-windows-x64.zip",
+      "sha256": "REPLACE_WITH_64_HEX_DIGEST",
+      "size": 456
+    }
+  }
+}

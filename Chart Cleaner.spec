@@ -1,101 +1,56 @@
-# -*- mode: python ; coding: utf-8 -*-
+# One spec, three products; paths are checkout-relative on both release runners.
+import os
+import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('/Users/Nash/Documents/Remix/chart cleaner/chart-cleaner/.venv/lib/python3.12/site-packages/nicegui', 'nicegui'), ('chartcleaner/default_config.json', 'chartcleaner'), ('chartcleaner/packs', 'chartcleaner/packs'), ('custom_rules', 'custom_rules'), ('sample_chart.txt', '.')]
-binaries = []
-hiddenimports = ['en_core_web_sm']
-tmp_ret = collect_all('spacy')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('en_core_web_sm')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('thinc')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('srsly')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('catalogue')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('wasabi')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('weasel')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('preshed')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('murmurhash')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('cymem')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('blis')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('regex')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('uvloop')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('presidio_analyzer')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('presidio_anonymizer')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('phonenumbers')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('tldextract')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('thefuzz')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('rapidfuzz')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('pyperclip')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('pymupdf')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('watchdog')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('ex4nicegui')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+ROOT = Path(SPECPATH)
+sys.path.insert(0, str(ROOT))
+from chartcleaner import __version__
 
+product = os.environ.get('CC_BUILD_PRODUCT', 'app')
+if product not in {'app', 'updater', 'installer'}:
+    raise ValueError('Unknown build product')
+mac = sys.platform == 'darwin'
+name = {'app': 'Chart Cleaner', 'updater': 'chart-cleaner-updater',
+        'installer': 'Install Chart Cleaner' if mac else 'ChartCleanerSetup'}[product]
+entry = {'app': 'app.py', 'updater': 'updater_entry.py', 'installer': 'installer_entry.py'}[product]
+datas, binaries, hiddenimports = [], [], []
+if product == 'app':
+    # Never bundle mutable configuration, token maps, exports, or custom scripts.
+    datas = [(str(ROOT / 'chartcleaner/default_config.json'), 'chartcleaner'),
+             (str(ROOT / 'chartcleaner/packs'), 'chartcleaner/packs')]
+    for package in ('nicegui', 'spacy', 'en_core_web_sm', 'thinc', 'srsly', 'catalogue',
+                    'wasabi', 'weasel', 'preshed', 'murmurhash', 'cymem', 'blis', 'regex',
+                    'presidio_analyzer', 'presidio_anonymizer', 'phonenumbers', 'tldextract',
+                    'thefuzz', 'rapidfuzz', 'pyperclip', 'pymupdf', 'watchdog', 'ex4nicegui'):
+        d, b, h = collect_all(package)
+        datas += d
+        binaries += b
+        hiddenimports += h
+    if mac:
+        d, b, h = collect_all('uvloop')
+        datas += d
+        binaries += b
+        hiddenimports += h
+elif product == 'installer':
+    resources = Path(os.environ['CC_INSTALLER_RESOURCES'])
+    datas = [(str(resources / filename), '.') for filename in
+             ('installer-payload.zip', 'installer-manifest.json')]
 
-a = Analysis(
-    ['app.py'],
-    pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-    optimize=0,
-)
+a = Analysis([str(ROOT / entry)], pathex=[str(ROOT)], binaries=binaries,
+             datas=datas, hiddenimports=hiddenimports, noarchive=False)
 pyz = PYZ(a.pure)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name='Chart Cleaner',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='Chart Cleaner',
-)
-app = BUNDLE(
-    coll,
-    name='Chart Cleaner.app',
-    icon=None,
-    bundle_identifier=None,
-)
+onefile = product == 'installer' and not mac
+exe = EXE(pyz, a.scripts, a.binaries if onefile else [], a.datas if onefile else [],
+          exclude_binaries=not onefile, name=name, console=product == 'updater',
+          upx=False, target_arch='arm64' if mac else None,
+          version=os.environ.get('CC_WINDOWS_VERSION_FILE') if not mac else None)
+if not onefile:
+    coll = COLLECT(exe, a.binaries, a.datas, name=name, upx=False)
+    if mac and product != 'updater':
+        app = BUNDLE(coll, name=name + '.app',
+                     bundle_identifier='com.nasher721.chart-cleaner' + ('.installer' if product == 'installer' else ''),
+                     info_plist={'CFBundleShortVersionString': __version__,
+                                 'CFBundleVersion': __version__,
+                                 'NSHighResolutionCapable': True})

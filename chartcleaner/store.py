@@ -14,6 +14,8 @@ import zipfile
 from pathlib import Path
 
 from . import __version__
+from . import paths
+from .storage import migrate_config, migrate_portable_data
 
 
 def _resolve_base_dir() -> Path:
@@ -29,25 +31,45 @@ def _resolve_base_dir() -> Path:
 
 
 BASE_DIR = _resolve_base_dir()
-CONFIG_PATH = BASE_DIR / "config.json"
-DATA_DIR = BASE_DIR / "data"
+MUTABLE_DIR = paths.user_data_dir() if paths.is_frozen() else BASE_DIR
+CONFIG_PATH = MUTABLE_DIR / "config.json"
+DATA_DIR = MUTABLE_DIR / "data"
 STATS_FILE = DATA_DIR / "stats.jsonl"
 PREFS_FILE = DATA_DIR / "prefs.json"
-PRESETS_DIR = BASE_DIR / "presets"
-CUSTOM_RULES_DIR = BASE_DIR / "custom_rules"
+PRESETS_DIR = MUTABLE_DIR / "presets"
+CUSTOM_RULES_DIR = MUTABLE_DIR / "custom_rules"
 EXPORTS_DIR = DATA_DIR / "exports"
 AUDIT_HITS_FILE = DATA_DIR / "audit_hits.jsonl"
 SUGGESTIONS_STATE_FILE = DATA_DIR / "suggestions_state.json"
 BACKUPS_DIR = DATA_DIR / "backups"
+_MIGRATION_CHECKED = False
+
+
+def _migrate_config_schema(cfg: dict) -> dict:
+    """Apply the one known legacy change without touching current configs."""
+    if "learned_rules" not in cfg:
+        return {**cfg, "learned_rules": []}
+    return cfg
 
 DEFAULT_PREFS = {
     "dark": True,
     "last_preset": "",
     "auto_clean": False,
+    "update_auto_check": True,
+    "update_last_checked": None,
+    "update_status": "Not checked",
+    "update_status_code": None,
 }
 
 
 def ensure_dirs() -> None:
+    global _MIGRATION_CHECKED
+    if paths.is_frozen() and not _MIGRATION_CHECKED:
+        from .engine import validate_config
+        migrate_portable_data(paths.portable_root(), MUTABLE_DIR, validate_config)
+        if CONFIG_PATH.is_file():
+            migrate_config(CONFIG_PATH, validate_config, _migrate_config_schema)
+        _MIGRATION_CHECKED = True
     for d in (DATA_DIR, EXPORTS_DIR, PRESETS_DIR, CUSTOM_RULES_DIR, BACKUPS_DIR, TOKENS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 

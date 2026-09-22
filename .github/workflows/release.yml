@@ -1,0 +1,179 @@
+name: Signed desktop release
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: read
+concurrency:
+  group: signed-release
+  cancel-in-progress: false
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag and create draft before platform gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python scripts/build_release.py check-tag
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > draft-state; then
+            test "$(cat draft-state)" = true
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Chart Cleaner $GITHUB_REF_NAME" --generate-notes
+          fi
+  platform:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: windows-2022
+            platform: windows-x64
+    runs-on: ${{ matrix.runner }}
+    environment: desktop-signing
+    env:
+      MACOS_PUBLISHER: ${{ secrets.MACOS_PUBLISHER }}
+      WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
+      MAC_CERT_BASE64: ${{ secrets.MAC_CERT_BASE64 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      PREVIOUS_RELEASE_TAG: ${{ vars.PREVIOUS_RELEASE_TAG }}
+      PREVIOUS_FIXTURE_VERSION: ${{ vars.PREVIOUS_FIXTURE_VERSION }}
+      MINIMUM_SUPPORTED_VERSION: ${{ vars.MINIMUM_SUPPORTED_VERSION }}
+      GH_TOKEN: ${{ github.token }}
+      TMPDIR: ${{ runner.temp }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.platform == 'macos-arm64' && 'arm64' || 'x64' }}
+          cache: pip
+      - name: Install existing application and build dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Full tests and syntax gate
+        run: |
+          python -m pytest -q
+          python -m compileall -q chartcleaner scripts tests
+          git diff --check
+      - name: Validate signing prerequisites and import temporary credentials
+        run: python scripts/prepare_signing.py
+      - name: Resolve compatible previous-version fixture
+        run: python scripts/prepare_previous_fixture.py --output "$RUNNER_TEMP/previous"
+      - name: Download prior signed release or build signed first-release fixture
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          if test "$PREVIOUS_PROVENANCE" = published_signed_release; then
+            gh release download "$PREVIOUS_RELEASE_TAG" --pattern "ChartCleaner-${PREVIOUS_VERSION}-${TARGET_PLATFORM}.zip" --dir "$RUNNER_TEMP/previous"
+          else
+            python "$RUNNER_TEMP/previous/source/scripts/build_release.py" build --output "$RUNNER_TEMP/previous/build"
+            python "$RUNNER_TEMP/previous/source/scripts/build_release.py" package --output "$RUNNER_TEMP/previous/build" --minimum-version "$PREVIOUS_VERSION"
+            python -c 'import os,shutil; from pathlib import Path; target=Path(os.environ["PREVIOUS_ARCHIVE"]); shutil.copyfile(target.parent/"build"/target.name,target)'
+          fi
+      - name: Freeze and sign app and companion
+        run: |
+          python scripts/build_release.py check-tag
+          python scripts/build_release.py build --output "$RUNNER_TEMP/candidate"
+          python scripts/build_release.py package --output "$RUNNER_TEMP/candidate" --minimum-version "$MINIMUM_SUPPORTED_VERSION"
+      - name: Freeze and sign sealed installer
+        run: |
+          python scripts/build_release.py build --product installer --output "$RUNNER_TEMP/candidate"
+          python scripts/build_release.py package --product installer --output "$RUNNER_TEMP/candidate" --minimum-version "$MINIMUM_SUPPORTED_VERSION"
+      - name: Signed fresh install, UI version, sentinel upgrade and broken startup rollback
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python scripts/release_smoke.py --output "$RUNNER_TEMP/candidate" --previous-version "$PREVIOUS_VERSION" --previous-archive "$PREVIOUS_ARCHIVE" --provenance "$PREVIOUS_PROVENANCE" --minimum-version "$MINIMUM_SUPPORTED_VERSION" --report "$RUNNER_TEMP/candidate/smoke-${TARGET_PLATFORM}.json"
+      - name: Collect only verified distribution artifacts
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          from chartcleaner import __version__
+          root = Path(os.environ['RUNNER_TEMP']) / 'candidate'
+          target = Path('release-candidate')
+          target.mkdir()
+          platform = os.environ['TARGET_PLATFORM']
+          names = [f'ChartCleaner-{__version__}-{platform}.zip', f'smoke-{platform}.json']
+          names += [f'Install-ChartCleaner-{__version__}-{platform}.zip'] if platform == 'macos-arm64' else ['ChartCleanerSetup.exe']
+          for name in names:
+              shutil.copyfile(root / name, target / name)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-${{ matrix.platform }}
+          path: release-candidate/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing material
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          keychain = root / 'chart-cleaner-signing.keychain-db'
+          if keychain.exists():
+              subprocess.run(['security', 'delete-keychain', str(keychain)], check=True)
+          for name in ('mac-signing.p12', 'windows-signing.p12'):
+              (root / name).unlink(missing_ok=True)
+          PY
+  publish:
+    needs: [draft, platform]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*
+          merge-multiple: true
+          path: release-candidate
+      - name: Require both platform proofs and hash final signed archives
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from chartcleaner import __version__
+          for platform in ('macos-arm64', 'windows-x64'):
+              report = json.loads(Path(f'release-candidate/smoke-{platform}.json').read_text())
+              assert report['platform'] == platform and report['version'] == __version__
+              assert all(report[key] == 'PASS' for key in ('frozen_installer_ui', 'signed_upgrade_sentinels', 'broken_startup_rollback'))
+          PY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.build_release import manifest_for, PLATFORMS, VERSION
+          root = Path('release-candidate')
+          reports = [json.loads((root / f'smoke-{platform}.json').read_text()) for platform in PLATFORMS]
+          assert len({item['minimum_supported_version'] for item in reports}) == 1
+          assert len({item['previous_version'] for item in reports}) == 1
+          assert len({item['previous_provenance'] for item in reports}) == 1
+          files = {platform: root / f'ChartCleaner-{VERSION}-{platform}.zip' for platform in PLATFORMS}
+          (root / 'update-manifest.json').write_text(json.dumps(manifest_for(files, VERSION, reports[0]['minimum_supported_version']), indent=2) + '\n')
+          PY
+      - name: Upload final assets and publish only after both platform gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
+          gh release upload "$GITHUB_REF_NAME" release-candidate/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
