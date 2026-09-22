@@ -12,7 +12,7 @@ jane.doe@example.com
 
 Progress Notes by Sarah Chen, MD
 ## Subjective
-Patient is a 58-year-old woman with HTN, HLD, and a
+Patient is a 58-y/o woman with HTN, HLD, and a
 subarachnoid hemorrhage (SAH) admitted following coiling of a ruptured
 anterior communicating artery aneurysm. Overnight she remained at
 neurologic baseline without new headache, nausea, or vision change.
@@ -50,7 +50,7 @@ examination.
 - GCS 15 (GCS).
 
 Risk Factors:
-Family history of aneurysmal subarachnoid hemorrhage in mother (age 61).
+FH of aneurysmal subarachnoid hemorrhage in mother (age 61).
 Smoking history 20 pack-years, quit 2019. HTN nonadherent with
 therapy prior to admission. Referral ID 559301882 for genetic counseling
 service follow-up.

@@ -42,7 +42,18 @@
         "(?i)^\\s*electronically signed by:\\s*.*$\\n?",
         "^THE NEURO ICU MANAGEMENT OF THIS PATIENT WAS DISCUSSED WITH THE NICU TEAM UNDER DR\\. BARRON\\s*$\\n?",
         "^\\s*(?:Process Instructions Reviewed By|STAT Orders Reviewed by|Admitting Provider|Ordering Party|Full Code Order Discussed With|Surrogate Decision Maker Relationship|Requestor Contact Info|AK Location|Transferring to)::?\\s*.*$\\n?",
-        "^\\s*(?:Implement nurse driven protocol|Follow nursing urinary catheter|Indication for Catheter|Discontinue urinary catheter when|Curved \\(Coud\u00e9\\) Catheter|Connected? to|Inserted?(?: in Surgery)?|Date of Surgery|Patient has an Artificial|Irrigate|Condition for Release of Order|Assessment type|Reason for Social Work|Consult Type|Enter Reassessment date\\.?|Was the Nursing Swallow Screen|Is respiratory status stable|Is patent NPO|Case Classification|Add-On|Line Type|Arterial line location)::?\\s*.*$\\n?"
+        "^\\s*(?:Implement nurse driven protocol|Follow nursing urinary catheter|Indication for Catheter|Discontinue urinary catheter when|Curved \\(Coudé\\) Catheter|Connected? to|Inserted?(?: in Surgery)?|Date of Surgery|Patient has an Artificial|Irrigate|Condition for Release of Order|Assessment type|Reason for Social Work|Consult Type|Enter Reassessment date\\.?|Was the Nursing Swallow Screen|Is respiratory status stable|Is patent NPO|Case Classification|Add-On|Line Type|Arterial line location)::?\\s*.*$\\n?",
+        "^\\s*Code Status(?: History)?[ \\t]*:?[^\\n]*$\\n?",
+        "^\\s*Final[ \\t]*$\\n?",
+        "^\\s*Date Value[ \\t]*:?[^\\n]*$\\n?",
+        "^\\s*Pre-op diagnosis[ \\t]*:[^\\n]*$\\n?",
+        "^\\s*Antimicrobial indication[ \\t]*:[^\\n]*$\\n?",
+        "^\\s*Abnormal Labs Reviewed[ \\t]*$\\n?",
+        "^\\s*This order was created via procedure documentation[ \\t]*$\\n?",
+        "^\\s*Placed in \"And\" Linked Group[ \\t]*$\\n?",
+        "^\\s*Last Documented/Reviewed time[ \\t]*:[^\\n]*$\\n?",
+        "^\\s*Notify Physician or LIP within 24 hours[^\\n]*$\\n?",
+        "^\\s*Procedure[ \\t]+Component[ \\t]+Value[ \\t]+Units[ \\t]+Date/Time[ \\t]*$\\n?"
     ],
     "boilerplate": [
         "The American Diabetes Association \\(ADA\\) provides guidance for cutoff values.*?meet the criteria for diagnosis of diabetes\\.",
@@ -74,7 +85,7 @@
         "PATIENT PROBLEMS I REVIEWED, REVISED AND/OR INITIATED: The care of this patient required my full attention and direct personal management of:",
         "STAFF COORDINATION OF CRITICAL CARE",
         "PERSONAL INVOLVEMENT IN CARE: Reviewing initiation, responses and adjustments to therapies.*?with Staff Physician:.*?\\.",
-        "\\{[A-Za-z0-9\\s/_\\-\u2013:]+:\\d+\\}",
+        "\\{[A-Za-z0-9\\s/_\\-–:]+:\\d+\\}",
         "\\.[A-Z0-9_]+\\[[^\\]\\n]*",
         "@[A-Z0-9_]+@",
         "This SmartSection is not supported in the current editor\\..*?(?=\\n|$)",
@@ -85,7 +96,22 @@
         "Vitamin K Antagonist \\(VKA\\) Therapeutic Range:.*?(?:Nishimura RA, et al\\. JACC 2017.*?(\\n\\s*)+\\n|target INR of 2\\.5\\)\\n?)",
         "Comment:\\s*Location:\\s*Cleveland Clinic[^\\n]*\\n?",
         "={20,}\\s*\\n\\d{4}(?:\\s+[A-Za-z]+)?\\s*\\n(?:Empty\\s*\\n)?={20,}",
-        "STROKE 9 CARE AND PREVENTION CHECKLIST\\s*(?:\\d+\\.\\s*\\n+)+"
+        "STROKE 9 CARE AND PREVENTION CHECKLIST\\s*(?:\\d+\\.\\s*\\n+)+",
+        "\\s*\\(\\s*HCC\\s*\\)",
+        "\\s*Date Noted\\s*:[^\\n]*",
+        "\\[\\s*(?:\\d{4,}|[A-Z]{2,}\\d+[A-Z0-9]*|[A-Z]{6,}|SQ[A-Z]{2,})\\s*\\]",
+        "\\s*\\(\\s*[A-Z]{2}(?:\\s*,\\s*[A-Z]{2})+\\s*\\)",
+        "\\s*\\(\\s*Last Name, First Name\\s*\\)",
+        "Meter ID\\s*:\\s*\\d+",
+        "\\s*Notable for the following components:",
+        "CONTRAINDICATIONS\\s+for\\s+SAT\\s+are:[\\s\\S]*?10\\.\\s*Open-chest\\s*\\(\\s*after\\s+cardiac\\s+surgery\\s*\\)",
+        "If\\s+blood\\s+glucose\\s+less\\s+than\\s+70\\s*mg/dL[\\s\\S]*?medication\\s+orders",
+        "In accordance with Centers for Medicare and Medicaid \\(CMS\\) Conditions of Participation[\\s\\S]*?Restraint and/or Seclusion Policy\\.?",
+        "Participation,\\s+Standard\\s+482\\.13[\\s\\S]*?Seclusion\\s+Policy\\.?",
+        "attending physician is notified,\\s+as required,\\s+by the Licensed Independent Practitioners[\\s\\S]*?Seclusion\\s+Policy\\.?",
+        "^\\s*Guyatt GH, et al\\. Chest 2012[^\\n]*$\\n?",
+        "^\\s*Nishimura RA, et al\\. JACC 2017[^\\n]*$\\n?",
+        "device\\s+to\\s+be\\s+worn\\s+continuously\\s+except\\s+for\\s+bathing\\s+and\\s+skin\\s+assessment\\s+per\\s+nursing\\s+unit\\s+protocol\\s+or\\s+periods\\s+of\\s+active\\s+ambulation"
     ],
     "epic_phi_patterns": [
         [
@@ -165,6 +191,74 @@
         [
             "\\bpast medical history\\b",
             "PMH"
+        ],
+        [
+            "\\bHemoglobin A1C\\b",
+            "HgbA1c"
+        ],
+        [
+            "\\byear[\\s-]+old\\b",
+            "y/o"
+        ],
+        [
+            "\\bfamily history\\b",
+            "FH"
+        ],
+        [
+            "\\bHead of Bed\\b",
+            "HOB"
+        ],
+        [
+            "\\bleft upper extremity\\b",
+            "LUE"
+        ],
+        [
+            "\\bright upper extremity\\b",
+            "RUE"
+        ],
+        [
+            "\\bright lower extremity\\b",
+            "RLE"
+        ],
+        [
+            "\\bleft lower extremity\\b",
+            "LLE"
+        ],
+        [
+            "\\bBACTERIAL CULTURE\\b",
+            "BCx"
+        ],
+        [
+            "\\bPO2\\s*/\\s*FIO2\\s+Ratio\\b",
+            "P/F ratio"
+        ],
+        [
+            "\\bBASIC METABOLIC PANEL\\b",
+            "BMP"
+        ],
+        [
+            "\\bCOMPLETE BLOOD COUNT\\b",
+            "CBC"
+        ],
+        [
+            "\\bHemoglobin\\b",
+            "Hgb"
+        ],
+        [
+            "\\bHematocrit\\b",
+            "HCT"
+        ],
+        [
+            "\\bVENOUS BLOOD GASES\\b",
+            "VBG"
+        ],
+        [
+            "\\bHIGH SENSITIVITY TROPONIN T\\b",
+            "HsTrop"
+        ],
+        [
+            "\\bARTERIAL BLOOD GASES\\b",
+            "ABG"
         ],
         [
             " {2,}",
