@@ -183,7 +183,7 @@ def save_export(text: str, base_name: str = "cleaned") -> str:
 def prune_exports(max_age_hours: float = 24.0) -> None:
     ensure_dirs()
     cutoff = time.time() - max_age_hours * 3600
-    for f in EXPORTS_DIR.glob("*.txt"):
+    for f in list(EXPORTS_DIR.glob("*.txt")) + list(EXPORTS_DIR.glob("*.zip")):
         try:
             if f.stat().st_mtime < cutoff:
                 f.unlink()

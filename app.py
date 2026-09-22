@@ -24,10 +24,12 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import threading
 import traceback
 import webbrowser
+import zipfile
 from contextlib import contextmanager
 from importlib.util import find_spec
 from pathlib import Path
@@ -68,6 +70,8 @@ from chartcleaner.benchmark import generate as generate_benchmark
 from chartcleaner.evaluate import evaluate as evaluate_samples
 from chartcleaner.evaluate import load_last_evaluation, save_evaluation
 from chartcleaner.local_llm import LocalLlmClient
+from chartcleaner.chart_qa import QaTurn, ask_chart
+from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.summarizer import (
     LlmUnavailableError,
     NoModelError,
@@ -113,6 +117,7 @@ def start_pending_rule(pattern: str, replacement: str | None, stage: str) -> Non
 
 NAV = [
     ("/", "cleaning_services", "Clean"),
+    ("/batch", "layers", "Batch"),
     ("/pipeline", "tune", "Pipeline & Rules"),
     ("/stats", "insights", "Statistics"),
     ("/scripts", "code", "Custom Scripts"),
@@ -309,7 +314,7 @@ async def clean_page():
 
             result, audit = await run.io_bound(work)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None)  # previous summary refers to the old cleaned text
+                               summary=None, qa=[])  # previous AI output refers to the old cleaned text
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(source))
             # persist reversible-token maps produced by the tokenize stage
@@ -481,6 +486,29 @@ async def clean_page():
                     summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
                 render_summary_output()
 
+            # ---- ask this chart (grounded local Q&A; design: .specs/plans/chart-qa) ----
+            qa_refs.clear()
+            with ui.expansion("Ask this chart", icon="forum").classes("w-full"):
+                if not listed:
+                    ui.label(
+                        f"No local LLM detected at {opts['base_url']} — install Ollama "
+                        "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`."
+                    ).classes("text-xs text-orange-600")
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    qa_refs["question"] = ui.input(
+                        "Ask about this chart",
+                        placeholder="e.g. What are the active antibiotics?").classes("min-w-[320px] flex-grow")
+                    qa_refs["question"].on("keydown.enter", _ask_on_enter)
+                    qa_refs["button"] = ui.button("Ask", icon="send", on_click=run_ask
+                                                  ).props("unelevated color=primary")
+                    qa_refs["spinner"] = ui.spinner("dots", size="sm")
+                    qa_refs["spinner"].set_visibility(False)
+                if model_val:
+                    ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
+                             "verified against the chart").classes("text-xs opacity-60")
+                qa_refs["log"] = ui.column().classes("w-full gap-2")
+            render_qa_log()
+
             if result.warnings:
                 ui.label("⚠ " + " | ".join(result.warnings)).classes("text-xs text-orange-600")
 
@@ -562,6 +590,95 @@ async def clean_page():
             except Exception:
                 pass  # the panel may have been re-rendered mid-run
 
+    # ---- ask this chart (grounded Q&A over the cleaned text) ----
+    qa_state = {"running": False}
+    qa_refs: dict = {}  # panel widgets, repopulated by render_results
+
+    def render_qa_log() -> None:
+        if "log" not in qa_refs:
+            return
+        log_col = qa_refs["log"]
+        log_col.clear()
+        turns = CLEAN_STATE.get("qa") or []
+        if not turns:
+            return
+        with log_col:
+            for t in turns:
+                ui.label("Q: " + t["q"]).classes("text-sm font-semibold")
+                ui.markdown(t["a"]).classes("w-full")
+                g = t["g"]
+                with ui.row().classes("items-center gap-1 flex-wrap"):
+                    if not g["total"]:
+                        ui.badge("No checkable facts (no numbers/dates in answer)",
+                                 color="grey").props("outline")
+                    elif not g["safe"]:
+                        ui.badge(f"UNGROUNDED — only {g['score']}% of numbers/dates found in chart",
+                                 color="red")
+                    elif g["score"] >= 100.0:
+                        ui.badge("Grounded 100%", color="green")
+                    else:
+                        ui.badge(f"Grounded {g['score']}%", color="amber")
+                    ui.button("Copy answer", icon="content_copy",
+                              on_click=lambda _, a=t["a"]: copy_to_clipboard(a)
+                              ).props("flat dense")
+                    ui.label(f"{t['model']} · {t['ms']:,} ms").classes("text-xs opacity-60")
+                ui.separator().classes("w-full opacity-30")
+
+    def _ask_on_enter() -> None:
+        asyncio.get_running_loop().create_task(run_ask())
+
+    async def run_ask() -> None:
+        if qa_state["running"] or not CLEAN_STATE.get("result_text"):
+            return
+        q_box = qa_refs.get("question")
+        question = (q_box.value or "").strip() if q_box else ""
+        if not question:
+            ui.notify("Type a question about the chart first.", type="warning")
+            return
+        qa_state["running"] = True
+        btn, spin = qa_refs.get("button"), qa_refs.get("spinner")
+        if btn:
+            btn.set_enabled(False)
+        if spin:
+            spin.set_visibility(True)
+        try:
+            history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
+
+            def work():
+                return ask_chart(question, CLEAN_STATE["result_text"],
+                                 load_config(CONFIG_PATH), history=history)
+
+            res = await run.io_bound(work)
+            CLEAN_STATE.setdefault("qa", []).append({
+                "q": res.question, "a": res.answer,
+                "g": {"score": res.grounding.grounding_score,
+                      "safe": res.grounding.is_safe,
+                      "total": res.grounding.total_entities},
+                "model": res.model, "ms": res.duration_ms})
+            if q_box:
+                q_box.set_value("")
+            render_qa_log()
+        except LlmUnavailableError as e:
+            ui.notify(
+                f"{e} — install Ollama from ollama.com, pull a model "
+                "(e.g. `ollama pull llama3.1`), then retry.",
+                type="warning", multi_line=True)
+        except NoModelError as e:
+            ui.notify(str(e), type="warning", multi_line=True)
+        except ConfigError as e:
+            ui.notify(str(e), type="negative")
+        except Exception as e:
+            report_error("Chart Q&A failed", e)
+        finally:
+            qa_state["running"] = False
+            try:
+                if btn:
+                    btn.set_enabled(True)
+                if spin:
+                    spin.set_visibility(False)
+            except Exception:
+                pass  # the panel may have been re-rendered mid-run
+
     async def paste_clipboard() -> None:
         try:
             import pyperclip
@@ -575,7 +692,7 @@ async def clean_page():
             ui.notify(f"Clipboard error: {e}", type="negative")
 
     def clear_all() -> None:
-        CLEAN_STATE.update(input="", result=None, result_text="", summary=None)
+        CLEAN_STATE.update(input="", result=None, result_text="", summary=None, qa=[])
         AUTO_LAST["text"] = None
         input_area.set_value("")
         results_col.clear()
@@ -647,62 +764,6 @@ async def clean_page():
         except Exception as ex:
             ui.notify(f"Could not apply preset: {ex}", type="negative")
 
-    async def process_batch() -> None:
-        folder = Path(folder_input.value or "").expanduser()
-        if not folder.is_dir():
-            ui.notify("Folder not found.", type="negative")
-            return
-        exts = set(supported_extensions())
-        files = sorted(f for f in folder.iterdir()
-                       if f.is_file() and f.suffix.lower() in exts)
-        if not files:
-            ui.notify(f"No supported files ({', '.join(sorted(exts))}) in that folder.", type="warning")
-            return
-        batch_btn.set_enabled(False)
-        try:
-            cfg = load_config(CONFIG_PATH)
-            out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            def work():
-                pipe = Pipeline(cfg, custom_dir=CUSTOM_DIR)
-                out = []
-                for f in files[:500]:
-                    try:
-                        ing = load_file(f, cfg)
-                    except IngestError as ex:
-                        out.append({"file": f.name, "before": 0, "after": 0,
-                                    "reduction": f"skipped: {ex}"})
-                        continue
-                    r = pipe.run(ing.text)
-                    out_name = f"{f.stem}_cleaned.txt"
-                    (out_dir / out_name).write_text(r.text, encoding="utf-8")
-                    store.append_run(r.to_history_dict(f"batch:{folder.name}"))
-                    out.append({"file": f.name, "before": len(ing.text), "after": len(r.text),
-                                "reduction": f"{r.reduction:+.1f}%"})
-                return out
-
-            rows = await run.io_bound(work)
-            batch_table_holder.clear()
-            with batch_table_holder:
-                cols = [
-                    {"name": "file", "label": "File", "field": "file", "align": "left"},
-                    {"name": "before", "label": "Chars before", "field": "before"},
-                    {"name": "after", "label": "Chars after", "field": "after"},
-                    {"name": "reduction", "label": "Reduction", "field": "reduction"},
-                ]
-                ui.table(columns=cols, rows=rows, row_key="file", pagination=15) \
-                    .classes("w-full").props("flat dense")
-                ui.button("Open exports folder", icon="folder",
-                          on_click=lambda: open_folder(out_dir)).props("flat")
-            ui.notify(f"Processed {len(rows)} file(s).", type="positive")
-        except ConfigError as e:
-            ui.notify(str(e), type="negative")
-        except Exception as e:
-            report_error("Batch processing failed", e)
-        finally:
-            batch_btn.set_enabled(True)
-
     def on_key(e) -> None:
         try:
             mods = set(e.modifiers or [])
@@ -772,13 +833,10 @@ async def clean_page():
 
         results_col = ui.column().classes("w-full gap-3")
 
-        with ui.expansion("Batch folder (.txt/.md/.docx/.pdf files)", icon="folder_open").classes("w-full"):
-            ui.label("Clean every .txt in a folder on this computer. Outputs are saved to a timestamped "
-                     "folder inside data/exports, downloadable below.").classes("text-xs opacity-70")
-            with ui.row().classes("w-full items-center gap-2"):
-                folder_input = ui.input("Folder path", placeholder="/path/to/charts").classes("w-96 cc-mono")
-                batch_btn = ui.button("Process folder", icon="layers", on_click=process_batch).props("outline")
-            batch_table_holder = ui.column().classes("w-full")
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.label("Many files to clean?").classes("text-xs opacity-60")
+            ui.button("Open Batch page", icon="layers",
+                      on_click=lambda: ui.navigate.to("/batch")).props("flat dense")
 
         preset_sel.on_value_change(on_preset_change)
         ui.keyboard(on_key=on_key)
@@ -786,6 +844,193 @@ async def clean_page():
 
         if CLEAN_STATE.get("result"):
             render_results()
+
+
+# ===========================================================================
+# PAGE: Batch
+# ===========================================================================
+
+@ui.page("/batch")
+def batch_page():
+    """Clean many charts at once — upload files or point at a folder."""
+    state = {"running": False}
+    pending: list[Path] = []
+    tmp_dir = Path(tempfile.mkdtemp(prefix="cc_batch_"))
+    out_ref: dict = {"dir": None, "zip": None}
+
+    # ---- handlers (defined before the UI that references them) -------------
+    def set_running(flag: bool) -> None:
+        state["running"] = flag
+        run_btn.set_enabled(not flag)
+        spinner.set_visibility(flag)
+
+    def refresh_pending() -> None:
+        if pending:
+            names = ", ".join(p.name for p in pending[:8])
+            if len(pending) > 8:
+                names += " …"
+            pending_label.set_text(f"{len(pending)} file(s) queued: {names}")
+        else:
+            pending_label.set_text("No files queued yet.")
+        run_btn.set_enabled(bool(pending) and not state["running"])
+        clear_btn.set_enabled(bool(pending))
+
+    async def handle_upload(e) -> None:
+        try:
+            exts = set(supported_extensions())
+            name = Path(e.name or "upload.txt").name or "upload.txt"
+            target = tmp_dir / name
+            if target.suffix.lower() not in exts:
+                ui.notify(f"Skipped {name} — unsupported type "
+                          f"({', '.join(sorted(exts))} only).", type="warning")
+                return
+            target.write_bytes(e.content.read())
+            if target not in pending:
+                pending.append(target)
+            refresh_pending()
+        except Exception as ex:
+            report_error("Upload failed", ex)
+
+    def add_folder() -> None:
+        folder = Path(folder_input.value or "").expanduser()
+        if not folder.is_dir():
+            ui.notify("Folder not found.", type="negative")
+            return
+        exts = set(supported_extensions())
+        found = sorted(f for f in folder.iterdir()
+                       if f.is_file() and f.suffix.lower() in exts)
+        if not found:
+            ui.notify(f"No supported files ({', '.join(sorted(exts))}) in that folder.",
+                      type="warning")
+            return
+        room = max(0, 500 - len(pending))
+        pending.extend(found[:room])
+        if len(found) > room:
+            ui.notify(f"Added {room} of {len(found)} files — 500-file cap per run.",
+                      type="warning")
+        refresh_pending()
+
+    def clear_pending() -> None:
+        pending.clear()
+        refresh_pending()
+
+    def download_zip() -> None:
+        name = out_ref.get("zip")
+        if name:
+            download_file(f"/exports/{name}", name)
+
+    async def run_now() -> None:
+        if state["running"] or not pending:
+            return
+        set_running(True)
+        try:
+            cfg = load_config(CONFIG_PATH)
+            files = list(pending)[:500]
+
+            def work():
+                return run_batch_files(files, cfg, custom_dir=CUSTOM_DIR)
+
+            results = await run.io_bound(work)
+            out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ok = [r for r in results if r.status == "ok"]
+            for r in ok:
+                (out_dir / f"{Path(r.name).stem}_cleaned.txt").write_text(
+                    r.cleaned, encoding="utf-8")
+                store.append_run({
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "source": f"batch:{r.name}",
+                    "chars_before": r.chars_before, "chars_after": r.chars_after,
+                    "reduction": r.reduction, "duration_ms": r.elapsed_ms,
+                    "stages": r.stages, "warnings": [],
+                })
+            zip_name = f"batch_{out_dir.name}.zip"
+            zip_path = store.EXPORTS_DIR / zip_name
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for r in ok:
+                    zf.writestr(f"{Path(r.name).stem}_cleaned.txt", r.cleaned)
+            out_ref.update(dir=out_dir, zip=zip_name)
+
+            results_col.clear()
+            with results_col:
+                cols = [
+                    {"name": "file", "label": "File", "field": "file", "align": "left"},
+                    {"name": "chars", "label": "Characters", "field": "chars", "align": "left"},
+                    {"name": "reduction", "label": "Reduction", "field": "reduction"},
+                    {"name": "phi", "label": "PHI redacted", "field": "phi"},
+                    {"name": "findings", "label": "Audit findings", "field": "findings"},
+                    {"name": "ms", "label": "Elapsed", "field": "ms", "align": "left"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                ]
+                rows = []
+                for r in results:
+                    if r.status == "ok":
+                        rows.append({"file": r.name,
+                                     "chars": f"{r.chars_before:,} → {r.chars_after:,}",
+                                     "reduction": f"{r.reduction:+.1f}%",
+                                     "phi": r.phi_total, "findings": r.findings,
+                                     "ms": f"{r.elapsed_ms:,} ms", "status": "ok"})
+                    else:
+                        rows.append({"file": r.name, "chars": "—", "reduction": "—",
+                                     "phi": "—", "findings": "—",
+                                     "ms": f"{r.elapsed_ms:,} ms",
+                                     "status": f"error: {r.error}"})
+                ui.table(columns=cols, rows=rows, row_key="file",
+                         pagination=20).classes("w-full").props("flat dense")
+                if ok:
+                    with ui.row().classes("gap-2 flex-wrap items-center"):
+                        ui.button("Download all (.zip)", icon="archive",
+                                  on_click=download_zip).props("unelevated color=primary")
+                        ui.button("Open exports folder", icon="folder",
+                                  on_click=lambda: open_folder(out_dir)).props("flat")
+                    for r in ok:
+                        out_name = f"{Path(r.name).stem}_cleaned.txt"
+                        with ui.row().classes("w-full items-center gap-2"):
+                            ui.icon("description").classes("opacity-60")
+                            ui.label(out_name).classes("text-xs cc-mono flex-grow")
+                            ui.button("Download .txt", icon="download",
+                                      on_click=lambda _, n=out_name: download_file(
+                                          f"/exports/{out_dir.name}/{n}", n)
+                                      ).props("flat dense")
+                failed = [r for r in results if r.status == "error"]
+                if failed:
+                    ui.label(f"{len(failed)} file(s) failed: "
+                             + "; ".join(f"{r.name} — {r.error}" for r in failed[:5])) \
+                        .classes("text-xs text-red-600")
+                ui.label("Cleaned copies also live in data/exports; run history is on the "
+                         "Statistics page.").classes("text-xs opacity-60")
+            ui.notify(f"Processed {len(results)} file(s) — {len(ok)} ok.",
+                      type="positive")
+        except ConfigError as e:
+            ui.notify(str(e), type="negative")
+        except Exception as e:
+            report_error("Batch processing failed", e)
+        finally:
+            set_running(False)
+
+    # ---- UI ------------------------------------------------------------------
+    with shell("Batch clean", "/batch"):
+        ui.label("Clean many charts in one run. Upload files or queue a folder — every "
+                 "cleaned copy is saved to data/exports, and the per-file stats below show "
+                 "exactly what your rules did.").classes("opacity-70")
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True) \
+                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("max-w-xs")
+            folder_input = ui.input("…or a folder path", placeholder="/path/to/charts") \
+                .classes("w-96 cc-mono")
+            ui.button("Add folder files", icon="create_new_folder",
+                      on_click=add_folder).props("outline")
+        with ui.row().classes("w-full items-center gap-2"):
+            pending_label = ui.label("No files queued yet.").classes("text-sm flex-grow")
+            run_btn = ui.button("Clean queued files", icon="auto_fix_high", on_click=run_now)
+            run_btn.props("unelevated color=primary")
+            run_btn.set_enabled(False)
+            clear_btn = ui.button("Clear queue", icon="delete_sweep",
+                                  on_click=clear_pending).props("flat")
+            clear_btn.set_enabled(False)
+            spinner = ui.spinner("dots", size="lg")
+            spinner.set_visibility(False)
+        results_col = ui.column().classes("w-full gap-3")
 
 
 # ===========================================================================

@@ -14,8 +14,10 @@ __all__ = ["PENDING_RULE", "CLEAN_STATE", "AUTO_LAST", "PIPE_TEST"]
 PENDING_RULE: dict = {}
 
 # Last clean-run state kept for the Clean page across client reconnects
-# ("summary" holds the local-AI SummaryResult for the current cleaned text)
-CLEAN_STATE: dict = {"input": "", "result": None, "result_text": "", "audit": None, "summary": None}
+# ("summary" holds the local-AI SummaryResult for the current cleaned text;
+#  "qa" holds the Ask-this-chart turn dicts for it)
+CLEAN_STATE: dict = {"input": "", "result": None, "result_text": "", "audit": None,
+                     "summary": None, "qa": []}
 
 # Guard for auto-clean (don't re-clean unchanged text)
 AUTO_LAST: dict = {"text": None}
