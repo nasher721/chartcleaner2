@@ -265,6 +265,7 @@
             " "
         ]
     ],
+    "learned_rules": [],
     "clinical_headers": [
         "Subjective",
         "Objective",

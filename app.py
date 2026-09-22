@@ -183,6 +183,32 @@ def count_matches(pattern: str, text: str, flags: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# learned rules (highlight text on the Clean page → remembered rule)
+# ---------------------------------------------------------------------------
+
+LEARN_REMOVE_TEXT = "remove_text"
+LEARN_REMOVE_LINES = "remove_lines"
+LEARN_REPLACE = "replace"
+
+
+def learned_pattern(text: str, mode: str) -> str:
+    """Turn highlighted text into a regex for the learned_rules stage.
+
+    remove_text: literal match anywhere (multi-line safe).
+    remove_lines: only match when whole line(s) equal the text, and swallow
+    the line break so no blank line is left behind.
+    replace: literal match anywhere, paired with a replacement string.
+    """
+    text = (text or "").replace("\r\n", "\n").strip("\n")
+    parts = [re.escape(line) for line in text.split("\n")]
+    if mode == LEARN_REMOVE_LINES:
+        return ("(?im)^[ \\t]*"
+                + r"[ \t]*\r?\n[ \t]*".join(parts)
+                + r"[ \t]*\n?")
+    return r"\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # small helpers shared by pages
 # ---------------------------------------------------------------------------
 
@@ -782,6 +808,86 @@ async def clean_page():
         elif not text.strip():
             AUTO_LAST["text"] = None
 
+    # ---- learn a rule from highlighted text ---------------------------------
+
+    def open_learn_dialog(selected: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
+            ui.label("Learn a rule from highlighted text").classes("font-semibold text-blue-600")
+            ui.label("The rule joins your other rules (Pipeline & Rules → Learned rules) and is "
+                     "applied on every future Clean. It is saved in config.json, so it also "
+                     "travels with a settings export.").classes("text-xs opacity-60 -mt-2")
+            txt = ui.textarea("Highlighted text (edit it down to exactly what should change)",
+                              value=selected) \
+                .props("outlined input-style='min-height: 90px'").classes("w-full cc-mono")
+            mode = ui.radio(
+                {LEARN_REMOVE_TEXT: "Remove this text wherever it appears",
+                 LEARN_REMOVE_LINES: "Remove whole line(s) that are exactly this text",
+                 LEARN_REPLACE: "Replace this text with…"},
+                value=LEARN_REMOVE_TEXT).props("dense")
+            repl = ui.input("Replace with (used by the last option only)",
+                            value="").props("outlined dense").classes("w-full")
+            hit_lbl = ui.label("").classes("text-xs opacity-80")
+
+            def sync_hits() -> None:
+                m = mode.value or LEARN_REMOVE_TEXT
+                pat = learned_pattern(txt.value, m)
+                n = count_matches(pat, input_area.value or "", re.IGNORECASE) if pat else 0
+                hit_lbl.set_text(
+                    f"Preview: matches {n} time(s) in your current chart" if n >= 0
+                    else "Preview: pattern problem — adjust the highlighted text")
+
+            txt.on_value_change(lambda e: sync_hits())
+            mode.on_value_change(lambda e: sync_hits())
+            sync_hits()
+
+            def save_learned() -> None:
+                snippet = (txt.value or "").replace("\r\n", "\n").strip()
+                m = mode.value or LEARN_REMOVE_TEXT
+                if not snippet:
+                    ui.notify("Nothing to learn — the highlighted text is empty.", type="warning")
+                    return
+                if m == LEARN_REPLACE and not (repl.value or "").strip():
+                    ui.notify("Enter the replacement text, or pick one of the remove options.",
+                              type="warning")
+                    return
+                try:
+                    cfg = load_config(CONFIG_PATH)
+                    cfg.setdefault("learned_rules", []).append(
+                        [learned_pattern(snippet, m), repl.value if m == LEARN_REPLACE else ""])
+                    errs, _ = validate_config(cfg)
+                    if errs:
+                        ui.notify("Cannot save rule — " + errs[0], type="negative")
+                        return
+                    save_config_with_backup(cfg)
+                except Exception as ex:
+                    report_error("Could not save the learned rule", ex)
+                    return
+                dlg.close()
+                verb = "replace" if m == LEARN_REPLACE else "remove"
+                ui.notify(f"Rule saved — matches will be {verb}d every time you Clean "
+                          "(manage them on the Pipeline page → Learned rules).", type="positive")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Save rule", icon="school", on_click=save_learned) \
+                    .props("unelevated color=primary")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    async def learn_from_selection() -> None:
+        try:
+            sel = await ui.run_javascript(
+                "(function(){var ta=document.querySelector('.cc-learn-src textarea');"
+                "if(!ta)return '';"
+                "var s=ta.selectionStart,e=ta.selectionEnd;"
+                "return (s===e)?'':ta.value.substring(s,e);})()")
+        except Exception:
+            sel = None
+        if not sel or not str(sel).strip():
+            ui.notify("Highlight some text in the chart above first, then click Learn.",
+                      type="info")
+            return
+        open_learn_dialog(str(sel))
+
     # ---- UI ------------------------------------------------------------------
     with shell("Clean a chart", "clean"):
         errs, _warns = validate_config(load_config(CONFIG_PATH))
@@ -803,6 +909,9 @@ async def clean_page():
         spinner = ui.spinner("dots", size="lg")
         spinner.set_visibility(False)
         ui.button("Paste from clipboard", icon="content_paste", on_click=paste_clipboard)
+        ui.button("Learn rule from selection", icon="highlight", on_click=learn_from_selection) \
+            .props("outline").tooltip("Highlight text in the chart, then click this to turn it "
+                                      "into a remove/replace rule remembered for every future clean")
         ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
         ui.switch("Auto-clean as I type", value=bool(PREFS.get("auto_clean")),
                   on_change=lambda e: (PREFS.update(auto_clean=e.value), save_prefs()))
@@ -816,14 +925,16 @@ async def clean_page():
                 value=CLEAN_STATE["input"],
                 on_change=lambda e: CLEAN_STATE.update(input=e.value))
             input_area = _rx_input.element
-            input_area.props("outlined input-style='min-height: 220px'").classes("w-full cc-mono")
+            input_area.props("outlined input-style='min-height: 220px'") \
+                .classes("w-full cc-mono cc-learn-src")
             rxui.label(lambda: (lambda t: f"{len(t):,} chars · {len(t.split()):,} words")(
                 _rx_input.value or "")).classes("text-xs opacity-60")
         else:
             input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
                                      value=CLEAN_STATE["input"],
                                      on_change=lambda e: CLEAN_STATE.update(input=e.value))
-            input_area.props("outlined input-style='min-height: 220px'").classes("w-full cc-mono")
+            input_area.props("outlined input-style='min-height: 220px'") \
+                .classes("w-full cc-mono cc-learn-src")
             ui.label("").classes("text-xs opacity-60")
 
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
@@ -1043,6 +1154,7 @@ STAGE_EDITORS = {
     "phi_patterns": ("regex_pairs", "epic_phi_patterns"),
     "clinical_identifiers": ("clinical_identifiers", "clinical_identifiers"),
     "literal_replacements": ("regex_pairs", "literal_replacements"),
+    "learned_rules": ("regex_pairs", "learned_rules"),
     "headers": ("headers", "clinical_headers"),
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
     "fuzzy_dedup": ("fuzzy", "fuzzy_dedup"),
@@ -1065,6 +1177,7 @@ STAGE_DESCRIPTIONS = {
     "clinical_identifiers": "Off by default. Algorithmically recognizes and redacts verified National Provider IDs (NPI via Luhn checksum), DEA numbers (checksum verified), and UDI medical device barcodes.",
     "nlp_redaction": "Presidio NLP redaction: entity types, replacements, confidence threshold and allow-list.",
     "literal_replacements": "Regex → replacement pairs for abbreviations and text fixes.",
+    "learned_rules": "Rules you taught the app by highlighting text on the Clean page (remove text, remove whole lines, or replace). Each row is [regex, replacement]; an empty replacement removes the match. New rules can also be added here by hand.",
     "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
     "sections": "Off by default. Drop only the listed sections, or keep only the listed ones. Section boundaries come from your header list unless you supply boundary headers.",
@@ -1082,6 +1195,7 @@ STAGE_FLAGS = {
     "boilerplate": re.IGNORECASE | re.MULTILINE | re.DOTALL,
     "phi_patterns": re.IGNORECASE,
     "literal_replacements": re.IGNORECASE,
+    "learned_rules": re.IGNORECASE,
 }
 
 
@@ -1124,7 +1238,8 @@ def pipeline_page():
                 target_sel = ui.select(
                     options={"phi_patterns": "Structured PHI patterns (regex → replacement)",
                              "emr_line_metadata": "EMR line metadata (delete whole lines)",
-                             "literal_replacements": "Literal replacements"},
+                             "literal_replacements": "Literal replacements",
+                             "learned_rules": "Learned rules (your highlight-taught rules)"},
                     value=PENDING_RULE.get("stage") or "phi_patterns",
                     label="Add to stage",
                 ).classes("w-full max-w-[460px]")
@@ -1144,6 +1259,7 @@ def pipeline_page():
                 def add_to_stage() -> None:
                     key = {"phi_patterns": "epic_phi_patterns",
                            "literal_replacements": "literal_replacements",
+                           "learned_rules": "learned_rules",
                            "emr_line_metadata": "emr_line_metadata"}[target_sel.value]
                     if key == "emr_line_metadata":
                         draft.setdefault(key, []).append(pat_in.value)
@@ -1770,7 +1886,7 @@ def pipeline_page():
             if sid in ("metadata_lines", "boilerplate") and isinstance(obj, list):
                 n = sum(max(0, count_matches(p, text, STAGE_FLAGS[sid])) for p in obj if isinstance(p, str))
                 counts.append(f"{STAGE_LABELS[sid]}: {n}")
-            elif sid in ("phi_patterns", "literal_replacements") and isinstance(obj, list):
+            elif sid in ("phi_patterns", "literal_replacements", "learned_rules") and isinstance(obj, list):
                 n = sum(max(0, count_matches(p[0], text, STAGE_FLAGS[sid]))
                         for p in obj if isinstance(p, list) and len(p) == 2)
                 counts.append(f"{STAGE_LABELS[sid]}: {n}")
@@ -2484,6 +2600,59 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Open backups folder", icon="folder",
                           on_click=lambda: open_folder(store.BACKUPS_DIR)).props("flat")
+
+        # ---- export / import settings bundle ------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Export & import settings").classes("font-semibold")
+            ui.label("Bundles everything you customized — all rules (including rules learned by "
+                     "highlighting text), output options, presets, custom scripts, folder watcher "
+                     "and suggestion dismissals — into one .zip to import on a fresh install. "
+                     "Run history and token maps are NOT included: history is reproducible and "
+                     "token maps undo the cleaning.") \
+                .classes("text-xs opacity-60 -mt-1")
+
+            def export_settings_bundle() -> None:
+                try:
+                    path, counts = store.export_settings()
+                except Exception as e:
+                    report_error("Settings export failed", e)
+                    return
+                download_file(f"/exports/{path.name}", path.name)
+                ui.notify(f"Exported {sum(counts.values())} item(s) → {path.name} "
+                          "(check your downloads).", type="positive")
+
+            ui.button("Export all settings (.zip)", icon="download",
+                      on_click=export_settings_bundle).props("outline")
+
+            async def import_settings_bundle(e) -> None:
+                tmp_path = None
+                try:
+                    tmp_path = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+                    tmp_path.write(e.content.read())
+                    tmp_path.close()
+                    ok, msg = store.import_settings(tmp_path.name)
+                    if ok:
+                        PREFS.clear()
+                        PREFS.update(store.load_prefs())
+                    ui.notify(msg, type="positive" if ok else "negative")
+                    if ok:
+                        await asyncio.sleep(0.8)
+                        ui.navigate.to("/settings")
+                except Exception as ex:
+                    report_error("Settings import failed", ex)
+                finally:
+                    if tmp_path:
+                        try:
+                            Path(tmp_path.name).unlink()
+                        except OSError:
+                            pass
+
+            ui.upload(on_upload=import_settings_bundle, auto_upload=True) \
+                .props("accept=.zip,application/zip flat label='Import settings (.zip)' icon='upload'") \
+                .classes("max-w-xs")
+            ui.label("Importing replaces the current rules (a config backup is kept first) "
+                     "and adds/overwrites presets and scripts with the same names.") \
+                .classes("text-xs opacity-60")
 
         with ui.card().classes("w-full gap-1"):
             ui.label("About").classes("font-semibold")

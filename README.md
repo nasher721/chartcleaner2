@@ -8,6 +8,8 @@ Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation �
 - **Local AI summary** — after a clean, a "Local AI summary" panel summarizes the chart on-device via [Ollama](https://ollama.com) (pick clinical sections / brief paragraph / key findings / your own prompt). Every number, dose, and date in the summary is checked against the source chart, and ungrounded items are flagged — hallucinated facts can't hide. Needs Ollama running locally; nothing ever leaves your machine (the endpoint is locked to loopback).
 - **Ask this chart** — after a clean, ask questions about the chart in plain language ("what are the active antibiotics?"). A local model answers on-device and every number, dose, and date in each answer is verified against the chart — ungrounded claims are flagged, and answers use only facts in the chart. Same Ollama setup as the summary panel; short conversation context is kept in the browser, never on disk.
 - **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever.
+- **Learn rules by highlighting** — select any text in the chart on the Clean page and click **Learn rule from selection**: remove that text everywhere, remove the whole line(s), or replace it with your own text. The rule is remembered (Pipeline → *Learned rules*) and applied to every future clean, with a live preview of how many times it would match.
+- **Settings export / import** — one `.zip` carries all your customization (rules, learned rules, options, presets, custom scripts, watcher config) to a clean install: Settings → *Export & import settings*.
 - **Rule packs** — curated rule sets shipped with the app: *HIPAA Safe Harbor (strict)* and *Philter core PHI* (ported from the published UCSF pipeline). Install as a preset or apply directly from the Pipeline page.
 - **Reversible tokenization** — optionally swap PHI for stable `[[T1]]`-style codes instead of deleting it. Value→token maps are saved locally and can restore the original text later (Settings → Token maps, or `clean-chart --untoken`).
 - **Pipeline & Rules page** — every cleaning rule is editable in the app: enable/disable, reorder, add/edit regex patterns (with live match counts against a sample), tune NLP redaction entities and thresholds, tune the review checks, and save any rule set as a named **preset** (import/export as JSON).
@@ -70,17 +72,18 @@ Stages run top-to-bottom (you can reorder them in the app):
 | 3 | Structured PHI patterns | Regex→replacement pairs (MRN, DOB, phone lines…). |
 | 4 | NLP redaction (Presidio) | NLP-based redaction of names/phones/emails, with allow-list and confidence threshold. |
 | 5 | Literal replacements | Abbreviations and text fixes (e.g. *hypertension* → *HTN*). |
-| 6 | Unicode normalization | *New, off by default.* Curly quotes, en/em dashes, non-breaking spaces, zero-width chars, ellipses and ligatures → plain equivalents. |
-| 7 | Timestamp removal | *New, off by default.* Removes dates (ISO, US, "Mar 5, 2024") and optionally clock times, with your own extra patterns and replacement text. |
-| 8 | Section keep/drop | *New, off by default.* Drop only the listed sections, or keep only those — great for "labs only" or "no imaging" exports. |
-| 9 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs — plus opt-in CRLF→LF, double-space collapse, de-indent, and tab conversion. |
-| 10 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
-| 11 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
-| 12 | Header promotion | Turns known section headers into Markdown headings — pick the level (`#`…`######`), bold `**Header**` style, colon retention, or restrict to ALL-CAPS lines. medspaCy sectionizer still optional (`headers_engine: medspacy`). |
-| 13 | ALL-CAPS normalization | *New, off by default.* Rewrites long shouting lines into sentence case, preserving acronyms you list (MRI, ICU…). |
-| 14 | Bullet normalization | Normalizes •, *, - bullets — pick the marker, convert numbered lists, drop empty bullets, add your own glyphs. |
-| 15 | Long-line handling | *New, off by default.* Truncates or wraps lines over a width; wrapping keeps indentation. |
-| 16+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
+| 6 | Learned rules | Rules you taught the app by **highlighting text on the Clean page** (remove text / remove lines / replace), plus hand-added pairs in the same editor. |
+| 7 | Unicode normalization | *New, off by default.* Curly quotes, en/em dashes, non-breaking spaces, zero-width chars, ellipses and ligatures → plain equivalents. |
+| 8 | Timestamp removal | *New, off by default.* Removes dates (ISO, US, "Mar 5, 2024") and optionally clock times, with your own extra patterns and replacement text. |
+| 9 | Section keep/drop | *New, off by default.* Drop only the listed sections, or keep only those — great for "labs only" or "no imaging" exports. |
+| 10 | Whitespace cleanup | Trims trailing spaces, collapses blank-line runs — plus opt-in CRLF→LF, double-space collapse, de-indent, and tab conversion. |
+| 11 | Duplicate note folding | Folds near-duplicate Epic note blocks by body similarity. |
+| 12 | Fuzzy paragraph dedup | Collapses copy-forwarded paragraphs. |
+| 13 | Header promotion | Turns known section headers into Markdown headings — pick the level (`#`…`######`), bold `**Header**` style, colon retention, or restrict to ALL-CAPS lines. medspaCy sectionizer still optional (`headers_engine: medspacy`). |
+| 14 | ALL-CAPS normalization | *New, off by default.* Rewrites long shouting lines into sentence case, preserving acronyms you list (MRI, ICU…). |
+| 15 | Bullet normalization | Normalizes •, *, - bullets — pick the marker, convert numbered lists, drop empty bullets, add your own glyphs. |
+| 16 | Long-line handling | *New, off by default.* Truncates or wraps lines over a width; wrapping keeps indentation. |
+| 17+ | **Your custom scripts** | Any `custom_rules/*.py` file — see below. |
 
 Off by default, between stages 2 and 3: **Reversible tokenization** — swaps structured PHI for stable `[[T1]]` codes (same value ⇒ same token) and saves the value→token map so the text can be restored later.
 

@@ -147,12 +147,23 @@ def run_regex_pairs(
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags = 0
     total = 0
-    for pattern, replacement in cfg[key]:
+    for pattern, replacement in (cfg.get(key) or []):
         r = re.compile(pattern, flags=flags)
         text, n = r.subn(replacement, text)
         total += n
     details = {"phi": {"pattern_redactions": total}} if phi else {}
     return text, total, details
+
+
+def run_learned(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
+    """Apply the rules learned from text selections on the Clean page.
+
+    Each entry is [pattern, replacement]; an empty replacement removes the
+    match. A missing or empty list is a no-op (older configs don't have it).
+    """
+    if not (cfg.get("learned_rules") or []):
+        return text, 0, {}
+    return run_regex_pairs(text, cfg, ctx, "learned_rules", sid="learned_rules")
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +766,7 @@ RUNNERS: dict[str, Callable] = {
     "nlp": run_nlp,
     "tokenize": run_tokenize,
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
+    "learned": run_learned,
     "unicode": run_unicode,
     "timestamps": run_timestamps,
     "sections": run_sections,
@@ -775,6 +787,7 @@ KIND_TO_RUNNER = {
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
+    "learned_rules": "learned",
     "unicode_normalize": "unicode",
     "timestamps": "timestamps",
     "sections": "sections",

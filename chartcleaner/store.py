@@ -10,7 +10,10 @@ import shutil
 import sys
 import time
 import uuid
+import zipfile
 from pathlib import Path
+
+from . import __version__
 
 
 def _resolve_base_dir() -> Path:
@@ -492,3 +495,141 @@ def save_watch_config(cfg: dict) -> None:
     WATCH_CONFIG_FILE.write_text(
         json.dumps({k: cfg.get(k, DEFAULT_WATCH[k]) for k in DEFAULT_WATCH},
                    indent=2) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# settings bundle: move every user customization to a (new) install
+# ---------------------------------------------------------------------------
+
+SETTINGS_BUNDLE_VERSION = 1
+
+
+def export_settings(dest: str | Path | None = None) -> tuple[Path, dict]:
+    """Zip up everything the user customized so it can move to a clean install.
+
+    Included: config.json (rules, options and learned rules), prefs.json,
+    presets, custom scripts, folder-watcher config and suggestion dismissals.
+    Deliberately excluded: run history (reproducible), token maps and cleaned
+    exports (they undo or contain the cleaning, i.e. potential PHI).
+
+    Returns (zip_path, counts) where counts maps what was bundled.
+    """
+    ensure_dirs()
+    if dest is None:
+        dest = EXPORTS_DIR / f"chart-cleaner-settings-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    dest = Path(dest)
+    counts: dict[str, int] = {}
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for src, arc in ((CONFIG_PATH, "config.json"),
+                         (PREFS_FILE, "data/prefs.json"),
+                         (WATCH_CONFIG_FILE, "data/watch.json"),
+                         (SUGGESTIONS_STATE_FILE, "data/suggestions_state.json")):
+            p = Path(src)
+            if p.exists():
+                zf.write(p, arc)
+                counts[arc.split("/")[-1]] = counts.get(arc.split("/")[-1], 0) + 1
+        presets = sorted(PRESETS_DIR.glob("*.json")) if PRESETS_DIR.exists() else []
+        for p in presets:
+            zf.write(p, f"presets/{p.name}")
+        counts["presets"] = len(presets)
+        scripts = [p for p in sorted(CUSTOM_RULES_DIR.glob("*.py"))
+                   if not p.name.startswith("_")] if CUSTOM_RULES_DIR.exists() else []
+        for p in scripts:
+            zf.write(p, f"custom_rules/{p.name}")
+        counts["custom_rules"] = len(scripts)
+        manifest = {
+            "kind": "chart-cleaner-settings",
+            "version": SETTINGS_BUNDLE_VERSION,
+            "app_version": __version__,
+            "exported_at": _now_iso(),
+            "counts": counts,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
+    return dest, counts
+
+
+def import_settings(zip_path: str | Path) -> tuple[bool, str]:
+    """Apply a settings bundle made by export_settings.
+
+    Safe on a clean install (missing files are simply absent from the bundle)
+    and on a used one (the current config is backed up first; an invalid
+    config refuses the whole import instead of half-applying).
+
+    Returns (ok, summary_message).
+    """
+    from .engine import validate_config, save_config
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+            if "manifest.json" not in names:
+                return False, "Not a Chart Cleaner settings bundle (manifest.json missing)."
+            try:
+                manifest = json.loads(zf.read("manifest.json"))
+            except json.JSONDecodeError:
+                return False, "Bundle manifest is corrupt."
+            if manifest.get("kind") != "chart-cleaner-settings":
+                return False, "Not a Chart Cleaner settings bundle."
+            version = int(manifest.get("version") or 0)
+            if version > SETTINGS_BUNDLE_VERSION:
+                return False, (f"Bundle was written by a newer app version (bundle v{version} "
+                               f"> v{SETTINGS_BUNDLE_VERSION}); update this install first.")
+
+            applied: list[str] = []
+
+            if "config.json" in names:
+                try:
+                    cfg = json.loads(zf.read("config.json").decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return False, "Bundle config.json is not valid JSON — nothing was changed."
+                if not isinstance(cfg, dict):
+                    return False, "Bundle config.json is not a rules object — nothing was changed."
+                errs, _ = validate_config(cfg)
+                if errs:
+                    return False, "Bundle rules are invalid (" + errs[0] + ") — nothing was changed."
+                rotate_config_backup()
+                ensure_dirs()
+                save_config(cfg, CONFIG_PATH)
+                applied.append(f"{_rule_count(cfg)} rule entries")
+
+            if "data/prefs.json" in names:
+                try:
+                    prefs = json.loads(zf.read("data/prefs.json"))
+                except json.JSONDecodeError:
+                    prefs = {}
+                if isinstance(prefs, dict):
+                    save_prefs({k: prefs[k] for k in DEFAULT_PREFS if k in prefs})
+                    applied.append("preferences")
+
+            n_presets = 0
+            for name in names:
+                if name.startswith("presets/") and name.endswith(".json"):
+                    target = PRESETS_DIR / Path(name).name
+                    target.write_bytes(zf.read(name))
+                    n_presets += 1
+            if n_presets:
+                applied.append(f"{n_presets} preset(s)")
+
+            n_scripts = 0
+            for name in names:
+                if name.startswith("custom_rules/") and name.endswith(".py") \
+                        and not Path(name).name.startswith("_"):
+                    target = CUSTOM_RULES_DIR / Path(name).name
+                    target.write_bytes(zf.read(name))
+                    n_scripts += 1
+            if n_scripts:
+                applied.append(f"{n_scripts} custom script(s)")
+
+            for arc, label in (("data/watch.json", "folder watcher"),
+                               ("data/suggestions_state.json", "suggestion dismissals")):
+                if arc in names:
+                    (DATA_DIR / Path(arc).name).write_bytes(zf.read(arc))
+                    applied.append(label)
+    except zipfile.BadZipFile:
+        return False, "That file is not a valid zip archive."
+    except OSError as e:
+        return False, f"Could not read the bundle: {e}"
+
+    if not applied:
+        return True, "Bundle was empty — nothing to import."
+    return True, "Imported: " + ", ".join(applied) + "."

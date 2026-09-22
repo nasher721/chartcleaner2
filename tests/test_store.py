@@ -116,3 +116,114 @@ def test_restore_rejects_invalid_rules(paths):
                                   "emr_line_metadata": ["(?im)[unclosed"]}), encoding="utf-8")
     ok, msg = store.restore_config_backup(broken)
     assert not ok and "invalid" in msg.lower()
+
+
+# -- settings bundle (export / import for clean installs) ------------------------
+
+@pytest.fixture()
+def bundle_paths(tmp_path, monkeypatch):
+    """A self-contained fake install: every store path points into tmp_path."""
+    data = tmp_path / "data"
+    data.mkdir()
+    presets = tmp_path / "presets"
+    presets.mkdir()
+    scripts = tmp_path / "custom_rules"
+    scripts.mkdir()
+    monkeypatch.setattr(store, "DATA_DIR", data)
+    monkeypatch.setattr(store, "PRESETS_DIR", presets)
+    monkeypatch.setattr(store, "CUSTOM_RULES_DIR", scripts)
+    monkeypatch.setattr(store, "PREFS_FILE", data / "prefs.json")
+    monkeypatch.setattr(store, "WATCH_CONFIG_FILE", data / "watch.json")
+    monkeypatch.setattr(store, "SUGGESTIONS_STATE_FILE", data / "suggestions_state.json")
+    config = tmp_path / "config.json"
+    monkeypatch.setattr(store, "CONFIG_PATH", config)
+    exports = data / "exports"
+    monkeypatch.setattr(store, "EXPORTS_DIR", exports)
+    return {"tmp": tmp_path, "data": data, "presets": presets, "scripts": scripts,
+            "config": config, "exports": exports}
+
+
+def test_export_then_import_round_trip(bundle_paths):
+    cfg = load_default_config()
+    cfg["learned_rules"] = [["something specific", ""]]
+    bundle_paths["config"].write_text(json.dumps(cfg), encoding="utf-8")
+    store.save_prefs({"dark": False, "auto_clean": True})
+    store.save_preset("Neuro strict", cfg)
+    (bundle_paths["scripts"] / "my_rule.py").write_text("LABEL = 'x'\n", encoding="utf-8")
+    (bundle_paths["scripts"] / "_helper.py").write_text("# helper\n", encoding="utf-8")
+    (bundle_paths["data"] / "watch.json").write_text(json.dumps({"enabled": False}),
+                                                     encoding="utf-8")
+
+    zip_path, counts = store.export_settings()
+    assert counts["presets"] == 1 and counts["custom_rules"] == 1  # _helper.py skipped
+
+    # simulate a clean install: empty everything
+    bundle_paths["config"].unlink()
+    (bundle_paths["data"] / "prefs.json").unlink()
+    for f in bundle_paths["scripts"].iterdir():
+        f.unlink()
+
+    ok, msg = store.import_settings(zip_path)
+    assert ok, msg
+    imported_cfg = json.loads(bundle_paths["config"].read_text(encoding="utf-8"))
+    assert imported_cfg["learned_rules"] == [["something specific", ""]]
+    prefs = json.loads((bundle_paths["data"] / "prefs.json").read_text(encoding="utf-8"))
+    assert prefs["dark"] is False and prefs["auto_clean"] is True
+    assert (bundle_paths["presets"] / "Neuro strict.json").exists()
+    assert (bundle_paths["scripts"] / "my_rule.py").exists()
+    assert json.loads((bundle_paths["data"] / "watch.json").read_text())["enabled"] is False
+
+
+def test_import_rejects_broken_config_without_partial_apply(bundle_paths):
+    """A bad rules object must change nothing on the machine."""
+    import zipfile as zf
+    bad = bundle_paths["tmp"] / "bad.zip"
+    with zf.ZipFile(bad, "w") as z:
+        z.writestr("manifest.json", json.dumps({"kind": "chart-cleaner-settings", "version": 1}))
+        z.writestr("config.json", json.dumps({"not": "a real config"}))
+        z.writestr("presets/evil.json", "{}")
+    ok, msg = store.import_settings(bad)
+    assert not ok and "nothing was changed" in msg.lower()
+    assert not bundle_paths["config"].exists()
+    assert not (bundle_paths["presets"] / "evil.json").exists()
+
+
+def test_import_rejects_unknown_manifest_and_garbage(bundle_paths):
+    import zipfile as zf
+    other = bundle_paths["tmp"] / "other.zip"
+    with zf.ZipFile(other, "w") as z:
+        z.writestr("manifest.json", json.dumps({"kind": "something-else"}))
+    ok, msg = store.import_settings(other)
+    assert not ok
+
+    junk = bundle_paths["tmp"] / "junk.zip"
+    junk.write_bytes(b"not a zip at all")
+    ok, msg = store.import_settings(junk)
+    assert not ok
+
+
+def test_import_refuses_bundle_from_newer_app(bundle_paths):
+    import zipfile as zf
+    future = bundle_paths["tmp"] / "future.zip"
+    with zf.ZipFile(future, "w") as z:
+        z.writestr("manifest.json", json.dumps(
+            {"kind": "chart-cleaner-settings",
+             "version": store.SETTINGS_BUNDLE_VERSION + 1}))
+        z.writestr("config.json", json.dumps(load_default_config()))
+    ok, msg = store.import_settings(future)
+    assert not ok and "newer" in msg.lower()
+
+
+def test_import_backs_up_existing_config(bundle_paths):
+    old_cfg = load_default_config()
+    bundle_paths["config"].write_text(json.dumps(old_cfg), encoding="utf-8")
+
+    zip_path, _ = store.export_settings()  # bundles the current config
+    cfg = load_default_config()
+    cfg["literal_replacements"] = [["\\bmark\\b", "MARK"]]
+    bundle_paths["config"].write_text(json.dumps(cfg), encoding="utf-8")
+
+    ok, _ = store.import_settings(zip_path)
+    assert ok
+    backups = store.list_config_backups()
+    assert backups  # the pre-import config was preserved

@@ -44,6 +44,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "caps_normalize",
         "line_length",
         "stage_options",
+        "learned_rules",
         "clinical_identifiers",
         "local_llm",
     }
@@ -70,6 +71,7 @@ class ConfigValidator:
         """Run all validation passes and return accumulated (errors, warnings)."""
         self._validate_required_regex_lists()
         self._validate_required_regex_pairs()
+        self._validate_optional_regex_pairs()
         self._validate_clinical_headers()
         self._validate_option_groups()
         self._validate_stage_options()
@@ -148,13 +150,26 @@ class ConfigValidator:
             if not isinstance(val, list):
                 self.errors.append(f"{key}: must be a list of [pattern, replacement] pairs")
                 continue
-            for i, pair in enumerate(val):
-                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-                    self.errors.append(f"{key}[{i}]: must be a two-element [pattern, replacement] list")
-                    continue
-                self._check_regex(pair[0], f"{key}[{i}] pattern", re.IGNORECASE)
-                if not isinstance(pair[1], str):
-                    self.errors.append(f"{key}[{i}] replacement: must be a string")
+            self._validate_pair_list(key, val)
+
+    def _validate_optional_regex_pairs(self) -> None:
+        """learned_rules may be absent (pre-learn configs) but must be well-formed."""
+        val = self.cfg.get("learned_rules")
+        if val is None:
+            return
+        if not isinstance(val, list):
+            self.errors.append("learned_rules: must be a list of [pattern, replacement] pairs")
+            return
+        self._validate_pair_list("learned_rules", val)
+
+    def _validate_pair_list(self, key: str, val: list) -> None:
+        for i, pair in enumerate(val):
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                self.errors.append(f"{key}[{i}]: must be a two-element [pattern, replacement] list")
+                continue
+            self._check_regex(pair[0], f"{key}[{i}] pattern", re.IGNORECASE)
+            if not isinstance(pair[1], str):
+                self.errors.append(f"{key}[{i}] replacement: must be a string")
 
     def _validate_clinical_headers(self) -> None:
         headers = self.cfg.get("clinical_headers")
