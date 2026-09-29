@@ -428,21 +428,26 @@ async def clean_page():
     def set_running(flag: bool) -> None:
         state["running"] = flag
         clean_btn.set_enabled(not flag)
+        mode_sel.set_enabled(not flag)
         spinner.set_visibility(flag)
 
     async def do_clean_core(text: str, source: str) -> None:
+        mode = mode_sel.value
         set_running(True)
         try:
             def work():
+                if mode == "abbreviations":
+                    return Pipeline({}, mode=mode).run(text), None
                 cfg = load_config(CONFIG_PATH)
                 result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text)
                 return result, run_audit(result.text, cfg)
 
             result, audit = await run.io_bound(work)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[])  # previous AI output refers to the old cleaned text
+                               summary=None, qa=[], result_mode=mode)
             AUTO_LAST["text"] = text
-            store.append_run(result.to_history_dict(source))
+            store.append_run(result.to_history_dict(
+                f"{source}:abbreviations" if mode == "abbreviations" else source))
             # persist reversible-token maps produced by the tokenize stage
             try:
                 for st in result.stages:
@@ -452,7 +457,8 @@ async def clean_page():
             except Exception:
                 pass  # map saving must never break a run
             try:
-                store.append_audit_hits(f.signature for f in audit.findings)
+                if audit is not None:
+                    store.append_audit_hits(f.signature for f in audit.findings)
             except Exception:
                 pass  # history of findings must never break a run
             input_area.set_value(text)
@@ -470,6 +476,9 @@ async def clean_page():
             ui.notify("Nothing to clean — paste some text first.", type="warning")
             return
         if len(text) > 2_000_000:
+            if mode_sel.value == "abbreviations":
+                ui.notify("Input over 2M characters; split it into smaller sections.", type="warning")
+                return
             ui.notify("Input over 2M characters; truncated to 2M.", type="warning")
             text = text[:2_000_000]
         if state["running"]:
@@ -482,13 +491,20 @@ async def clean_page():
         if not result:
             return
         with results_col:
+            abbreviations_only = CLEAN_STATE.get("result_mode") == "abbreviations"
+            if abbreviations_only:
+                ui.label("Abbreviations only — other text and formatting preserved. "
+                         "PHI has not been removed.").classes("text-sm")
             phi = result.phi_counts()
             chips = ui.row().classes("gap-3 flex-wrap items-stretch")
             stat_chip(chips, "characters", f"{result.chars_before:,} → {result.chars_after:,}")
             stat_chip(chips, "reduction", f"{result.reduction:+.1f}%",
                       "green" if result.reduction >= 0 else "orange")
             stat_chip(chips, "words", f"{result.words_before:,} → {result.words_after:,}", "indigo")
-            stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
+            if abbreviations_only:
+                stat_chip(chips, "abbreviations applied", str(sum(s.matches for s in result.stages)))
+            else:
+                stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
             stat_chip(chips, "elapsed", f"{result.duration_ms:.0f} ms", "blue-grey")
 
             # ---- post-run review: what survived and deserves a second look ----
@@ -565,6 +581,8 @@ async def clean_page():
                         rows.append({"stage": s.label, "matches": s.matches,
                                      "delta": f"{delta:+,}", "status": status})
                     ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
+            if abbreviations_only:
+                return
             # ---- local AI summary (on-device via Ollama) ----
             summary_refs.clear()
             with ui.expansion("Local AI summary", icon="psychology").classes("w-full"):
@@ -904,7 +922,7 @@ async def clean_page():
         text = input_area.value or ""
         if text.strip() and text != AUTO_LAST["text"]:
             AUTO_LAST["text"] = text
-            await do_clean_core(text, "editor")
+            await run_clean()
         elif not text.strip():
             AUTO_LAST["text"] = None
 
@@ -989,6 +1007,23 @@ async def clean_page():
         open_learn_dialog(str(sel))
 
     # ---- UI ------------------------------------------------------------------
+    def on_mode_change(e) -> None:
+        CLEAN_STATE.update(mode=e.value, result=None, result_text="", audit=None,
+                           summary=None, qa=[], result_mode=None)
+        AUTO_LAST["text"] = None
+        results_col.clear()
+        sync_mode_controls()
+
+    def sync_mode_controls() -> None:
+        abbreviations_only = mode_sel.value == "abbreviations"
+        clean_btn.set_text("Apply abbreviations" if abbreviations_only else "Clean")
+        preset_sel.set_enabled(not abbreviations_only)
+        mode_note.set_text(
+            "Shortens full medical terms using the CSV dictionary. Other text and formatting "
+            "are preserved; PHI is not removed."
+            if abbreviations_only else
+            "Runs your cleaning pipeline, including the medical abbreviation dictionary.")
+
     with shell("Clean a chart", "clean"):
         errs, _warns = validate_config(load_config(CONFIG_PATH))
         if errs:
@@ -997,6 +1032,10 @@ async def clean_page():
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs text-red-500")
 
+        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only"},
+                             value=CLEAN_STATE.get("mode", "clean"),
+                             on_change=on_mode_change)
+        mode_note = ui.label("").classes("text-sm opacity-70")
         presets = store.list_presets()
         preset_sel = ui.select(
             options={**{p: f"📦 {p}" for p in presets}, "": "(config.json — current rules)"},
@@ -1005,6 +1044,7 @@ async def clean_page():
         ).classes("w-60")
 
         clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
+        clean_btn.mark("run-clean")
         clean_btn.props("unelevated color=primary")
         spinner = ui.spinner("dots", size="lg")
         spinner.set_visibility(False)
@@ -1043,6 +1083,7 @@ async def clean_page():
             ui.button("Load sample chart", icon="science", on_click=load_sample).props("flat")
 
         results_col = ui.column().classes("w-full gap-3")
+        sync_mode_controls()
 
         with ui.row().classes("w-full items-center gap-2"):
             ui.label("Many files to clean?").classes("text-xs opacity-60")
@@ -1254,6 +1295,7 @@ STAGE_EDITORS = {
     "phi_patterns": ("regex_pairs", "epic_phi_patterns"),
     "clinical_identifiers": ("clinical_identifiers", "clinical_identifiers"),
     "literal_replacements": ("regex_pairs", "literal_replacements"),
+    "medical_abbreviations": ("abbreviations", None),
     "learned_rules": ("regex_pairs", "learned_rules"),
     "headers": ("headers", "clinical_headers"),
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
@@ -1277,6 +1319,8 @@ STAGE_DESCRIPTIONS = {
     "clinical_identifiers": "Off by default. Algorithmically recognizes and redacts verified National Provider IDs (NPI via Luhn checksum), DEA numbers (checksum verified), and UDI medical device barcodes.",
     "nlp_redaction": "Presidio NLP redaction: entity types, replacements, confidence threshold and allow-list.",
     "literal_replacements": "Regex → replacement pairs for abbreviations and text fixes.",
+    "medical_abbreviations": "Shortens full medical terms using the bundled CSV dictionary. "
+                             "Matches whole terms, longest phrases first, without cascading replacements.",
     "learned_rules": "Rules you taught the app by highlighting text on the Clean page (remove text, remove whole lines, or replace). Each row is [regex, replacement]; an empty replacement removes the match. New rules can also be added here by hand.",
     "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
@@ -1478,17 +1522,7 @@ def pipeline_page():
             ui.button("Add chrome pattern", icon="add", on_click=add_chrome_pattern).props("outline dense")
 
     def resolve_order() -> list[str]:
-        order = draft.get("stage_order")
-        if not isinstance(order, list):
-            order = []
-        known_custom = {f"custom:{c['name']}" for c in customs}
-        resolved = [s for s in order if s in STAGE_EDITORS or s in known_custom]
-        for s in BUILTIN_STAGE_IDS:
-            if s not in resolved:
-                resolved.append(s)
-        for s in sorted(known_custom):
-            if s not in resolved:
-                resolved.append(s)
+        resolved = [s.id for s in Pipeline(draft, custom_dir=CUSTOM_DIR).stages]
         draft["stage_order"] = resolved
         return resolved
 
@@ -1678,6 +1712,11 @@ def pipeline_page():
 
     def render_stage_editor(sid: str) -> None:
         kind, key = STAGE_EDITORS[sid]
+
+        if kind == "abbreviations":
+            ui.label("The bundled dictionary is also used by Abbreviations only on the Clean page. "
+                     "When a full term has multiple abbreviations, the first CSV entry is used.") \
+                .classes("text-sm opacity-70")
 
         if kind in ("regex_lines", "regex_pairs"):
             lst = draft.setdefault(key, [])

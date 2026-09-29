@@ -20,6 +20,7 @@ def base(**over) -> dict:
         "nlp_redaction": {"enabled": False},  # deterministic tests: no model stage
     }
     cfg.update(over)
+    cfg.setdefault("stage_options", {})["medical_abbreviations"] = {"enabled": False}
     return cfg
 
 
@@ -85,9 +86,9 @@ def test_learned_rules_run_in_stage_order_after_literal_replacements():
     assert stages.index("learned_rules") == stages.index("literal_replacements") + 1
 
 
-def test_learned_rules_stage_registered_as_18th_builtin():
+def test_learned_rules_stage_registered():
     assert "learned_rules" in BUILTIN_STAGE_IDS
-    assert len(BUILTIN_STAGE_IDS) == 18
+    assert len(BUILTIN_STAGE_IDS) == 19
 
 
 def test_missing_or_empty_learned_rules_is_noop():

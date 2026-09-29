@@ -89,6 +89,7 @@ BUILTIN_STAGE_IDS = [
     "headers",
     "caps_normalize",
     "bullets",
+    "medical_abbreviations",
     "line_length",
 ]
 
@@ -100,6 +101,7 @@ STAGE_LABELS = {
     "nlp_redaction": "NLP redaction (Presidio)",
     "tokenize_phi": "Reversible tokenization",
     "literal_replacements": "Literal replacements",
+    "medical_abbreviations": "Medical abbreviations",
     "learned_rules": "Learned rules (highlight → rule)",
     "unicode_normalize": "Unicode normalization",
     "timestamps": "Timestamp removal",
@@ -122,6 +124,7 @@ STAGE_KINDS = {
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
     "literal_replacements": "regex_pairs",
+    "medical_abbreviations": "abbreviations",
     "learned_rules": "learned",
     "unicode_normalize": "unicode",
     "timestamps": "timestamps",
@@ -344,8 +347,12 @@ class StageSpec:
 class Pipeline:
     """The ordered cleaning pipeline built from a config dict."""
 
-    def __init__(self, config: dict, custom_dir: str | Path | None = None):
-        missing = [k for k in REQUIRED_CONFIG_KEYS if k not in config]
+    def __init__(self, config: dict, custom_dir: str | Path | None = None, *,
+                 mode: str = "clean"):
+        if mode not in {"clean", "abbreviations"}:
+            raise ValueError(f"Unknown cleaning mode: {mode}")
+        self.mode = mode
+        missing = [k for k in REQUIRED_CONFIG_KEYS if k not in config] if mode == "clean" else []
         if missing:
             raise ConfigError(f"Config missing required key(s): {', '.join(missing)}")
         self.config = config
@@ -372,6 +379,9 @@ class Pipeline:
         return True
 
     def _build(self) -> list[StageSpec]:
+        if self.mode == "abbreviations":
+            return [StageSpec("medical_abbreviations", STAGE_LABELS["medical_abbreviations"],
+                              "abbreviations", True)]
         customs = list_custom_rules(self.custom_dir)
         by_name = {c["name"]: c for c in customs}
         order = self.config.get("stage_order") or list(BUILTIN_STAGE_IDS)
@@ -384,7 +394,10 @@ class Pipeline:
                 resolved.append(sid)
         for sid in BUILTIN_STAGE_IDS:
             if sid not in resolved:
-                resolved.append(sid)
+                if sid == "medical_abbreviations" and "line_length" in resolved:
+                    resolved.insert(resolved.index("line_length"), sid)
+                else:
+                    resolved.append(sid)
         for c in customs:
             sid = f"custom:{c['name']}"
             if sid not in resolved:
@@ -429,7 +442,8 @@ class Pipeline:
         lines_before = text.count("\n") + 1
 
         text, stage_stats, warnings = self._execute_stages(text, ctx)
-        text, wrapped, wrapper_stat = self._apply_wrapper(text, wrap)
+        text, wrapped, wrapper_stat = self._apply_wrapper(
+            text, False if self.mode == "abbreviations" else wrap)
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
 
@@ -508,6 +522,8 @@ def clean_text(
     config: dict,
     custom_dir: str | Path | None = None,
     wrap: bool | None = None,
+    *,
+    mode: str = "clean",
 ) -> RunResult:
     """One-shot convenience: build a pipeline and run it."""
-    return Pipeline(config, custom_dir=custom_dir).run(text, wrap=wrap)
+    return Pipeline(config, custom_dir=custom_dir, mode=mode).run(text, wrap=wrap)

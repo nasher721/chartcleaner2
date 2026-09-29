@@ -13,6 +13,8 @@ import threading
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
+from .abbreviations import abbreviate
+
 if TYPE_CHECKING:
     from .engine import CleanContext
 
@@ -765,6 +767,7 @@ RUNNERS: dict[str, Callable] = {
     "clinical_identifiers": run_clinical_identifiers,
     "nlp": run_nlp,
     "tokenize": run_tokenize,
+    "abbreviations": lambda t, c, x: abbreviate(t),
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
     "learned": run_learned,
     "unicode": run_unicode,
@@ -786,6 +789,7 @@ KIND_TO_RUNNER = {
     "clinical_identifiers": "clinical_identifiers",
     "nlp_redaction": "nlp",
     "tokenize_phi": "tokenize",
+    "medical_abbreviations": "abbreviations",
     "literal_replacements": "regex_pairs",
     "learned_rules": "learned",
     "unicode_normalize": "unicode",

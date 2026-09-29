@@ -15,6 +15,57 @@ from nicegui.testing import User
 async def test_clean_page_builds(user: User):
     await user.open('/')
     await user.should_see('Clean a chart')
+    await user.should_see('Full clean')
+    await user.should_see('Abbreviations only')
+
+
+async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, tmp_path):
+    from chartcleaner import store
+    from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
+    from chartcleaner.engine import load_default_config, save_config
+    from nicegui import ui
+
+    cfg = load_default_config()
+    cfg.setdefault('nlp_redaction', {})['enabled'] = False
+    cfg['audit'] = {'enabled': False}
+    config_path = tmp_path / 'config.json'
+    save_config(cfg, config_path)
+    monkeypatch.setattr(store, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(store, 'append_run', lambda _record: None)
+    monkeypatch.setattr(store, 'append_audit_hits', lambda _hits: None)
+    monkeypatch.setattr(store, 'load_prefs', lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
+    before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
+    raw = '  MRN: 1234567\n• Anterior cerebral artery  \n'
+    CLEAN_STATE.update(input=raw, mode='clean', result=None, result_text='', audit=None)
+    try:
+        await user.open('/')
+        with user.client:
+            next(iter(user.find(ui.toggle).elements)).set_value('abbreviations')
+        await user.should_see('Apply abbreviations')
+        user.find('Apply abbreviations').click()
+        await user.should_see('Abbreviations only — other text and formatting preserved.')
+        assert CLEAN_STATE['result_text'] == '  MRN: 1234567\n• ACA  \n'
+        assert CLEAN_STATE['audit'] is None
+        assert [s.id for s in CLEAN_STATE['result'].stages] == ['medical_abbreviations']
+        await user.should_see('Copy result')
+        await user.should_see('Download .txt')
+        await user.should_not_see('Local AI summary')
+
+        with user.client:
+            next(iter(user.find(ui.toggle).elements)).set_value('clean')
+        assert CLEAN_STATE['result'] is None
+        assert AUTO_LAST['text'] is None
+        assert CLEAN_STATE['input'] == raw
+        user.find(marker='run-clean').click()
+        await user.should_see('Local AI summary', retries=50)
+        assert 'ACA' in CLEAN_STATE['result_text']
+        assert '1234567' not in CLEAN_STATE['result_text']
+        assert CLEAN_STATE['result'].wrapped
+    finally:
+        CLEAN_STATE.clear()
+        CLEAN_STATE.update(before)
+        AUTO_LAST.clear()
+        AUTO_LAST.update(auto_before)
 
 
 async def test_summary_panel_hidden_before_first_clean(user: User):

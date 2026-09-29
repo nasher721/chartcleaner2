@@ -21,6 +21,7 @@ def base(**over) -> dict:
         "nlp_redaction": {"enabled": False},
     }
     cfg.update(over)
+    cfg.setdefault("stage_options", {})["medical_abbreviations"] = {"enabled": False}
     return cfg
 
 

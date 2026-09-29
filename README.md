@@ -65,6 +65,18 @@ The CLI prints the same per-stage statistics as the app.
 
 ## The cleaning pipeline
 
+The Clean page offers **Full clean** and **Abbreviations only**. Full clean includes
+the **Medical abbreviations** stage near the end, before long-line formatting; it is enabled for
+existing configurations too and can be disabled or reordered under Pipeline & Rules.
+Abbreviations only applies the bundled CSV dictionary without redaction, other
+cleaning rules, custom scripts, or an output wrapper. Unmatched text and formatting
+are preserved. Copy, download, and the side-by-side diff work in both modes.
+
+The dictionary retains all 1,068 supplied rows. Matching is case-insensitive and
+uses whole terms, longest first, in a single pass. When multiple abbreviations
+share a full term, the first CSV entry is used. The three entries marked
+“Not expanded in source” are retained for reference but do not trigger replacements.
+
 Stages run top-to-bottom (you can reorder them in the app):
 
 | # | Stage | What it does |
