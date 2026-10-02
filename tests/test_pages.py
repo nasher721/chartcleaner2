@@ -7,6 +7,8 @@ fixture re-runs app.py (re-registering every page) after it resets NiceGUI's
 global app state between tests.
 """
 
+import pytest
+
 import app as cc_app
 from chartcleaner.appstate import PENDING_RULE
 from nicegui.testing import User
@@ -72,6 +74,61 @@ async def test_summary_panel_hidden_before_first_clean(user: User):
     # The Local AI summary expansion only appears once a clean run exists.
     await user.open('/')
     await user.should_not_see('Local AI summary')
+
+
+@pytest.mark.nicegui_main_file('')
+@pytest.mark.parametrize('available,models,saved_model,expected_options,expected_value', [
+    (False, [], '', [], None),
+    (True, [], '', [], None),
+    (True, ['llama3.2:latest'], 'llama3.1', ['llama3.2:latest', 'llama3.1'], 'llama3.1'),
+    (True, ['llama3.2:latest'], '', ['llama3.2:latest'], 'llama3.2:latest'),
+    (True, ['llama3.2:latest'], 'llama3.2:latest', ['llama3.2:latest'], 'llama3.2:latest'),
+    (False, [], 'llama3.1', ['llama3.1'], 'llama3.1'),
+])
+async def test_clean_renders_with_available_or_saved_models(
+        user: User, monkeypatch, tmp_path,
+        available, models, saved_model, expected_options, expected_value):
+    from chartcleaner import store
+    from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
+    from chartcleaner.engine import load_config, load_default_config, save_config
+    from chartcleaner.local_llm import LocalLlmClient
+    from nicegui import ui
+
+    cfg = load_default_config()
+    cfg.setdefault('nlp_redaction', {})['enabled'] = False
+    cfg['audit'] = {'enabled': False}
+    cfg['local_llm'] = {'model': saved_model}
+    config_path = tmp_path / 'config.json'
+    save_config(cfg, config_path)
+    monkeypatch.setattr(cc_app, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(store, 'append_run', lambda _record: None)
+    monkeypatch.setitem(cc_app.PREFS, 'auto_clean', False)
+    monkeypatch.setattr(LocalLlmClient, 'is_available', lambda self: available)
+    monkeypatch.setattr(LocalLlmClient, 'list_models', lambda self: list(models))
+    before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
+    CLEAN_STATE.update(input='Patient is stable.\n', mode='clean', result=None,
+                       result_text='', audit=None, summary=None, qa=[])
+    try:
+        @ui.page('/')
+        async def clean_fixture():
+            await cc_app.clean_page()
+
+        await user.open('/')
+        user.find(marker='run-clean').click()
+        await user.should_see('Ask this chart', retries=50)
+        await user.should_see('Copy result')
+        await user.should_see('Download .txt')
+        await user.should_not_see('Cleaning failed')
+        model_select = next(e for e in user.find(ui.select).elements if e.label == 'Model')
+        assert model_select.options == expected_options
+        assert model_select.value == expected_value
+        assert 'Patient is stable.' in CLEAN_STATE['result_text']
+        assert load_config(config_path)['local_llm']['model'] == saved_model
+    finally:
+        CLEAN_STATE.clear()
+        CLEAN_STATE.update(before)
+        AUTO_LAST.clear()
+        AUTO_LAST.update(auto_before)
 
 
 def test_summary_panel_widget_signatures():

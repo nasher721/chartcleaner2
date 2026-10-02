@@ -596,14 +596,17 @@ async def clean_page():
                 except Exception:
                     listed = []
                 model_val = str(opts["model"] or (listed[0] if listed else ""))
+                model_options = list(listed)
+                if model_val and model_val not in model_options:
+                    model_options.append(model_val)
                 if not listed:
                     ui.label(
                         f"No local LLM detected at {opts['base_url']} — install Ollama "
                         "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`."
                     ).classes("text-xs text-orange-600")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    ui.select(listed or ([model_val] if model_val else []),
-                              value=model_val, label="Model", new_value_mode="add",
+                    ui.select(model_options,
+                              value=model_val or None, label="Model", new_value_mode="add",
                               on_change=lambda e: save_llm_pref("model", e.value)
                               ).classes("min-w-[190px]")
                     ui.select({"clinical": "Clinical sections", "brief": "Brief paragraph",
