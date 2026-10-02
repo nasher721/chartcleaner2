@@ -105,9 +105,20 @@ def build(output: Path, unsigned: bool, product: str):
             '--distpath', output, '--workpath', output / 'work' / item,
             ROOT / 'Chart Cleaner.spec', env=env, cwd=ROOT)
     if product == 'app':
-        dest = (output / 'Chart Cleaner.app/Contents/Helpers/updater' if target == 'macos-arm64'
+        dest = (output / 'Chart Cleaner.app/Contents/Resources/updater' if target == 'macos-arm64'
                 else output / 'Chart Cleaner/updater')
         shutil.copytree(output / 'chart-cleaner-updater', dest, dirs_exist_ok=True, symlinks=True)
+        if target == 'macos-arm64':
+            # The onedir Python runtime mixes code and data. Seal it as resources;
+            # retain the established helper path for existing updater versions.
+            helper = output / 'Chart Cleaner.app/Contents/Helpers/updater'
+            helper.parent.mkdir(parents=True, exist_ok=True)
+            helper.symlink_to('../Resources/updater', target_is_directory=True)
+        if unsigned and target == 'macos-arm64':
+            # Copying the companion invalidates PyInstaller's original resource seal.
+            bundle = output / 'Chart Cleaner.app'
+            run('codesign', '--force', '--sign', '-', bundle)
+            run('codesign', '--verify', '--deep', '--strict', bundle)
     if unsigned:
         (output / 'NOT-DISTRIBUTABLE.txt').write_text('Unsigned local build. No release signing or notarization performed.\n')
         print('Unsigned local build only; not distributable.')

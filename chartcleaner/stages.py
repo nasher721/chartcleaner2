@@ -767,7 +767,7 @@ RUNNERS: dict[str, Callable] = {
     "clinical_identifiers": run_clinical_identifiers,
     "nlp": run_nlp,
     "tokenize": run_tokenize,
-    "abbreviations": lambda t, c, x: abbreviate(t),
+    "abbreviations": lambda t, c, x: abbreviate(t, c),
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
     "learned": run_learned,
     "unicode": run_unicode,

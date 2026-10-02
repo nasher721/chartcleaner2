@@ -7,9 +7,11 @@ that canonical abbreviation. Matching is a single longest-first pass.
 from __future__ import annotations
 
 import csv
+import json
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 SOURCE_PATH = Path(__file__).with_name("medical_abbreviations.csv")
 
@@ -58,14 +60,59 @@ def _candidates(expanded: str, abbreviation: str) -> list[tuple[str, str]]:
     return result
 
 
-@lru_cache(maxsize=1)
-def _matcher() -> tuple[re.Pattern[str], dict[str, str], int]:
+def _settings(cfg: dict | None) -> tuple[set[str], list[dict[str, Any]]]:
+    group = cfg.get("abbreviations", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(group, dict):
+        return set(), []
+    disabled = {str(x).strip().casefold() for x in group.get("disabled", []) if str(x).strip()}
+    custom = []
+    for item in group.get("custom", []):
+        if not isinstance(item, dict) or not isinstance(item.get("enabled", True), bool):
+            continue
+        term = item.get("term")
+        replacement = item.get("replacement")
+        if isinstance(term, str) and term.strip() and isinstance(replacement, str) and replacement:
+            custom.append({"term": term.strip(), "replacement": replacement, "enabled": item.get("enabled", True)})
+    return disabled, custom
+
+
+def normalize_settings(group: dict | None) -> dict:
+    """Normalize the portable abbreviation settings contract."""
+    group = group if isinstance(group, dict) else {}
+    disabled = []
+    seen = set()
+    for value in group.get("disabled", []):
+        if isinstance(value, str) and value.strip() and value.casefold() not in seen:
+            disabled.append(value.strip())
+            seen.add(value.casefold())
+    custom = []
+    seen = set()
+    for item in group.get("custom", []):
+        if not isinstance(item, dict):
+            continue
+        term = item.get("term")
+        replacement = item.get("replacement")
+        enabled = item.get("enabled", True)
+        if (isinstance(term, str) and term.strip() and isinstance(replacement, str)
+                and replacement and isinstance(enabled, bool)
+                and term.casefold() not in seen):
+            custom.append({"term": term.strip(), "replacement": replacement, "enabled": enabled})
+            seen.add(term.casefold())
+    return {"disabled": disabled, "custom": custom}
+
+
+@lru_cache(maxsize=32)
+def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None], int, dict[str, str]]:
+    options = json.loads(settings) if settings else {"disabled": [], "custom": []}
+    disabled = set(options.get("disabled", []))
+    custom = options.get("custom", [])
     with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
         rows = list(csv.DictReader(source))
 
     # Exact source cells win over any aliases derived below, including aliases
     # created by an earlier row.
-    by_term: dict[str, str] = {}
+    by_term: dict[str, str | None] = {}
+    aliases_by_source: dict[str, set[str]] = {}
     for row in rows:
         expanded = row["Expanded version"].strip()
         abbreviation = row["Abbreviation"].strip()
@@ -76,6 +123,7 @@ def _matcher() -> tuple[re.Pattern[str], dict[str, str], int]:
         if parenthetical and parenthetical.group(2).casefold() in _UNCERTAINTY:
             replacement += " (" + parenthetical.group(2) + ")"
         by_term.setdefault(expanded.casefold(), replacement)
+        aliases_by_source.setdefault(expanded.casefold(), set()).add(expanded.casefold())
 
     for row in rows:
         expanded = row["Expanded version"].strip()
@@ -86,29 +134,55 @@ def _matcher() -> tuple[re.Pattern[str], dict[str, str], int]:
             key = alias.casefold()
             if key and key not in by_term:
                 by_term[key] = replacement
+            aliases_by_source.setdefault(expanded.casefold(), set()).add(key)
 
-    terms = sorted(by_term, key=len, reverse=True)
-    pattern = re.compile(
-        r"(?<!\w)(?ai:" + "|".join(re.escape(term) for term in terms) + r")(?!\w)",
-    )
-    return pattern, by_term, len(rows)
+    for source in disabled:
+        for alias in aliases_by_source.get(source, {source}):
+            # Match disabled phrases as a unit so shorter terms inside them
+            # cannot still be abbreviated (e.g. "artery" inside a disabled ACA).
+            by_term[alias] = None
+
+    custom_terms: dict[str, str] = {}
+    for item in custom:
+        key = item["term"].casefold()
+        for alias in aliases_by_source.get(key, {key}):
+            by_term[alias] = item["replacement"] if item.get("enabled", True) else None
+            if item.get("enabled", True):
+                custom_terms[alias] = item["term"] if alias == key else alias
+
+    parts = []
+    custom_groups = {}
+    for term in sorted(by_term, key=len, reverse=True):
+        if term in custom_terms:
+            name = f"custom_{len(custom_groups)}"
+            custom_groups[name] = by_term[term]
+            parts.append(f"(?P<{name}>(?i:{re.escape(custom_terms[term])}))")
+        else:
+            parts.append(f"(?ai:{re.escape(term)})")
+    pattern = re.compile(r"(?<!\w)(?:" + "|".join(parts) + r")(?!\w)") if parts else re.compile(r"(?!x)x")
+    return pattern, by_term, len(rows), custom_groups
 
 
 SOURCE_ROW_COUNT = _matcher()[2]
 
 
-def abbreviate(text: str) -> tuple[str, int, dict]:
+def abbreviate(text: str, cfg: dict | None = None) -> tuple[str, int, dict]:
     """Replace whole expanded medical terms in one non-cascading pass."""
-    pattern, replacements, row_count = _matcher()
+    disabled, custom = _settings(cfg)
+    settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
+    pattern, replacements, row_count, custom_groups = _matcher(settings)
     counts: dict[str, int] = {}
 
     def replace(match: re.Match[str]) -> str:
-        replacement = replacements[match.group(0).casefold()]
+        replacement = (custom_groups[match.lastgroup] if match.lastgroup
+                       else replacements[match.group(0).casefold()])
+        if replacement is None:
+            return match.group(0)
         counts[replacement] = counts.get(replacement, 0) + 1
         return replacement
 
-    result, count = pattern.subn(replace, text)
-    return result, count, {"source_rows": row_count, "replacements": counts}
+    result = pattern.sub(replace, text)
+    return result, sum(counts.values()), {"source_rows": row_count, "replacements": counts}
 
 
-__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "abbreviate"]
+__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "abbreviate", "normalize_settings"]

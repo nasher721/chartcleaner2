@@ -3,6 +3,7 @@ import ast
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -87,3 +88,38 @@ def test_missing_credentials_and_unsigned_outputs_fail_before_signing(tmp_path, 
     (tmp_path / 'NOT-DISTRIBUTABLE.txt').write_text('unsigned')
     with pytest.raises(RuntimeError, match='Refusing local unsigned build'):
         release.signed_package(tmp_path, '2.3.0', 'app')
+
+
+def test_local_mac_build_seals_bundle_after_embedding_updater(tmp_path, monkeypatch):
+    if os.name == 'nt':
+        pytest.skip('macOS bundle layout requires symlinks')
+    monkeypatch.setattr(release, 'current_platform', lambda: 'macos-arm64')
+    monkeypatch.setattr(release.platform, 'machine', lambda: 'arm64')
+    companion = tmp_path / 'chart-cleaner-updater'
+    companion.mkdir()
+    (companion / 'chart-cleaner-updater').write_text('synthetic companion')
+    calls = []
+
+    def record(*args, **kwargs):
+        if args[0] == 'codesign':
+            embedded = tmp_path / 'Chart Cleaner.app/Contents/Helpers/updater/chart-cleaner-updater'
+            assert embedded.read_text() == 'synthetic companion'
+            calls.append(args)
+
+    monkeypatch.setattr(release, 'run', record)
+    release.build(tmp_path, unsigned=True, product='app')
+    bundle = tmp_path / 'Chart Cleaner.app'
+    assert calls == [('codesign', '--force', '--sign', '-', bundle),
+                     ('codesign', '--verify', '--deep', '--strict', bundle)]
+    assert (tmp_path / 'NOT-DISTRIBUTABLE.txt').exists()
+    helper = bundle / 'Contents/Helpers/updater'
+    assert helper.is_symlink()
+    assert helper.resolve() == bundle / 'Contents/Resources/updater'
+    archive = tmp_path / 'payload.zip'
+    release.zip_tree(bundle, archive)
+    restored = tmp_path / 'restored'
+    safe_extract_archive(archive, restored)
+    # The updater copies this directory out before replacing the installed app.
+    staged = tmp_path / 'staged-companion'
+    shutil.copytree(restored / bundle.name / 'Contents/Helpers/updater', staged, symlinks=True)
+    assert (staged / 'chart-cleaner-updater').read_text() == 'synthetic companion'

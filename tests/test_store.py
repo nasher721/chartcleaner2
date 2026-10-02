@@ -227,3 +227,34 @@ def test_import_backs_up_existing_config(bundle_paths):
     assert ok
     backups = store.list_config_backups()
     assert backups  # the pre-import config was preserved
+
+
+def test_portable_rules_json_and_csv_round_trip(bundle_paths):
+    cfg = load_default_config()
+    cfg["learned_rules"] = [["remove this", ""], [r"foo\\s+bar", "FOO BAR"]]
+    bundle_paths["config"].write_text(json.dumps(cfg), encoding="utf-8")
+    json_path, counts = store.export_rules(bundle_paths["tmp"] / "rules.json")
+    assert counts["removals"] == 1 and counts["replacements"] == 1
+    preview = store.preview_rules_import(json_path)
+    assert preview["incoming"] == 2
+    csv_path, _ = store.export_rules(bundle_paths["tmp"] / "rules.csv", "csv")
+    assert "mode,pattern,replacement" in csv_path.read_text(encoding="utf-8")
+
+
+def test_portable_rules_import_dedupes_and_rejects_atomically(bundle_paths):
+    cfg = load_default_config()
+    cfg["learned_rules"] = [["keep", ""]]
+    bundle_paths["config"].write_text(json.dumps(cfg), encoding="utf-8")
+    incoming = bundle_paths["tmp"] / "rules.json"
+    incoming.write_text(json.dumps({"kind": "chart-cleaner-rules", "version": 1,
+                                    "removals": ["keep", "new"],
+                                    "replacements": []}), encoding="utf-8")
+    ok, _ = store.import_rules(incoming)
+    assert ok
+    assert json.loads(bundle_paths["config"].read_text())["learned_rules"] == [["keep", ""], ["new", ""]]
+    before = bundle_paths["config"].read_text()
+    incoming.write_text(json.dumps({"kind": "chart-cleaner-rules", "version": 1,
+                                    "removals": ["("], "replacements": []}), encoding="utf-8")
+    ok, message = store.import_rules(incoming)
+    assert not ok and "nothing was changed" in message.lower()
+    assert bundle_paths["config"].read_text() == before

@@ -65,3 +65,55 @@ def test_every_defined_source_cell_has_a_mapping():
             expected.setdefault(expanded.casefold(), row["Abbreviation"].strip() + qualifier)
     for expanded, abbreviation in expected.items():
         assert abbreviate(expanded)[0] == abbreviation
+
+
+def test_user_override_disable_and_boundary_matching():
+    cfg = {"abbreviations": {"disabled": ["hypertension"], "custom": [
+        {"term": "heart failure", "replacement": "HFx", "enabled": True},
+    ]}}
+    cleaned, count, _ = abbreviate("hypertension; heart failure; antihypertension", cfg)
+    assert cleaned == "hypertension; HFx; antihypertension"
+    assert count == 1
+
+
+def test_disabled_custom_and_unicode_custom_term():
+    cfg = {"abbreviations": {"custom": [
+        {"term": "café syndrome", "replacement": "CS", "enabled": True},
+        {"term": "inactive phrase", "replacement": "IP", "enabled": False},
+    ]}}
+    assert abbreviate("CAFÉ SYNDROME and inactive phrase", cfg)[0] == "CS and inactive phrase"
+
+
+def test_unicode_custom_matching_uses_the_matched_rule():
+    cfg = {"abbreviations": {"custom": [
+        {"term": "i custom", "replacement": "IC"},
+        {"term": "İ second", "replacement": "IS"},
+    ]}}
+    assert abbreviate("İ CUSTOM; İ second", cfg)[:2] == ("IC; IS", 2)
+
+
+def test_disabling_phrase_protects_subterms_and_disabled_override():
+    cfg = {"abbreviations": {"disabled": ["Anterior cerebral artery"], "custom": [
+        {"term": "heart failure", "replacement": "HFx", "enabled": False},
+    ]}}
+    assert abbreviate("ANTERIOR CEREBRAL ARTERY; heart failure", cfg)[:2] == (
+        "ANTERIOR CEREBRAL ARTERY; heart failure", 0)
+
+
+def test_editing_bundled_entry_updates_derived_aliases():
+    cfg = {"abbreviations": {"custom": [
+        {"term": "Beta blocker(s)", "replacement": "CUSTOM-BB"},
+    ]}}
+    assert abbreviate("Beta blockers", cfg)[0] == "CUSTOM-BB"
+
+
+def test_custom_rules_are_one_pass_longest_first_and_unicode_safe():
+    cfg = {"abbreviations": {"custom": [
+        {"term": "foo", "replacement": "bar", "enabled": True},
+        {"term": "bar", "replacement": "baz", "enabled": True},
+        {"term": "foo bar", "replacement": "LONG", "enabled": True},
+        {"term": "i custom", "replacement": "IC", "enabled": True},
+    ]}}
+    cleaned, count, _ = abbreviate("foo bar; foo; İ CUSTOM", cfg)
+    assert cleaned == "LONG; bar; IC"
+    assert count == 3

@@ -45,6 +45,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "line_length",
         "stage_options",
         "learned_rules",
+        "abbreviations",
         "clinical_identifiers",
         "local_llm",
     }
@@ -72,6 +73,7 @@ class ConfigValidator:
         self._validate_required_regex_lists()
         self._validate_required_regex_pairs()
         self._validate_optional_regex_pairs()
+        self._validate_abbreviations()
         self._validate_clinical_headers()
         self._validate_option_groups()
         self._validate_stage_options()
@@ -88,6 +90,39 @@ class ConfigValidator:
         return self.errors, self.warnings
 
     # -- primitives ---------------------------------------------------------
+
+    def _validate_abbreviations(self) -> None:
+        if "abbreviations" not in self.cfg:
+            return
+        group = self.cfg["abbreviations"]
+        if not isinstance(group, dict):
+            self.errors.append("abbreviations: must be an object")
+            return
+        disabled = group.get("disabled", [])
+        if not isinstance(disabled, list) or not all(
+                isinstance(term, str) and term.strip() for term in disabled):
+            self.errors.append("abbreviations.disabled: must be a list of non-empty terms")
+        custom = group.get("custom", [])
+        if not isinstance(custom, list):
+            self.errors.append("abbreviations.custom: must be a list")
+            return
+        seen = set()
+        for i, entry in enumerate(custom):
+            label = f"abbreviations.custom[{i}]"
+            if not isinstance(entry, dict):
+                self.errors.append(f"{label}: must be an object")
+                continue
+            for key in ("term", "replacement"):
+                if not isinstance(entry.get(key), str) or not entry[key].strip():
+                    self.errors.append(f"{label}.{key}: must be non-empty text")
+            if not isinstance(entry.get("enabled", True), bool):
+                self.errors.append(f"{label}.enabled: must be true/false")
+            term = entry.get("term")
+            if isinstance(term, str):
+                key = term.strip().casefold()
+                if key in seen:
+                    self.errors.append(f"{label}.term: duplicate term")
+                seen.add(key)
 
     def _check_regex(self, pattern: Any, context: str, flags: int = 0) -> None:
         """Verify that a value is a valid non-empty regular expression."""
@@ -170,6 +205,11 @@ class ConfigValidator:
             self._check_regex(pair[0], f"{key}[{i}] pattern", re.IGNORECASE)
             if not isinstance(pair[1], str):
                 self.errors.append(f"{key}[{i}] replacement: must be a string")
+            elif isinstance(pair[0], str):
+                try:
+                    re.compile(pair[0], re.IGNORECASE).sub(pair[1], "")
+                except re.error as exc:
+                    self.errors.append(f"{key}[{i}]: invalid pattern or replacement ({exc})")
 
     def _validate_clinical_headers(self) -> None:
         headers = self.cfg.get("clinical_headers")

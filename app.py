@@ -66,6 +66,7 @@ from chartcleaner.ingest import IngestError, converters_status, load_file, suppo
 from chartcleaner import rulepacks
 from chartcleaner import tokens as tokens_mod
 from chartcleaner.abbreviations import abbreviate
+from chartcleaner.highlight_rules import SELECTION_HANDLER, make_rule, replace_selection
 from chartcleaner import watcher as watcher_mod
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TEST
 from chartcleaner.benchmark import generate as generate_benchmark
@@ -124,6 +125,7 @@ def start_pending_rule(pattern: str, replacement: str | None, stage: str) -> Non
 NAV = [
     ("/", "cleaning_services", "Clean"),
     ("/batch", "layers", "Batch"),
+    ("/rules", "highlight", "My text rules"),
     ("/pipeline", "tune", "Pipeline & Rules"),
     ("/stats", "insights", "Statistics"),
     ("/scripts", "code", "Custom Scripts"),
@@ -248,12 +250,15 @@ def esc(s: str) -> str:
 
 
 def save_config_with_backup(cfg: dict) -> None:
-    """Save config.json and drop a timestamped copy into data/backups."""
-    save_config(cfg, CONFIG_PATH)
+    """Validate, keep the previous config, then atomically save changes."""
+    errors, _ = validate_config(cfg)
+    if errors:
+        raise ConfigError(errors[0])
     try:
         store.rotate_config_backup()
     except Exception:
         pass  # backups must never block a save
+    save_config(cfg, CONFIG_PATH)
 
 
 def report_error(title: str, exc: Exception) -> None:
@@ -337,6 +342,13 @@ def copy_to_clipboard(text: str, note: str = "Copied to clipboard") -> None:
     ui.notify(note, type="positive")
 
 
+async def read_upload(event) -> tuple[str, bytes]:
+    """Read uploads on both supported NiceGUI event formats."""
+    if hasattr(event, "file"):
+        return event.file.name, await event.file.read()
+    return event.name, event.content.read()
+
+
 def stat_chip(container, label: str, value: str, color: str = "primary") -> None:
     with container:
         with ui.card().classes("py-3 px-5 items-center min-w-[130px]"):
@@ -385,18 +397,19 @@ def shell(title: str, active: str):
 
     with ui.header().classes("items-center justify-between"):
         with ui.row().classes("items-center gap-2"):
+            ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round aria-label='Toggle menu'")
             ui.icon("health_and_safety").classes("text-2xl")
             ui.label("Chart Cleaner").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
             ui.badge(f"v{__version__}", color="blue-grey").props("outline")
         ui.switch("Dark", value=dark.value,
                   on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
 
-    with ui.left_drawer(fixed=True, value=True).classes("bg-grey-1 dark:bg-grey-10"):
+    with ui.left_drawer(fixed=True, value=None).classes("bg-grey-1 dark:bg-grey-10") as drawer:
         ui.label("Menu").classes("text-xs uppercase opacity-60 ml-2")
         for path, icon, label in NAV:
             btn = ui.button(label, icon=icon, on_click=lambda p=path: ui.navigate.to(p))
             btn.props("flat align=left no-caps").classes("w-full")
-            if path == active:
+            if path == ("/" if active == "clean" else "/" + active.strip("/")):
                 btn.props("color=primary").classes("font-semibold bg-blue-1 dark:bg-blue-9")
 
     with ui.footer().classes("bg-transparent text-xs opacity-60"):
@@ -424,12 +437,14 @@ def confirm_dialog(message: str, action) -> None:
 @ui.page("/")
 async def clean_page():
     state = {"running": False}
+    highlight = {"mode": "off", "pending": False, "undo": None}
 
     # ---- handlers (defined before the UI that references them) -------------
     def set_running(flag: bool) -> None:
         state["running"] = flag
         clean_btn.set_enabled(not flag)
         mode_sel.set_enabled(not flag)
+        input_area.set_enabled(not flag)
         spinner.set_visibility(flag)
 
     async def do_clean_core(text: str, source: str) -> None:
@@ -437,9 +452,9 @@ async def clean_page():
         set_running(True)
         try:
             def work():
-                if mode == "abbreviations":
-                    return Pipeline({}, mode=mode).run(text), None
                 cfg = load_config(CONFIG_PATH)
+                if mode == "abbreviations":
+                    return Pipeline(cfg, mode=mode).run(text), None
                 result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text)
                 return result, run_audit(result.text, cfg)
 
@@ -865,11 +880,11 @@ async def clean_page():
 
     async def handle_upload(e) -> None:
         try:
-            data = e.content.read()
+            name, data = await read_upload(e)
         except Exception as ex:
-            ui.notify(f"Could not read {e.name}: {ex}", type="negative")
+            ui.notify(f"Could not read the upload: {ex}", type="negative")
             return
-        suffix = Path(e.name).suffix.lower()
+        suffix = Path(name).suffix.lower()
         if suffix not in supported_extensions():
             ui.notify(f"Unsupported file type '{suffix}'", type="negative")
             return
@@ -891,17 +906,17 @@ async def clean_page():
         try:
             text, engine, warns = await run.io_bound(work)
         except IngestError as ex:
-            ui.notify(f"Could not ingest {e.name}: {ex}", type="negative")
+            ui.notify(f"Could not ingest {name}: {ex}", type="negative")
             return
         except Exception as ex:
-            report_error(f"Ingesting {e.name} failed", ex)
+            report_error(f"Ingesting {name} failed", ex)
             return
         if CLEAN_STATE["input"].strip():
-            CLEAN_STATE["input"] += "\n\n===== " + e.name + " =====\n" + text
+            CLEAN_STATE["input"] += "\n\n===== " + name + " =====\n" + text
         else:
             CLEAN_STATE["input"] = text
         input_area.set_value(CLEAN_STATE["input"])
-        note = f"Loaded {e.name} via {engine}"
+        note = f"Loaded {name} via {engine}"
         if warns:
             note += " — " + " | ".join(warns[:2])
         ui.notify(note, type="positive")
@@ -932,7 +947,8 @@ async def clean_page():
             pass
 
     async def auto_tick() -> None:
-        if not PREFS.get("auto_clean") or state["running"]:
+        if (not PREFS.get("auto_clean") or state["running"]
+                or highlight["mode"] != "off" or highlight["pending"]):
             return
         text = input_area.value or ""
         if text.strip() and text != AUTO_LAST["text"]:
@@ -942,6 +958,129 @@ async def clean_page():
             AUTO_LAST["text"] = None
 
     # ---- learn a rule from highlighted text ---------------------------------
+
+    def invalidate_output() -> None:
+        CLEAN_STATE.update(input=input_area.value, result=None, result_text="", audit=None,
+                           summary=None, qa=[], result_mode=None)
+        AUTO_LAST["text"] = None
+        results_col.clear()
+
+    def set_highlight_mode(mode: str, checked: bool) -> None:
+        if highlight.get("syncing"):
+            return
+        if checked:
+            highlight["mode"] = mode
+        elif highlight["mode"] == mode:
+            highlight["mode"] = "off"
+        highlight["syncing"] = True
+        try:
+            remove_check.set_value(highlight["mode"] == "remove")
+            replace_check.set_value(highlight["mode"] == "replace")
+        finally:
+            highlight["syncing"] = False
+        highlight_note.set_text({
+            "off": "Select text normally, or check a mode to teach a rule.",
+            "remove": "Highlight text to remove that selection immediately and remember it for future full cleans.",
+            "replace": "Highlight text to enter a replacement and remember it for future full cleans.",
+        }[highlight["mode"]])
+
+    def apply_highlight(selection: dict, replacement: str) -> bool:
+        if state["running"]:
+            return False
+        try:
+            before = input_area.value or ""
+            after = replace_selection(before, selection, replacement)
+            if selection["text"] == replacement:
+                ui.notify("The replacement is unchanged.", type="info")
+                return False
+            pair = make_rule(selection["text"], replacement,
+                             case_sensitive=case_check.value, whole_words=word_check.value)
+            cfg = load_config(CONFIG_PATH)
+            rules = cfg.setdefault("learned_rules", [])
+            if any(p[0] == pair[0] and p[1] != pair[1] for p in rules):
+                ui.notify("This text already has a different rule. Edit it in My text rules.",
+                          type="warning")
+                return False
+            added = pair not in rules
+            old_enabled = cfg.get("stage_options", {}).get("learned_rules", {}).get("enabled")
+            if added:
+                rules.append(pair)
+            cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})["enabled"] = True
+            errors, _ = validate_config(cfg)
+            if errors:
+                raise ValueError(errors[0])
+            save_config_with_backup(cfg)
+            highlight["undo"] = dict(before=before, after=after, pair=pair, added=added,
+                                     rules=[list(p) for p in rules], old_enabled=old_enabled)
+            input_area.set_value(after)
+            invalidate_output()
+            undo_btn.enable()
+            highlight_status.set_text("Selection updated. Rule saved for future full cleans."
+                                      + (" Learned rules enabled." if old_enabled is False else ""))
+            return True
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+            return False
+
+    def undo_highlight() -> None:
+        undo = highlight["undo"]
+        if not undo or state["running"]:
+            return
+        if input_area.value != undo["after"]:
+            ui.notify("The chart changed since that edit. Use My text rules to remove the saved rule.",
+                      type="warning")
+            return
+        try:
+            cfg = load_config(CONFIG_PATH)
+            if cfg.get("learned_rules", []) != undo["rules"]:
+                raise ValueError("Saved rules changed since that edit. Review them in My text rules.")
+            if undo["added"]:
+                cfg["learned_rules"].remove(undo["pair"])
+            opts = cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})
+            if undo["old_enabled"] is None:
+                opts.pop("enabled", None)
+            else:
+                opts["enabled"] = undo["old_enabled"]
+            save_config_with_backup(cfg)
+            input_area.set_value(undo["before"])
+            invalidate_output()
+            highlight["undo"] = None
+            undo_btn.disable()
+            highlight_status.set_text("Edit undone; the previous saved rules are restored.")
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+
+    def on_highlight(e) -> None:
+        if highlight["mode"] == "off" or highlight["pending"] or state["running"]:
+            return
+        selection = e.args
+        if not isinstance(selection, dict):
+            return
+        try:
+            replace_selection(input_area.value or "", selection, "")
+        except ValueError as ex:
+            ui.notify(str(ex), type="warning")
+            return
+        if highlight["mode"] == "remove":
+            apply_highlight(selection, "")
+            return
+        highlight["pending"] = True
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
+            ui.label("Replace highlighted text").classes("text-lg font-semibold")
+            ui.label(selection["text"]).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto")
+            replacement = ui.textarea("Replace with").props("outlined autofocus").classes("w-full")
+            ui.label("Updates this selection now and saves a rule for future full cleans. "
+                     "An empty replacement removes the selection.").classes("text-sm opacity-70")
+
+            def save_replacement() -> None:
+                if apply_highlight(selection, replacement.value or ""):
+                    dlg.close()
+
+            with ui.row():
+                ui.button("Replace & remember", on_click=save_replacement).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
+        dlg.open()
 
     def open_learn_dialog(selected: str) -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
@@ -985,8 +1124,11 @@ async def clean_page():
                     return
                 try:
                     cfg = load_config(CONFIG_PATH)
-                    cfg.setdefault("learned_rules", []).append(
-                        [learned_pattern(snippet, m), repl.value if m == LEARN_REPLACE else ""])
+                    pair = [learned_pattern(snippet, m),
+                            (repl.value or "").replace("\\", "\\\\") if m == LEARN_REPLACE else ""]
+                    if pair not in cfg.setdefault("learned_rules", []):
+                        cfg["learned_rules"].append(pair)
+                    cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})["enabled"] = True
                     errs, _ = validate_config(cfg)
                     if errs:
                         ui.notify("Cannot save rule — " + errs[0], type="negative")
@@ -1034,10 +1176,10 @@ async def clean_page():
         clean_btn.set_text("Apply abbreviations" if abbreviations_only else "Clean")
         preset_sel.set_enabled(not abbreviations_only)
         mode_note.set_text(
-            "Shortens full medical terms using the CSV dictionary. Other text and formatting "
+            "Shortens full medical terms using your abbreviation dictionary. Other text and formatting "
             "are preserved; PHI is not removed."
             if abbreviations_only else
-            "Runs your cleaning pipeline, including the medical abbreviation dictionary.")
+            "Runs your cleaning pipeline, including your medical abbreviation dictionary.")
 
     with shell("Clean a chart", "clean"):
         errs, _warns = validate_config(load_config(CONFIG_PATH))
@@ -1058,19 +1200,40 @@ async def clean_page():
             label="Rule preset",
         ).classes("w-60")
 
-        clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
-        clean_btn.mark("run-clean")
-        clean_btn.props("unelevated color=primary")
-        spinner = ui.spinner("dots", size="lg")
-        spinner.set_visibility(False)
-        ui.button("Paste from clipboard", icon="content_paste", on_click=paste_clipboard)
-        ui.button("Learn rule from selection", icon="highlight", on_click=learn_from_selection) \
-            .props("outline").tooltip("Highlight text in the chart, then click this to turn it "
-                                      "into a remove/replace rule remembered for every future clean")
-        ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
-        ui.switch("Auto-clean as I type", value=bool(PREFS.get("auto_clean")),
-                  on_change=lambda e: (PREFS.update(auto_clean=e.value), save_prefs()))
-        ui.label("Tip: Ctrl/⌘+Enter cleans.").classes("text-xs opacity-60 ml-auto")
+        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+            clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
+            clean_btn.mark("run-clean")
+            clean_btn.props("unelevated color=primary")
+            spinner = ui.spinner("dots", size="lg")
+            spinner.set_visibility(False)
+            ui.button("Paste from clipboard", icon="content_paste", on_click=paste_clipboard).props("outline")
+            ui.button("Learn rule from selection", icon="highlight", on_click=learn_from_selection) \
+                .props("flat").tooltip("Advanced: remove text, whole lines, or save a replacement")
+            ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.switch("Auto-clean as I type", value=bool(PREFS.get("auto_clean")),
+                      on_change=lambda e: (PREFS.update(auto_clean=e.value), save_prefs()))
+            ui.label("Tip: Ctrl/⌘+Enter cleans.").classes("text-xs opacity-60 ml-auto")
+
+        with ui.card().classes("w-full gap-2 bg-blue-50 dark:bg-slate-900"):
+            with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                ui.icon("highlight").classes("text-primary")
+                ui.label("Highlight to teach").classes("font-semibold")
+                remove_check = ui.checkbox("Remove mode", value=False,
+                    on_change=lambda e: set_highlight_mode("remove", e.value))
+                replace_check = ui.checkbox("Replace mode", value=False,
+                    on_change=lambda e: set_highlight_mode("replace", e.value))
+                undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight).props("flat dense")
+                undo_btn.disable()
+            highlight_note = ui.label("Select text normally, or check a mode to teach a rule.").classes("text-sm")
+            with ui.row().classes("items-center gap-3 flex-wrap"):
+                word_check = ui.checkbox("Whole words only", value=True)
+                case_check = ui.checkbox("Match case", value=False)
+                ui.button("Manage & share rules", icon="tune",
+                          on_click=lambda: ui.navigate.to("/rules")).props("flat dense")
+            ui.label("Auto-clean pauses while a highlighting mode is checked. Undo restores the last edit and its rule.") \
+                .classes("text-xs opacity-70")
+            highlight_status = ui.label("").classes("text-sm text-primary").props("role=status aria-live=polite")
 
         if HAS_EX4:
             # ex4nicegui gives the textarea a reactive value signal; the plain
@@ -1082,15 +1245,19 @@ async def clean_page():
             input_area = _rx_input.element
             input_area.props("outlined input-style='min-height: 220px'") \
                 .classes("w-full cc-mono cc-learn-src")
-            rxui.label(lambda: (lambda t: f"{len(t):,} chars · {len(t.split()):,} words")(
-                _rx_input.value or "")).classes("text-xs opacity-60")
         else:
             input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
                                      value=CLEAN_STATE["input"],
                                      on_change=lambda e: CLEAN_STATE.update(input=e.value))
             input_area.props("outlined input-style='min-height: 220px'") \
                 .classes("w-full cc-mono cc-learn-src")
-            ui.label("").classes("text-xs opacity-60")
+
+        ui.label().bind_text_from(input_area, "value", lambda t:
+            f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+
+        input_area.mark("highlight-source")
+        for event_name in ("mouseup", "keyup", "touchend"):
+            input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
 
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True) \
@@ -1145,13 +1312,14 @@ def batch_page():
     async def handle_upload(e) -> None:
         try:
             exts = set(supported_extensions())
-            name = Path(e.name or "upload.txt").name or "upload.txt"
+            uploaded_name, data = await read_upload(e)
+            name = Path(uploaded_name or "upload.txt").name or "upload.txt"
             target = tmp_dir / name
             if target.suffix.lower() not in exts:
                 ui.notify(f"Skipped {name} — unsupported type "
                           f"({', '.join(sorted(exts))} only).", type="warning")
                 return
-            target.write_bytes(e.content.read())
+            target.write_bytes(data)
             if target not in pending:
                 pending.append(target)
             refresh_pending()
@@ -1303,6 +1471,46 @@ def batch_page():
 # ===========================================================================
 # PAGE: Pipeline & Rules
 # ===========================================================================
+
+@ui.page("/rules")
+def text_rules_page():
+    from chartcleaner.abbreviation_editor import render as render_abbreviations
+    from chartcleaner.learned_editor import render_learned_editor
+    from chartcleaner.rule_sharing import render_rule_sharing
+
+    def load_current() -> dict:
+        return load_config(CONFIG_PATH)
+
+    with shell("My text rules", "/rules"):
+        ui.label("Manage what you remove, replace and abbreviate. Changes save immediately.") \
+            .classes("text-sm opacity-70")
+        with ui.tabs().classes("w-full") as tabs:
+            learned = ui.tab("Remove & replace", icon="find_replace")
+            abbreviations = ui.tab("Abbreviations", icon="short_text")
+            sharing = ui.tab("Share & import", icon="import_export")
+        with ui.tab_panels(tabs, value=learned).classes("w-full"):
+            with ui.tab_panel(learned):
+                learned_holder = ui.column().classes("w-full")
+            with ui.tab_panel(abbreviations):
+                abbreviation_holder = ui.column().classes("w-full")
+            with ui.tab_panel(sharing):
+                sharing_holder = ui.column().classes("w-full")
+
+        def render_tab(name: str) -> None:
+            holder, renderer = {
+                "Remove & replace": (learned_holder, render_learned_editor),
+                "Abbreviations": (abbreviation_holder, render_abbreviations),
+                "Share & import": (sharing_holder, lambda load, save:
+                    render_rule_sharing(load, save, lambda: open_folder(store.EXPORTS_DIR))),
+            }[name]
+            holder.clear()
+            with holder:
+                renderer(load_current, save_config_with_backup)
+
+        tabs.on_value_change(lambda e: render_tab(e.value))
+        render_tab("Remove & replace")
+        ui.button("Full settings backup", icon="backup",
+                  on_click=lambda: ui.navigate.to("/settings")).props("flat")
 
 STAGE_EDITORS = {
     "metadata_lines": ("regex_lines", "emr_line_metadata"),
@@ -1729,9 +1937,11 @@ def pipeline_page():
         kind, key = STAGE_EDITORS[sid]
 
         if kind == "abbreviations":
-            ui.label("The bundled dictionary is also used by Abbreviations only on the Clean page. "
-                     "When a full term has multiple abbreviations, the first CSV entry is used.") \
+            ui.label("Your abbreviation dictionary is also used by Abbreviations only on the Clean page. "
+                     "Add, edit or disable terms in My text rules.") \
                 .classes("text-sm opacity-70")
+            ui.button("Edit abbreviations", icon="edit",
+                      on_click=lambda: ui.navigate.to("/rules")).props("flat")
 
         elif kind in ("regex_lines", "regex_pairs"):
             lst = draft.setdefault(key, [])
@@ -2049,7 +2259,7 @@ def pipeline_page():
                         for h in obj if isinstance(h, str))
                 counts.append(f"{STAGE_LABELS[sid]}: {n}")
             elif sid == "medical_abbreviations":
-                _, n, _ = abbreviate(text)
+                _, n, _ = abbreviate(text, draft)
                 counts.append(f"{STAGE_LABELS[sid]}: {n}")
         test_results.set_text("Match counts → " + " · ".join(counts) if counts else "Nothing to test.")
 
@@ -2060,7 +2270,8 @@ def pipeline_page():
 
     async def import_rules(e) -> None:
         try:
-            cfg = json.loads(e.content.read().decode("utf-8"))
+            _, data = await read_upload(e)
+            cfg = json.loads(data.decode("utf-8-sig"))
         except Exception as ex:
             ui.notify(f"Invalid JSON: {ex}", type="negative")
             return
@@ -2790,6 +3001,8 @@ def settings_page():
 
         # ---- export / import settings bundle ------------------------------------
         with ui.card().classes("w-full gap-2"):
+            ui.button("Share removal, replacement & abbreviation rules", icon="share",
+                      on_click=lambda: ui.navigate.to("/rules")).props("unelevated")
             ui.label("Export & import settings").classes("font-semibold")
             ui.label("Bundles everything you customized — all rules (including rules learned by "
                      "highlighting text), output options, presets, custom scripts, folder watcher "
@@ -2814,8 +3027,9 @@ def settings_page():
             async def import_settings_bundle(e) -> None:
                 tmp_path = None
                 try:
+                    _, data = await read_upload(e)
                     tmp_path = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-                    tmp_path.write(e.content.read())
+                    tmp_path.write(data)
                     tmp_path.close()
                     ok, msg = store.import_settings(tmp_path.name)
                     if ok:

@@ -655,3 +655,66 @@ def import_settings(zip_path: str | Path) -> tuple[bool, str]:
     if not applied:
         return True, "Bundle was empty — nothing to import."
     return True, "Imported: " + ", ".join(applied) + "."
+
+
+# ---------------------------------------------------------------------------
+# portable learned-rule sharing (small JSON/CSV files)
+# ---------------------------------------------------------------------------
+
+def export_rules(dest: str | Path | None = None, fmt: str = "json") -> tuple[Path, dict]:
+    """Export learned removal/replacement rules without app state or history."""
+    from .rule_sharing import export_csv, export_json, payload_from_config
+
+    ensure_dirs()
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError("Current config is not an object")
+    fmt = fmt.lower()
+    if fmt not in {"json", "csv"}:
+        raise ValueError("fmt must be 'json' or 'csv'")
+    path = Path(dest) if dest is not None else EXPORTS_DIR / (
+        f"chart-cleaner-rules-{time.strftime('%Y%m%d-%H%M%S')}.{fmt}")
+    (export_csv if fmt == "csv" else export_json)(config, path)
+    payload = payload_from_config(config)
+    return path, {"removals": len(payload["removals"]),
+                  "replacements": len(payload["replacements"]),
+                  "abbreviations": len((payload.get("abbreviations") or {}).get("custom", [])) if fmt == "json" else 0}
+
+
+def preview_rules_import(source: str | Path, mode: str = "merge") -> dict:
+    """Validate a portable rules file and return counts before applying it."""
+    from .rule_sharing import import_csv, import_json, preview_import
+
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+    suffix = Path(source).suffix.lower()
+    payload = import_csv(source) if suffix == ".csv" else import_json(source)
+    return preview_import(config, payload, mode)
+
+
+def import_rules(source: str | Path, mode: str = "merge") -> tuple[bool, str]:
+    """Atomically apply a portable rules file after validation and preview."""
+    from .engine import save_config
+    from .rule_sharing import apply_import, import_csv, import_json
+
+    try:
+        if mode not in {"merge", "replace"}:
+            return False, "mode must be 'merge' or 'replace'"
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+        if not isinstance(config, dict):
+            return False, "Current config is not an object — nothing was changed."
+        suffix = Path(source).suffix.lower()
+        payload = import_csv(source) if suffix == ".csv" else import_json(source)
+        updated = apply_import(config, payload, mode)
+        from .engine import validate_config
+        errors, _ = validate_config(updated)
+        if errors:
+            return False, "Imported rules are invalid (" + errors[0] + ") — nothing was changed."
+        rotate_config_backup()
+        ensure_dirs()
+        save_config(updated, CONFIG_PATH)
+        added = len(updated.get("learned_rules", [])) - len(config.get("learned_rules", []))
+        return True, f"Imported {len(payload.get('removals', []))} removal(s) and " \
+                     f"{len(payload.get('replacements', []))} replacement(s) " \
+                     f"({mode}; net rule change {added:+d})."
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return False, f"Could not import rules — nothing was changed: {exc}"
