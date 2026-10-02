@@ -65,6 +65,7 @@ from chartcleaner.engine import (
 from chartcleaner.ingest import IngestError, converters_status, load_file, supported_extensions
 from chartcleaner import rulepacks
 from chartcleaner import tokens as tokens_mod
+from chartcleaner.abbreviations import abbreviate
 from chartcleaner import watcher as watcher_mod
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TEST
 from chartcleaner.benchmark import generate as generate_benchmark
@@ -703,6 +704,8 @@ async def clean_page():
     async def run_summarize() -> None:
         if summary_state["running"] or not CLEAN_STATE.get("result_text"):
             return
+        chart_result = CLEAN_STATE.get("result")
+        chart_text = CLEAN_STATE["result_text"]
         summary_state["running"] = True
         sum_btn = summary_refs.get("button")
         sum_spin = summary_refs.get("spinner")
@@ -712,9 +715,13 @@ async def clean_page():
             sum_spin.set_visibility(True)
         try:
             def work():
-                return summarize(CLEAN_STATE["result_text"], load_config(CONFIG_PATH))
+                return summarize(chart_text, load_config(CONFIG_PATH))
 
-            CLEAN_STATE["summary"] = await run.io_bound(work)
+            result = await run.io_bound(work)
+            if (CLEAN_STATE.get("result") is not chart_result
+                    or CLEAN_STATE.get("result_text") != chart_text):
+                return
+            CLEAN_STATE["summary"] = result
             render_summary_output()
         except LlmUnavailableError as e:
             ui.notify(
@@ -777,6 +784,8 @@ async def clean_page():
     async def run_ask() -> None:
         if qa_state["running"] or not CLEAN_STATE.get("result_text"):
             return
+        chart_result = CLEAN_STATE.get("result")
+        chart_text = CLEAN_STATE["result_text"]
         q_box = qa_refs.get("question")
         question = (q_box.value or "").strip() if q_box else ""
         if not question:
@@ -792,10 +801,13 @@ async def clean_page():
             history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
 
             def work():
-                return ask_chart(question, CLEAN_STATE["result_text"],
+                return ask_chart(question, chart_text,
                                  load_config(CONFIG_PATH), history=history)
 
             res = await run.io_bound(work)
+            if (CLEAN_STATE.get("result") is not chart_result
+                    or CLEAN_STATE.get("result_text") != chart_text):
+                return
             CLEAN_STATE.setdefault("qa", []).append({
                 "q": res.question, "a": res.answer,
                 "g": {"score": res.grounding.grounding_score,
@@ -1721,7 +1733,7 @@ def pipeline_page():
                      "When a full term has multiple abbreviations, the first CSV entry is used.") \
                 .classes("text-sm opacity-70")
 
-        if kind in ("regex_lines", "regex_pairs"):
+        elif kind in ("regex_lines", "regex_pairs"):
             lst = draft.setdefault(key, [])
             flags = STAGE_FLAGS.get(sid, re.IGNORECASE)
             is_pairs = kind == "regex_pairs"
@@ -2035,6 +2047,9 @@ def pipeline_page():
             elif sid == "headers" and isinstance(obj, list):
                 n = sum(max(0, count_matches(rf"^\s*({h})\s*:?\s*$", text, re.IGNORECASE | re.MULTILINE))
                         for h in obj if isinstance(h, str))
+                counts.append(f"{STAGE_LABELS[sid]}: {n}")
+            elif sid == "medical_abbreviations":
+                _, n, _ = abbreviate(text)
                 counts.append(f"{STAGE_LABELS[sid]}: {n}")
         test_results.set_text("Match counts → " + " · ".join(counts) if counts else "Nothing to test.")
 

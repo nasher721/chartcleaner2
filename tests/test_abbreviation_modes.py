@@ -18,6 +18,31 @@ def test_existing_config_gets_abbreviations_after_cleaning_rules():
     assert next(s for s in result.stages if s.id == "medical_abbreviations").matches == 2
 
 
+@pytest.mark.parametrize("legacy_order", [
+    ["line_length"],
+    ["line_length"] + [s for s in BUILTIN_STAGE_IDS
+                       if s not in {"medical_abbreviations", "line_length"}],
+])
+def test_legacy_early_line_length_keeps_abbreviations_after_cleaning_rules(legacy_order):
+    cfg = load_default_config()
+    cfg.setdefault("nlp_redaction", {})["enabled"] = False
+    cfg["stage_order"] = legacy_order
+    cfg["learned_rules"] = [["Anterior cerebral artery", "matched original term"]]
+    pipe = Pipeline(cfg)
+    order = [s.id for s in pipe.stages]
+    assert order.index("medical_abbreviations") > order.index("learned_rules")
+    assert order.index("medical_abbreviations") > order.index("phi_patterns")
+    assert order.index("medical_abbreviations") > order.index("line_length")
+    assert pipe.run("Anterior cerebral artery", wrap=False).text == "matched original term"
+
+
+def test_explicit_abbreviation_position_is_preserved():
+    cfg = load_default_config()
+    cfg["stage_order"] = ["medical_abbreviations"] + [
+        s for s in BUILTIN_STAGE_IDS if s != "medical_abbreviations"]
+    assert [s.id for s in Pipeline(cfg).stages] == cfg["stage_order"]
+
+
 def test_rules_see_original_terms_before_abbreviating():
     cfg = load_default_config()
     cfg.setdefault("nlp_redaction", {})["enabled"] = False

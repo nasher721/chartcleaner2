@@ -149,6 +149,28 @@ async def test_pipeline_page_builds(user: User):
     await user.should_see('Review checks (post-run audit)')
 
 
+@pytest.mark.nicegui_main_file('')
+async def test_pipeline_sample_counts_medical_abbreviations(user: User, monkeypatch, tmp_path):
+    from chartcleaner.appstate import PIPE_TEST
+    from chartcleaner.engine import load_default_config, save_config
+    from nicegui import ui
+
+    config_path = tmp_path / 'config.json'
+    save_config(load_default_config(), config_path)
+    monkeypatch.setattr(cc_app, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(cc_app, 'CUSTOM_DIR', tmp_path)
+    monkeypatch.setitem(PIPE_TEST, 'text', 'Anterior cerebral artery; twice daily.')
+
+    @ui.page('/pipeline')
+    def pipeline_fixture():
+        cc_app.pipeline_page()
+
+    await user.open('/pipeline')
+    user.find('Test patterns on sample text').click()
+    await user.should_see('Medical abbreviations: 2')
+    await user.should_not_see('This stage has no parameters.')
+
+
 async def test_pipeline_shows_pending_rule_card(user: User):
     PENDING_RULE.clear()
     PENDING_RULE.update(pattern=r"\b\d{6,}\b",

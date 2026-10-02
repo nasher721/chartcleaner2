@@ -393,15 +393,18 @@ class Pipeline:
             elif sid.startswith("custom:") and sid[len("custom:"):] in by_name:
                 resolved.append(sid)
         for sid in BUILTIN_STAGE_IDS:
-            if sid not in resolved:
-                if sid == "medical_abbreviations" and "line_length" in resolved:
-                    resolved.insert(resolved.index("line_length"), sid)
-                else:
-                    resolved.append(sid)
+            if sid not in resolved and sid != "medical_abbreviations":
+                resolved.append(sid)
         for c in customs:
             sid = f"custom:{c['name']}"
             if sid not in resolved:
                 resolved.append(sid)
+
+        if "medical_abbreviations" not in resolved:
+            # Legacy orders may put line_length before PHI or learned rules.
+            # Only insert before it when no cleaning rules follow it.
+            index = len(resolved) - 1 if resolved[-1] == "line_length" else len(resolved)
+            resolved.insert(index, "medical_abbreviations")
 
         stages: list[StageSpec] = []
         for sid in resolved:
