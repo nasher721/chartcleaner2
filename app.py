@@ -38,7 +38,7 @@ from pathlib import Path
 from nicegui import app, run, ui
 
 from chartcleaner import __version__
-from chartcleaner import store
+from chartcleaner import secure_store, store
 from chartcleaner.audit import (
     CHECK_DESCRIPTIONS,
     CHECK_LABELS,
@@ -516,6 +516,7 @@ async def clean_page():
                         store.save_token_map(tmap, source)
             except Exception:
                 pass  # map saving must never break a run
+            store.maybe_purge_old_data()
             try:
                 if audit is not None:
                     store.append_audit_hits(f.signature for f in audit.findings)
@@ -3891,6 +3892,38 @@ def settings_page():
                 "- **Recent runs** — reopen or re-run yesterday's cleaned output."
             ).classes("text-sm")
 
+        # ---- privacy: stored chart data ------------------------------------------
+        with ui.card().classes("w-full gap-2").mark("privacy-card"):
+            ui.label("Stored chart data").classes("font-semibold")
+            ui.label(f"Token maps are encrypted; the key is kept in {secure_store.describe()}. "
+                     "Downloads, batch output and folder-watcher output in the data folder are "
+                     "deleted automatically after the period below. Run history, rules and "
+                     "settings hold no chart text and are kept.") \
+                .classes("text-xs opacity-60 -mt-1")
+
+            def set_retention(e) -> None:
+                try:
+                    days = max(0, int(e.value or 0))
+                except (TypeError, ValueError):
+                    return
+                PREFS["retention_days"] = days
+                save_prefs()
+
+            def delete_now() -> None:
+                n = store.delete_all_chart_data()
+                ui.notify(f"Deleted {n} stored item(s).", type="positive")
+                ui.navigate.reload()
+
+            with ui.row().classes("items-center gap-3"):
+                ui.number("Delete after (days, 0 = keep)", value=int(PREFS.get("retention_days") or 0),
+                          min=0, max=3650, step=1, on_change=set_retention) \
+                    .classes("w-56").mark("retention-days")
+                ui.button("Delete stored chart data now", icon="delete_forever",
+                          on_click=lambda: confirm_dialog(
+                              "Delete all token maps, downloads, batch output and folder-watcher "
+                              "output in the data folder? Token maps can't be restored afterwards.",
+                              delete_now)).props("outline color=negative")
+
         # ---- token maps (reversible tokenization) -------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Token maps (reversible tokenization)").classes("font-semibold")
@@ -4052,9 +4085,18 @@ def _clipboard_startup() -> None:
             pass  # no clipboard on this system: the Settings card says so
 
 
+def _retention_startup() -> None:
+    """Encrypt legacy token maps and delete chart data past the retention period."""
+    try:
+        store.purge_old_data()
+    except Exception:
+        pass  # housekeeping must never stop the app from starting
+
+
 app.on_startup(_warm_nlp_engines)
 app.on_startup(_update_startup)
 app.on_startup(_clipboard_startup)
+app.on_startup(_retention_startup)
 
 
 def main():

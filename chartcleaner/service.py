@@ -69,6 +69,7 @@ def _record(result: RunResult, source: str, record: bool) -> None:
                 store.save_token_map(tmap, source)
     except Exception:
         pass  # same contract as the Clean page
+    store.maybe_purge_old_data()
 
 
 def _payload(result: RunResult, text: str) -> dict:

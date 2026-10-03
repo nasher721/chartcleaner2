@@ -230,13 +230,20 @@ def clean(text: str, ctx) -> str:
 | `data/stats.jsonl` | One line per cleaning run — the statistics history |
 | `data/audit_hits.jsonl` | One line per run — which leftover patterns the audit saw |
 | `data/backups/` | Timestamped config backups (newest 5, restorable in Settings) |
-| `data/tokens/` | Reversible-tokenization maps (newest 10) — **these undo your cleaning** |
+| `data/tokens/` | Reversible-tokenization maps (newest 10), **encrypted** — the key is in the macOS Keychain, protected by Windows DPAPI, or in `data/.datakey` elsewhere. **These undo your cleaning.** |
 | `data/evaluation.json` | The last recall report card from the evaluation harness |
 | `data/watch.json` | Folder-watcher configuration |
-| `data/exports/` | Downloaded results (auto-pruned after 24 h) |
+| `data/exports/` | Downloaded results (auto-pruned after 24 h) and batch output |
+| `data/watched_out/` | Folder-watcher output (when no other folder is chosen) |
 | `custom_rules/` | Your Python cleaning stages |
 
 Everything stays on this machine. Delete `data/` to reset all history.
+
+**Retention:** token maps, batch output and folder-watcher output in `data/` are deleted
+after 14 days by default (Settings → Stored chart data; 0 keeps them). The same card has
+**Delete stored chart data now**. Run history, backups and rules hold no chart text and
+are kept. Encrypted token maps can't be read on another machine — copying the folder
+doesn't carry the key.
 
 ---
 
