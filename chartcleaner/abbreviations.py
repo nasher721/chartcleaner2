@@ -15,6 +15,10 @@ from typing import Any
 
 SOURCE_PATH = Path(__file__).with_name("medical_abbreviations.csv")
 
+# Cap on recorded changes per stage (shared with stages.py), so tracking stays
+# cheap on huge charts.
+MAX_TRACKED_CHANGES = 2000
+
 
 _UNCERTAINTY = {"likely", "possibly", "probable", "uncertain"}
 
@@ -166,8 +170,13 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
 SOURCE_ROW_COUNT = _matcher()[2]
 
 
-def abbreviate(text: str, cfg: dict | None = None) -> tuple[str, int, dict]:
-    """Replace whole expanded medical terms in one non-cascading pass."""
+def abbreviate(text: str, cfg: dict | None = None,
+               changes: list[dict] | None = None) -> tuple[str, int, dict]:
+    """Replace whole expanded medical terms in one non-cascading pass.
+
+    When ``changes`` is a list, each replacement is recorded in it (and
+    returned as ``details["changes"]``) for the app's inspect views.
+    """
     disabled, custom = _settings(cfg)
     settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
     pattern, replacements, row_count, custom_groups = _matcher(settings)
@@ -179,10 +188,21 @@ def abbreviate(text: str, cfg: dict | None = None) -> tuple[str, int, dict]:
         if replacement is None:
             return match.group(0)
         counts[replacement] = counts.get(replacement, 0) + 1
+        if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
+            changes.append({
+                "rule": match.group(0).casefold(),
+                "source": "custom" if match.lastgroup else "bundled",
+                "before": match.group(0),
+                "after": replacement,
+                "line": text.count("\n", 0, match.start()) + 1,
+            })
         return replacement
 
     result = pattern.sub(replace, text)
-    return result, sum(counts.values()), {"source_rows": row_count, "replacements": counts}
+    details = {"source_rows": row_count, "replacements": counts}
+    if changes is not None:
+        details["changes"] = changes
+    return result, sum(counts.values()), details
 
 
 __all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "abbreviate", "normalize_settings"]

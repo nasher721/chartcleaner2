@@ -7,13 +7,14 @@ returning (new_text, match_count, stage_details).
 
 from __future__ import annotations
 
+import hashlib
 import re
 import textwrap
 import threading
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
-from .abbreviations import abbreviate
+from .abbreviations import MAX_TRACKED_CHANGES, abbreviate
 
 if TYPE_CHECKING:
     from .engine import CleanContext
@@ -127,18 +128,62 @@ def get_stage_options(cfg: dict, sid: str) -> dict:
 # Regex Stage Runners
 # ---------------------------------------------------------------------------
 
+def rule_id(pattern: str) -> str:
+    """Stable short id for a rule pattern (used to group per-rule statistics)."""
+    return hashlib.sha1(pattern.encode("utf-8")).hexdigest()[:10]
+
+
+def _tracking(ctx: Any) -> bool:
+    return bool(getattr(ctx, "track_changes", False))
+
+
+def _subn_tracked(
+    regex: re.Pattern, replacement: str, text: str, changes: list[dict] | None, pattern: str
+) -> tuple[str, int]:
+    """``regex.subn`` that also records each change while ``changes`` is a list."""
+    if changes is None:
+        return regex.subn(replacement, text)
+    rid = rule_id(pattern)
+
+    def repl(match: re.Match) -> str:
+        after = match.expand(replacement)
+        if len(changes) < MAX_TRACKED_CHANGES:
+            changes.append({
+                "rule": pattern,
+                "rule_id": rid,
+                "before": match.group(0),
+                "after": after,
+                "line": text.count("\n", 0, match.start()) + 1,
+            })
+        return after
+
+    return regex.subn(repl, text)
+
+
+def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | None) -> dict:
+    if hits:
+        details["rule_hits"] = hits
+    if changes is not None:
+        details["changes"] = changes
+    return details
+
+
 def run_regex_list(
     text: str, cfg: dict, ctx: CleanContext, key: str, flags: int, sid: str | None = None
 ) -> tuple[str, int, dict]:
     """Execute a list of regex patterns and delete matches."""
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags &= ~re.IGNORECASE
+    changes: list[dict] | None = [] if _tracking(ctx) else None
+    hits: dict[str, int] = {}
     total = 0
     for pattern in cfg[key]:
         r = re.compile(pattern, flags=flags)
-        text, n = r.subn("", text)
+        text, n = _subn_tracked(r, "", text, changes, pattern)
+        if n:
+            hits[rule_id(pattern)] = n
         total += n
-    return text, total, {}
+    return text, total, _with_tracking({}, hits, changes)
 
 
 def run_regex_pairs(
@@ -148,13 +193,17 @@ def run_regex_pairs(
     flags = re.IGNORECASE
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags = 0
+    changes: list[dict] | None = [] if _tracking(ctx) else None
+    hits: dict[str, int] = {}
     total = 0
     for pattern, replacement in (cfg.get(key) or []):
         r = re.compile(pattern, flags=flags)
-        text, n = r.subn(replacement, text)
+        text, n = _subn_tracked(r, replacement, text, changes, pattern)
+        if n:
+            hits[rule_id(pattern)] = n
         total += n
     details = {"phi": {"pattern_redactions": total}} if phi else {}
-    return text, total, details
+    return text, total, _with_tracking(details, hits, changes)
 
 
 def run_learned(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
@@ -767,7 +816,7 @@ RUNNERS: dict[str, Callable] = {
     "clinical_identifiers": run_clinical_identifiers,
     "nlp": run_nlp,
     "tokenize": run_tokenize,
-    "abbreviations": lambda t, c, x: abbreviate(t, c),
+    "abbreviations": lambda t, c, x: abbreviate(t, c, changes=[] if _tracking(x) else None),
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
     "learned": run_learned,
     "unicode": run_unicode,

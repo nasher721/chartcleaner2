@@ -40,6 +40,7 @@ from .stages import (
     NlpUnavailable,
     RUNNERS,
     get_stage_options,
+    rule_id,
 )
 
 __all__ = [
@@ -47,6 +48,8 @@ __all__ = [
     "NlpUnavailable",
     "CustomRuleError",
     "StageStat",
+    "STAGE_ANCHORS",
+    "rule_id",
     "RunResult",
     "CleanContext",
     "Pipeline",
@@ -92,6 +95,11 @@ BUILTIN_STAGE_IDS = [
     "medical_abbreviations",
     "line_length",
 ]
+
+# Where a builtin goes when a saved ``stage_order`` predates it: right after
+# its anchor stage instead of the end. Only stages added after this mechanism
+# are listed, so older saved orders keep producing the output they always did.
+STAGE_ANCHORS: dict[str, str] = {}
 
 STAGE_LABELS = {
     "metadata_lines": "EMR line metadata",
@@ -285,9 +293,8 @@ class RunResult:
 
     def to_history_dict(self, source: str) -> dict:
         def slim_details(details: dict) -> dict:
-            if "token_map" in details:
-                details = {k: v for k, v in details.items() if k != "token_map"}
-            return details
+            # Token maps and tracked changes hold chart text; history never does.
+            return {k: v for k, v in details.items() if k not in {"token_map", "changes"}}
 
         return {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -312,8 +319,10 @@ class RunResult:
 class CleanContext:
     """Handed to custom script rules: lets them report counts and messages."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, *, track_changes: bool = False):
         self._config = config
+        # When True, built-in stages record each change in details["changes"].
+        self.track_changes = track_changes
         self.counters: dict[str, int] = {}
         self.logs: list[str] = []
 
@@ -394,7 +403,11 @@ class Pipeline:
                 resolved.append(sid)
         for sid in BUILTIN_STAGE_IDS:
             if sid not in resolved and sid != "medical_abbreviations":
-                resolved.append(sid)
+                anchor = STAGE_ANCHORS.get(sid)
+                if anchor in resolved:
+                    resolved.insert(resolved.index(anchor) + 1, sid)
+                else:
+                    resolved.append(sid)
         for c in customs:
             sid = f"custom:{c['name']}"
             if sid not in resolved:
@@ -436,10 +449,15 @@ class Pipeline:
 
     # -- execution -----------------------------------------------------------
 
-    def run(self, text: str, wrap: bool | None = None) -> RunResult:
-        """Execute all pipeline stages in sequence and return the RunResult."""
+    def run(self, text: str, wrap: bool | None = None, *,
+            track_changes: bool = False) -> RunResult:
+        """Execute all pipeline stages in sequence and return the RunResult.
+
+        ``track_changes`` records each regex/abbreviation change in the
+        stage's ``details["changes"]`` (in memory only; never in history).
+        """
         started = time.perf_counter()
-        ctx = CleanContext(self.config)
+        ctx = CleanContext(self.config, track_changes=track_changes)
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
@@ -527,6 +545,8 @@ def clean_text(
     wrap: bool | None = None,
     *,
     mode: str = "clean",
+    track_changes: bool = False,
 ) -> RunResult:
     """One-shot convenience: build a pipeline and run it."""
-    return Pipeline(config, custom_dir=custom_dir, mode=mode).run(text, wrap=wrap)
+    return Pipeline(config, custom_dir=custom_dir, mode=mode).run(
+        text, wrap=wrap, track_changes=track_changes)

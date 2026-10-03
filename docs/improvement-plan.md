@@ -1,6 +1,6 @@
 # Improvement plan — abbreviations, cleaning, integrations
 
-Status: **proposed** · Branch: `claude/app-improvements-brainstorm-esuv9a`
+Status: **in progress** (Phase 0 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
 
 This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
@@ -177,8 +177,8 @@ These unblock several later items. Do them first.
   table (new / changed / conflict / do-not-use) before applying, reusing the
   `preview_rules_import` merge/replace semantics.
 - **Packs:** `_pack.kind = "abbreviations"`, body `{"abbreviations":
-  {"custom": [...], "disabled": [...]}}`. Start with **Neuro ICU**, **Cardiology**
-  and **Nursing**. Installing merges into the user's `custom`, and each entry
+  {"custom": [...], "disabled": [...]}}`. Ship **Neuro ICU**, **Critical Care**,
+  **Cardiology**, **Medicine** and **Nursing**. Installing merges into the user's `custom`, and each entry
   keeps a `"pack": "<name>"` field so it can be uninstalled cleanly.
   `normalize_settings` must keep that field.
 - **Sharing:** include abbreviation packs in the existing rule-sharing bundle
@@ -402,12 +402,15 @@ All new stages ship `enabled: false` and use the F1 anchors shown.
 ### I5. Clipboard watcher mode
 - **Files:** new `chartcleaner/clipboard_watcher.py` (polls `pyperclip`
   every 0.75 s), Settings card toggle, CLI `--watch-clipboard`.
+- **Toggle:** `prefs.clipboard_watcher = {"enabled": false, "action":
+  "auto"}`; switches in Settings and the app menu, and `--watch-clipboard`
+  on the CLI.
 - **Detection:** reuses C6 scores plus Epic chrome signatures (≥2
   `emr_line_metadata` hits, or a note header) and a minimum length.
   It ignores text the cleaner itself wrote (hash of the last output).
-- **Action:** `notify` (macOS notification "Epic note copied — clean it?") or
-  `auto` (replace the clipboard with the cleaned text and notify). Defaults to
-  `notify`. Pauses automatically when the app window is focused.
+- **Action:** `auto` (replace the clipboard with the cleaned text and show
+  a notification with an "Undo" that restores the original), or `notify`.
+  Defaults to `auto`. Pauses automatically when the app window is focused.
 - **Tests:** `tests/test_clipboard_watcher.py` with an injected fake clipboard.
 
 ### I6. Export formats + SmartPhrase-safe paste
@@ -485,11 +488,22 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
 - `README.md` usage section and an `AGENTS.md` workspace fact are updated.
 - No new network listener except loopback; no chart text in logs or run records.
 
-## Open questions
-1. **Do-not-use list:** block or warn by default? (Plan: block, with an
-   override checkbox.)
-2. **Clipboard watcher `auto` mode:** allowed at all on hospital machines, or
-   notify-only?
-3. **Packs:** which specialties beyond Neuro ICU / Cardiology / Nursing?
-4. **MCP:** is Claude Desktop/Code on the work machine actually permitted to
-   receive (de-identified) chart text? If not, ship I4 as Mac-home-only.
+## Decisions (2026-10-03)
+1. **Do-not-use abbreviations:** block saving, with an "I understand" override
+   checkbox (A1, A2, A6, X1 as written).
+2. **Clipboard watcher:** the action is **auto** (replace the clipboard with
+   the cleaned text and notify). The watcher has an on/off toggle in Settings,
+   in the app menu, and on the CLI (`--watch-clipboard`), remembered in prefs.
+   It is off on a fresh install until it is turned on once.
+3. **Abbreviation packs:** Neuro ICU, Critical Care, Cardiology, Medicine,
+   Nursing.
+4. **MCP:** allowed on the work machine. I4 ships for Mac and Windows.
+
+## Progress
+- [x] F1 stage anchors — `STAGE_ANCHORS` in `engine.py`
+- [x] F2 provenance — `Pipeline.run(..., track_changes=True)`;
+      `details["rule_hits"]` always recorded; `details["changes"]` is
+      in-memory only and stripped from history
+- [x] F3 service layer — `chartcleaner/service.py` (`clean`, `abbreviate`,
+      `ask`, `format_output`); the CLI now uses `format_output`
+- [ ] F4 validator coverage (lands with each new config group)

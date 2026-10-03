@@ -22,6 +22,7 @@ from chartcleaner.engine import (
     load_config,
     validate_config,
 )
+from chartcleaner.service import format_output
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -81,23 +82,9 @@ def _print_audit(audit, limit: int = 10) -> None:
 
 
 def _format_output(text: str, delta: bool, fmt: str) -> str:
-    out = text
-    if delta:
-        from chartcleaner.delta_engine import extract_note_deltas
-        delta_res = extract_note_deltas(out)
-        out = delta_res.compact_text
-        if delta_res.notes_found > 1:
-            print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed")
-
-    if fmt != "text":
-        from chartcleaner.section_parser import parse_clinical_sections
-        parsed = parse_clinical_sections(out)
-        if fmt == "markdown":
-            out = parsed.to_markdown()
-        elif fmt == "json":
-            out = parsed.to_json()
-        elif fmt == "xml":
-            out = parsed.to_llm_xml()
+    out, delta_res = format_output(text, fmt, delta)
+    if delta_res is not None and delta_res.notes_found > 1:
+        print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed")
     return out
 
 
