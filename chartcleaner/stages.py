@@ -14,7 +14,7 @@ import threading
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
-from .abbreviations import MAX_TRACKED_CHANGES, abbreviate
+from .abbreviations import MAX_TRACKED_CHANGES, abbreviate, expand
 
 if TYPE_CHECKING:
     from .engine import CleanContext
@@ -817,6 +817,7 @@ RUNNERS: dict[str, Callable] = {
     "nlp": run_nlp,
     "tokenize": run_tokenize,
     "abbreviations": lambda t, c, x: abbreviate(t, c, changes=[] if _tracking(x) else None),
+    "expand": lambda t, c, x: expand(t, c, changes=[] if _tracking(x) else None),
     "regex_pairs": lambda t, c, x: run_regex_pairs(t, c, x, "literal_replacements", sid="literal_replacements"),
     "learned": run_learned,
     "unicode": run_unicode,

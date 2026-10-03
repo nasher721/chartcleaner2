@@ -18,29 +18,14 @@ import csv
 import io
 import json
 import plistlib
-import re
 
 from .abbreviation_safety import _bundled_pairs, is_blocked
-from .abbreviations import normalize_settings
+from .abbreviations import display_term, normalize_settings
 
 __all__ = ["FORMATS", "EXTENSIONS", "entries", "render", "export_filename"]
 
 FORMATS = ("plist", "espanso", "textexpander", "ahk")
 EXTENSIONS = {"plist": "plist", "espanso": "yml", "textexpander": "csv", "ahk": "ahk"}
-_PARENTHETICAL = re.compile(r"\s+\([^()]*\)$")
-
-
-def _expansion(term: str) -> str:
-    """The text to type: first alternative, no trailing explanation."""
-    text = _PARENTHETICAL.sub("", term.split(" / ")[0]).strip()
-    # Sentence-case dictionary entries ("Hypertension") read wrong mid-sentence.
-    # Only plain words ("Hypertension"), not codes like "A1 segment".
-    if (len(text) > 1 and text[0].isupper() and text[1].islower()
-            and not any(c.isupper() for c in text[1:])):
-        text = text[0].lower() + text[1:]
-    return text
-
-
 def entries(cfg: dict | None = None, *, prefix: str = ";", include_bundled: bool = True,
             skip_unsafe: bool = True) -> list[tuple[str, str]]:
     """``(trigger, expansion)`` pairs; custom entries win over bundled ones."""
@@ -60,7 +45,7 @@ def entries(cfg: dict | None = None, *, prefix: str = ";", include_bundled: bool
         if skip_unsafe and not acknowledged and is_blocked(abbr, term):
             continue
         trigger = prefix + abbr.casefold()
-        expansion = _expansion(term)
+        expansion = display_term(term)
         if expansion and trigger not in out:
             out[trigger] = expansion
     return sorted(out.items())

@@ -69,7 +69,10 @@ from chartcleaner.abbreviation_editor import save_with_safety as save_abbreviati
 from chartcleaner.abbreviation_editor import show_issues as show_abbreviation_issues
 from chartcleaner.abbreviation_safety import check as abbreviation_check
 from chartcleaner.abbreviations import abbreviate
+from chartcleaner.abbreviations import expand as expand_abbreviations
 from chartcleaner.abbreviations import lookup as lookup_abbreviation
+from chartcleaner.abbreviations import meanings as abbreviation_meanings
+from chartcleaner.abbreviations import normalize_settings as normalize_abbreviation_settings
 from chartcleaner.abbreviations import preview as abbreviation_preview
 from chartcleaner.abbreviations import suggest as suggest_abbreviation
 from chartcleaner.abbreviations import with_custom as abbreviation_with_custom
@@ -460,7 +463,7 @@ async def clean_page():
         try:
             def work():
                 cfg = load_config(CONFIG_PATH)
-                if mode == "abbreviations":
+                if mode != "clean":
                     return Pipeline(cfg, mode=mode).run(text), None
                 result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text)
                 return result, run_audit(result.text, cfg)
@@ -470,7 +473,7 @@ async def clean_page():
                                summary=None, qa=[], result_mode=mode)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
-                f"{source}:abbreviations" if mode == "abbreviations" else source))
+                f"{source}:{mode}" if mode != "clean" else source))
             # persist reversible-token maps produced by the tokenize stage
             try:
                 for st in result.stages:
@@ -499,7 +502,7 @@ async def clean_page():
             ui.notify("Nothing to clean — paste some text first.", type="warning")
             return
         if len(text) > 2_000_000:
-            if mode_sel.value == "abbreviations":
+            if mode_sel.value != "clean":
                 ui.notify("Input over 2M characters; split it into smaller sections.", type="warning")
                 return
             ui.notify("Input over 2M characters; truncated to 2M.", type="warning")
@@ -514,9 +517,13 @@ async def clean_page():
         if not result:
             return
         with results_col:
-            abbreviations_only = CLEAN_STATE.get("result_mode") == "abbreviations"
-            if abbreviations_only:
+            result_mode = CLEAN_STATE.get("result_mode")
+            single_pass = result_mode in ("abbreviations", "expand")
+            if result_mode == "abbreviations":
                 ui.label("Abbreviations only — other text and formatting preserved. "
+                         "PHI has not been removed.").classes("text-sm")
+            elif result_mode == "expand":
+                ui.label("Abbreviations expanded — other text and formatting preserved. "
                          "PHI has not been removed.").classes("text-sm")
             phi = result.phi_counts()
             chips = ui.row().classes("gap-3 flex-wrap items-stretch")
@@ -524,8 +531,13 @@ async def clean_page():
             stat_chip(chips, "reduction", f"{result.reduction:+.1f}%",
                       "green" if result.reduction >= 0 else "orange")
             stat_chip(chips, "words", f"{result.words_before:,} → {result.words_after:,}", "indigo")
-            if abbreviations_only:
+            if result_mode == "abbreviations":
                 stat_chip(chips, "abbreviations applied", str(sum(s.matches for s in result.stages)))
+            elif result_mode == "expand":
+                stat_chip(chips, "abbreviations expanded", str(sum(s.matches for s in result.stages)))
+                ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
+                if ambiguous:
+                    stat_chip(chips, "ambiguous, left as written", str(sum(ambiguous.values())), "orange")
             else:
                 stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
             stat_chip(chips, "elapsed", f"{result.duration_ms:.0f} ms", "blue-grey")
@@ -604,7 +616,14 @@ async def clean_page():
                         rows.append({"stage": s.label, "matches": s.matches,
                                      "delta": f"{delta:+,}", "status": status})
                     ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
-            if abbreviations_only:
+            if result_mode == "expand" and ambiguous:
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Not expanded because they have several meanings: "
+                             + ", ".join(f"{a} ×{n}" for a, n in sorted(ambiguous.items())))\
+                        .classes("text-sm")
+                    ui.button("Choose meanings", icon="rule",
+                              on_click=lambda amb=ambiguous: open_meanings_dialog(amb)).props("flat dense")
+            if single_pass:
                 return
             # ---- local AI summary (on-device via Ollama) ----
             summary_refs.clear()
@@ -1120,10 +1139,29 @@ async def clean_page():
 
                 save_abbreviation_with_safety(term, abbr, load_config(CONFIG_PATH), persist)
 
+            expanded, n_expanded, _ = expand_abbreviations(term, cfg)
+            can_expand = n_expanded == 1 and expanded != term
+
+            def expand_instead() -> None:
+                text = selection["text"]
+                lead = text[:len(text) - len(text.lstrip())]
+                trail = text[len(text.rstrip()):]
+                try:
+                    after = replace_selection(input_area.value or "", selection, lead + expanded + trail)
+                except ValueError as ex:
+                    ui.notify(str(ex), type="warning")
+                    return
+                input_area.set_value(after)
+                invalidate_output()
+                highlight_status.set_text(f"“{term}” expanded to “{expanded}” in this chart (no rule saved).")
+                dlg.close()
+
             ui.label("Updates this selection now and adds the term to your abbreviation dictionary "
                      "(used by Full clean and Abbreviations only).").classes("text-sm opacity-70")
             with ui.row():
                 ui.button("Abbreviate & remember", on_click=save).props("unelevated")
+                if can_expand:
+                    ui.button(f"Expand instead → {expanded}", on_click=expand_instead).props("flat")
                 ui.button("Cancel", on_click=dlg.close).props("flat")
         dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
         dlg.open()
@@ -1283,6 +1321,41 @@ async def clean_page():
             return
         open_learn_dialog(str(sel))
 
+    def open_meanings_dialog(ambiguous: dict[str, int]) -> None:
+        keep = "(leave as written)"
+        cfg = load_config(CONFIG_PATH)
+        current = normalize_abbreviation_settings(cfg.get("abbreviations")).get("expand_prefer", {})
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-2"):
+            ui.label("Choose what each abbreviation means").classes("text-lg font-semibold")
+            ui.label("Saved to your abbreviation settings and used every time you expand.") \
+                .classes("text-sm opacity-70")
+            picks = {}
+            for abbr in sorted(ambiguous):
+                options = abbreviation_meanings(abbr) + [keep]
+                picks[abbr] = ui.select(options, label=abbr,
+                                        value=current.get(abbr) if current.get(abbr) in options else keep) \
+                    .classes("w-full")
+
+            async def save() -> None:
+                cfg = load_config(CONFIG_PATH)
+                group = normalize_abbreviation_settings(cfg.get("abbreviations"))
+                prefer = dict(group.get("expand_prefer", {}))
+                for abbr, control in picks.items():
+                    if control.value and control.value != keep:
+                        prefer[abbr] = control.value
+                    else:
+                        prefer.pop(abbr, None)
+                group["expand_prefer"] = prefer
+                cfg["abbreviations"] = normalize_abbreviation_settings(group)
+                save_config_with_backup(cfg)
+                dlg.close()
+                await run_clean()
+
+            with ui.row():
+                ui.button("Save & expand again", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
     # ---- UI ------------------------------------------------------------------
     def on_mode_change(e) -> None:
         CLEAN_STATE.update(mode=e.value, result=None, result_text="", audit=None,
@@ -1292,14 +1365,17 @@ async def clean_page():
         sync_mode_controls()
 
     def sync_mode_controls() -> None:
-        abbreviations_only = mode_sel.value == "abbreviations"
-        clean_btn.set_text("Apply abbreviations" if abbreviations_only else "Clean")
-        preset_sel.set_enabled(not abbreviations_only)
-        mode_note.set_text(
-            "Shortens full medical terms using your abbreviation dictionary. Other text and formatting "
-            "are preserved; PHI is not removed."
-            if abbreviations_only else
-            "Runs your cleaning pipeline, including your medical abbreviation dictionary.")
+        mode = mode_sel.value
+        clean_btn.set_text({"abbreviations": "Apply abbreviations",
+                            "expand": "Expand abbreviations"}.get(mode, "Clean"))
+        preset_sel.set_enabled(mode == "clean")
+        mode_note.set_text({
+            "abbreviations": "Shortens full medical terms using your abbreviation dictionary. Other text "
+                             "and formatting are preserved; PHI is not removed.",
+            "expand": "Spells abbreviations out in full, for colleagues, patients or the AI tools. "
+                      "Abbreviations with several meanings are left as written until you choose one. "
+                      "PHI is not removed.",
+        }.get(mode, "Runs your cleaning pipeline, including your medical abbreviation dictionary."))
 
     with shell("Clean a chart", "clean"):
         errs, _warns = validate_config(load_config(CONFIG_PATH))
@@ -1309,7 +1385,8 @@ async def clean_page():
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs text-red-500")
 
-        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only"},
+        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
+                              "expand": "Expand abbreviations"},
                              value=CLEAN_STATE.get("mode", "clean"),
                              on_change=on_mode_change)
         mode_note = ui.label("").classes("text-sm opacity-70")

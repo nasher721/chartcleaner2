@@ -53,6 +53,7 @@ __all__ = [
     "RunResult",
     "CleanContext",
     "Pipeline",
+    "PIPELINE_MODES",
     "clean_text",
     "load_config",
     "save_config",
@@ -353,12 +354,16 @@ class StageSpec:
 # Pipeline Implementation
 # ---------------------------------------------------------------------------
 
+# "clean" runs the full pipeline; the other two run a single abbreviation pass.
+PIPELINE_MODES = ("clean", "abbreviations", "expand")
+
+
 class Pipeline:
     """The ordered cleaning pipeline built from a config dict."""
 
     def __init__(self, config: dict, custom_dir: str | Path | None = None, *,
                  mode: str = "clean"):
-        if mode not in {"clean", "abbreviations"}:
+        if mode not in PIPELINE_MODES:
             raise ValueError(f"Unknown cleaning mode: {mode}")
         self.mode = mode
         missing = [k for k in REQUIRED_CONFIG_KEYS if k not in config] if mode == "clean" else []
@@ -391,6 +396,8 @@ class Pipeline:
         if self.mode == "abbreviations":
             return [StageSpec("medical_abbreviations", STAGE_LABELS["medical_abbreviations"],
                               "abbreviations", True)]
+        if self.mode == "expand":
+            return [StageSpec("expand_abbreviations", "Expand abbreviations", "expand", True)]
         customs = list_custom_rules(self.custom_dir)
         by_name = {c["name"]: c for c in customs}
         order = self.config.get("stage_order") or list(BUILTIN_STAGE_IDS)
@@ -464,7 +471,7 @@ class Pipeline:
 
         text, stage_stats, warnings = self._execute_stages(text, ctx)
         text, wrapped, wrapper_stat = self._apply_wrapper(
-            text, False if self.mode == "abbreviations" else wrap)
+            text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
 

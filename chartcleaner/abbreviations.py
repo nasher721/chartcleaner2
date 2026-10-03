@@ -111,7 +111,33 @@ def normalize_settings(group: dict | None) -> dict:
                 entry["pack"] = item["pack"].strip()
             custom.append(entry)
             seen.add(term.casefold())
-    return {"disabled": disabled, "custom": custom}
+    out: dict[str, Any] = {"disabled": disabled, "custom": custom}
+    scope = _normalize_scope(group.get("scope"))
+    if scope:
+        out["scope"] = scope
+    prefer = group.get("expand_prefer")
+    if isinstance(prefer, dict):
+        prefer = {k.strip(): v.strip() for k, v in prefer.items()
+                  if isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()}
+        if prefer:
+            out["expand_prefer"] = prefer
+    rejected = group.get("rejected_suggestions")
+    if isinstance(rejected, list):
+        rejected = sorted({r.strip().casefold() for r in rejected if isinstance(r, str) and r.strip()})
+        if rejected:
+            out["rejected_suggestions"] = rejected
+    return out
+
+
+SCOPE_MODES = ("all", "only", "except")
+
+
+def _normalize_scope(scope: Any) -> dict | None:
+    """``{"mode": "only"|"except", "sections": [...]}``; None means everywhere."""
+    if not isinstance(scope, dict) or scope.get("mode") not in ("only", "except"):
+        return None
+    sections = [x.strip() for x in scope.get("sections", []) if isinstance(x, str) and x.strip()]
+    return {"mode": scope["mode"], "sections": sections} if sections else None
 
 
 @lru_cache(maxsize=32)
@@ -186,13 +212,10 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
 SOURCE_ROW_COUNT = _matcher()[2]
 
 
-def abbreviate(text: str, cfg: dict | None = None,
-               changes: list[dict] | None = None) -> tuple[str, int, dict]:
-    """Replace whole expanded medical terms in one non-cascading pass.
-
-    When ``changes`` is a list, each replacement is recorded in it (and
-    returned as ``details["changes"]``) for the app's inspect views.
-    """
+def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
+                     offset: int = 0, full: str | None = None) -> tuple[str, dict[str, int], int]:
+    """Abbreviate one stretch of text; change positions are reported in ``full``."""
+    full = segment if full is None else full
     disabled, custom = _settings(cfg)
     settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
     pattern, replacements, row_count, custom_groups = _matcher(settings)
@@ -205,18 +228,76 @@ def abbreviate(text: str, cfg: dict | None = None,
             return match.group(0)
         counts[replacement] = counts.get(replacement, 0) + 1
         if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
+            start = offset + match.start()
             changes.append({
                 "rule": match.group(0).casefold(),
                 "source": "custom" if match.lastgroup else "bundled",
                 "before": match.group(0),
                 "after": replacement,
-                "line": text.count("\n", 0, match.start()) + 1,
-                "start": match.start(),
+                "line": full.count("\n", 0, start) + 1,
+                "start": start,
             })
         return replacement
 
-    result = pattern.sub(replace, text)
-    details = {"source_rows": row_count, "replacements": counts}
+    return pattern.sub(replace, segment), counts, row_count
+
+
+def _section_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", name.casefold().replace("&", " and ")).strip()
+
+
+def scoped_spans(text: str, scope: dict) -> list[tuple[int, int]] | None:
+    """Character spans the scope allows; None when the chart has no section headers."""
+    from .section_parser import parse_clinical_sections
+
+    sections = parse_clinical_sections(text).sections
+    if not sections:
+        return None
+    wanted = {_section_key(n) for n in scope["sections"]}
+    spans = []
+    if scope["mode"] == "except" and sections[0].start_pos > 0:
+        spans.append((0, sections[0].start_pos))  # text before the first header
+    for sec in sections:
+        named = _section_key(sec.title) in wanted or _section_key(sec.domain) in wanted
+        if named == (scope["mode"] == "only"):
+            spans.append((sec.start_pos, sec.end_pos))
+    return spans
+
+
+def abbreviate(text: str, cfg: dict | None = None,
+               changes: list[dict] | None = None) -> tuple[str, int, dict]:
+    """Replace whole expanded medical terms in one non-cascading pass.
+
+    Honors ``abbreviations.scope`` (only/except named sections). When
+    ``changes`` is a list, each replacement is recorded in it (and returned
+    as ``details["changes"]``) for the app's inspect views.
+    """
+    group = cfg.get("abbreviations") if isinstance(cfg, dict) else None
+    scope = _normalize_scope(group.get("scope")) if isinstance(group, dict) else None
+    details: dict[str, Any] = {}
+    if scope is None:
+        result, counts, row_count = _abbreviate_span(text, cfg, changes)
+    else:
+        spans = scoped_spans(text, scope)
+        if spans is None:
+            # No headers: "except" has nothing to skip; "only" has nothing to touch.
+            spans = [(0, len(text))] if scope["mode"] == "except" else []
+            details["note"] = "No section headers found."
+        parts: list[str] = []
+        counts = {}
+        row_count = SOURCE_ROW_COUNT
+        pos = 0
+        for start, end in spans:
+            parts.append(text[pos:start])
+            segment, seg_counts, row_count = _abbreviate_span(text[start:end], cfg, changes, start, text)
+            parts.append(segment)
+            for key, n in seg_counts.items():
+                counts[key] = counts.get(key, 0) + n
+            pos = end
+        parts.append(text[pos:])
+        result = "".join(parts)
+        details["scope"] = scope
+    details = {"source_rows": row_count, "replacements": counts, **details}
     if changes is not None:
         details["changes"] = changes
     return result, sum(counts.values()), details
@@ -284,5 +365,131 @@ def preview(text: str, cfg: dict | None, term: str, replacement: str,
     return {"count": len(changed), "samples": out}
 
 
-__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "abbreviate", "lookup", "normalize_settings",
-           "preview", "suggest", "with_custom"]
+_PARENTHETICAL = re.compile(r"\s+\([^()]*\)$")
+
+
+def display_term(term: str) -> str:
+    """How a dictionary term reads in running text: first alternative, no
+    trailing explanation, and sentence-case words lowercased ("Hypertension"
+    → "hypertension"; codes like "A1 segment" keep their case)."""
+    text = _PARENTHETICAL.sub("", term.split(" / ")[0]).strip()
+    if (len(text) > 1 and text[0].isupper() and text[1].islower()
+            and not any(c.isupper() for c in text[1:])):
+        text = text[0].lower() + text[1:]
+    return text
+
+
+def _same_meaning(a: str, b: str) -> bool:
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, a.casefold(), b.casefold()).ratio() >= 0.85
+
+
+def _expandable(abbr: str) -> bool:
+    """Safe to expand without a user choice: not one letter, no spaces, and not a
+    plain lowercase word (``reg``, ``ext``) that collides with ordinary English."""
+    if len(abbr) < 2 or any(c.isspace() for c in abbr):
+        return False
+    return not (abbr.isalpha() and abbr.islower())
+
+
+@lru_cache(maxsize=32)
+def _expander(settings: str) -> tuple[re.Pattern[str], dict[str, str | None]]:
+    options = json.loads(settings)
+    disabled = set(options["disabled"])
+    meanings: dict[str, dict[str, str]] = {}   # abbr -> {casefolded meaning: meaning}
+    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            term = row["Expanded version"].strip()
+            abbr = row["Abbreviation"].strip()
+            if not term or not abbr or "not expanded in source" in term.casefold():
+                continue
+            if term.casefold() in disabled:
+                continue
+            meaning = display_term(term)
+            found = meanings.setdefault(abbr, {})
+            # Spelling variants (hemorrhage / haemorrhage) are one meaning; the
+            # first CSV row wins.
+            if not any(_same_meaning(meaning, other) for other in found.values()):
+                found[meaning.casefold()] = meaning
+    chosen: dict[str, str | None] = {}
+    for abbr, found in meanings.items():
+        if len(found) == 1 and _expandable(abbr):
+            chosen[abbr] = next(iter(found.values()))
+        elif len(found) > 1:
+            chosen[abbr] = None   # ambiguous: matched so it is counted, never changed
+    for item in options["custom"]:
+        if item["enabled"]:
+            chosen[item["replacement"]] = display_term(item["term"])
+    for abbr, meaning in options["prefer"].items():
+        chosen[abbr] = meaning
+    if not chosen:
+        return re.compile(r"(?!x)x"), {}
+    alternatives = "|".join(re.escape(a) for a in sorted(chosen, key=len, reverse=True))
+    # Never touch reversible tokens like [[T1]].
+    pattern = re.compile(r"(?<![\w\[])(?:" + alternatives + r")(?![\w\]])")
+    return pattern, chosen
+
+
+def meanings(abbreviation: str) -> list[str]:
+    """Distinct dictionary meanings of ``abbreviation`` (for resolving ambiguity)."""
+    found: list[str] = []
+    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            if row["Abbreviation"].strip() != abbreviation:
+                continue
+            term = row["Expanded version"].strip()
+            if not term or "not expanded in source" in term.casefold():
+                continue
+            meaning = display_term(term)
+            if not any(_same_meaning(meaning, other) for other in found):
+                found.append(meaning)
+    return found
+
+
+_SENTENCE_START = re.compile(r"(?:^|[.!?]\s+|\n\s*)$")
+
+
+def expand(text: str, cfg: dict | None = None,
+           changes: list[dict] | None = None) -> tuple[str, int, dict]:
+    """Expand abbreviations back to full terms in one pass (case-sensitive).
+
+    An abbreviation with several dictionary meanings is left as written and
+    counted under ``details["ambiguous"]`` unless ``abbreviations.expand_prefer``
+    names the meaning to use. One-letter and plain-lowercase abbreviations are
+    only expanded when a custom rule or ``expand_prefer`` covers them.
+    """
+    group = normalize_settings(cfg.get("abbreviations") if isinstance(cfg, dict) else None)
+    settings = json.dumps({
+        "disabled": sorted(t.casefold() for t in group["disabled"]),
+        "custom": [{"term": c["term"], "replacement": c["replacement"], "enabled": c["enabled"]}
+                   for c in group["custom"]],
+        "prefer": group.get("expand_prefer", {}),
+    }, sort_keys=True, ensure_ascii=False)
+    pattern, chosen = _expander(settings)
+    counts: dict[str, int] = {}
+    ambiguous: dict[str, int] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        abbr = match.group(0)
+        meaning = chosen[abbr]
+        if meaning is None:
+            ambiguous[abbr] = ambiguous.get(abbr, 0) + 1
+            return abbr
+        if _SENTENCE_START.search(text, 0, match.start()) and meaning[:1].islower():
+            meaning = meaning[0].upper() + meaning[1:]
+        counts[abbr] = counts.get(abbr, 0) + 1
+        if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
+            changes.append({"rule": abbr, "before": abbr, "after": meaning,
+                            "line": text.count("\n", 0, match.start()) + 1,
+                            "start": match.start()})
+        return meaning
+
+    result = pattern.sub(replace, text)
+    details: dict[str, Any] = {"expansions": counts, "ambiguous": ambiguous}
+    if changes is not None:
+        details["changes"] = changes
+    return result, sum(counts.values()), details
+
+
+__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "SCOPE_MODES", "abbreviate", "display_term", "expand",
+           "lookup", "meanings", "normalize_settings", "preview", "scoped_spans", "suggest", "with_custom"]

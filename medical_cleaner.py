@@ -30,7 +30,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 class MedicalCleaner:
     """Backwards-compatible wrapper around the chartcleaner engine."""
 
-    def __init__(self, config_path=None, wrap_output: bool = True):
+    def __init__(self, config_path=None, wrap_output: bool = True, mode: str = "clean"):
         path = (_SCRIPT_DIR / "config.json") if config_path is None else Path(config_path)
         try:
             self.config = load_config(path)
@@ -43,7 +43,7 @@ class MedicalCleaner:
             sys.exit(1)
         self._custom_dir = _SCRIPT_DIR / "custom_rules"
         self._wrap = wrap_output
-        self._pipeline = Pipeline(self.config, custom_dir=self._custom_dir)
+        self._pipeline = Pipeline(self.config, custom_dir=self._custom_dir, mode=mode)
 
     def clean(self, text: str) -> str:
         return self.clean_detailed(text).text
@@ -247,6 +247,11 @@ def main():
         help="Structured export format for LLMs (text, markdown, json, xml).",
     )
     parser.add_argument(
+        "--mode", choices=["clean", "abbreviations", "expand"], default="clean",
+        help="clean (full pipeline, default), abbreviations (shorten terms only), "
+             "or expand (spell abbreviations out; ambiguous ones are left as written).",
+    )
+    parser.add_argument(
         "--export-abbreviations", choices=["plist", "espanso", "textexpander", "ahk"],
         metavar="FORMAT",
         help="Export your abbreviations for a text expander: plist (macOS Text "
@@ -273,7 +278,7 @@ def main():
         _run_evaluate(args.evaluate, cleaner)
         return
 
-    cleaner = MedicalCleaner(wrap_output=not args.no_wrap)
+    cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode)
 
     if args.watch:
         watch_dir = Path(args.watch).expanduser()

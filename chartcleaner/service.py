@@ -15,7 +15,7 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "load_active_config", "format_output", "clean", "abbreviate", "ask"]
+__all__ = ["FORMATS", "load_active_config", "format_output", "clean", "abbreviate", "expand", "ask"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -113,21 +113,31 @@ def clean(
     return payload
 
 
-def abbreviate(
-    text: str,
-    *,
-    preset: str | None = None,
-    source: str = "api",
-    record: bool = True,
-    config: dict | None = None,
-) -> dict:
-    """Abbreviations-only pass (same as the Clean page's "Abbreviations only")."""
+def _single_pass(mode: str, text: str, preset: str | None, source: str, record: bool,
+                 config: dict | None) -> dict:
     cfg = config if config is not None else load_active_config(preset)
-    result = Pipeline(cfg, mode="abbreviations").run(text)
-    _record(result, f"{source}:abbreviations", record)
+    result = Pipeline(cfg, mode=mode).run(text)
+    _record(result, f"{source}:{mode}", record)
     payload = _payload(result, result.text)
-    payload["replacements"] = dict(result.stages[0].details.get("replacements") or {})
+    details = result.stages[0].details
+    if mode == "abbreviations":
+        payload["replacements"] = dict(details.get("replacements") or {})
+    else:
+        payload["expansions"] = dict(details.get("expansions") or {})
+        payload["ambiguous"] = dict(details.get("ambiguous") or {})
     return payload
+
+
+def abbreviate(text: str, *, preset: str | None = None, source: str = "api",
+               record: bool = True, config: dict | None = None) -> dict:
+    """Abbreviations-only pass (same as the Clean page's "Abbreviations only")."""
+    return _single_pass("abbreviations", text, preset, source, record, config)
+
+
+def expand(text: str, *, preset: str | None = None, source: str = "api",
+           record: bool = True, config: dict | None = None) -> dict:
+    """Expand abbreviations to full terms; ambiguous ones are listed, not changed."""
+    return _single_pass("expand", text, preset, source, record, config)
 
 
 def ask(question: str, chart: str, *, preset: str | None = None,

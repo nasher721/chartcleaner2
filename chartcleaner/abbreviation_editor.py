@@ -74,6 +74,40 @@ def save_with_safety(term: str, replacement: str, cfg: dict, save: Callable[[boo
     dialog.open()
 
 
+def _section_options() -> dict[str, str]:
+    from .section_parser import SECTION_TAXONOMY
+    return {key: key.replace("_", " ").capitalize() for key in SECTION_TAXONOMY}
+
+
+def _scope_controls(load_current: Callable[[], dict], update) -> None:
+    """Where abbreviations apply: everywhere, only in, or everywhere except sections."""
+    from nicegui import ui
+
+    group = normalize_settings((load_current() or {}).get("abbreviations"))
+    scope = group.get("scope") or {"mode": "all", "sections": []}
+    options = _section_options()
+    for name in scope["sections"]:
+        options.setdefault(name, name)
+
+    def save() -> None:
+        mode, sections = mode_sel.value, list(sections_sel.value or [])
+        sections_sel.set_visibility(mode != "all")
+
+        def mutate(g: dict) -> None:
+            g["scope"] = {"mode": mode, "sections": sections}
+        if mode == "all" or sections:
+            update(mutate)
+
+    with ui.row().classes("w-full items-center gap-2"):
+        ui.label("Where to abbreviate").classes("font-medium")
+        mode_sel = ui.select({"all": "Everywhere", "only": "Only in these sections",
+                              "except": "Everywhere except these sections"},
+                             value=scope["mode"], on_change=lambda _: save()).classes("min-w-[260px]")
+        sections_sel = ui.select(options, multiple=True, value=scope["sections"], label="Sections",
+                                 on_change=lambda _: save()).props("use-chips").classes("min-w-[320px] flex-grow")
+        sections_sel.set_visibility(scope["mode"] != "all")
+
+
 def _safety_report(load_current: Callable[[], dict]) -> None:
     from nicegui import ui
 
@@ -171,6 +205,7 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
             replacement_input = ui.input("Replacement", on_change=lambda _: refresh_preview()).classes("flex-grow")
             ui.button("Add custom", icon="add", on_click=lambda: add_custom(term_input, replacement_input))
         preview_box = ui.column().classes("w-full gap-1")
+        _scope_controls(load_current, update)
         with ui.row().classes("items-center gap-2"):
             ui.button("Safety report", icon="health_and_safety",
                       on_click=lambda: _safety_report(load_current)).props("flat")

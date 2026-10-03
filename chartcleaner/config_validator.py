@@ -102,6 +102,20 @@ class ConfigValidator:
         if not isinstance(disabled, list) or not all(
                 isinstance(term, str) and term.strip() for term in disabled):
             self.errors.append("abbreviations.disabled: must be a list of non-empty terms")
+        if "scope" in group:
+            scope = group["scope"]
+            if (not isinstance(scope, dict) or scope.get("mode") not in ("all", "only", "except")
+                    or not isinstance(scope.get("sections", []), list)
+                    or not all(isinstance(x, str) for x in scope.get("sections", []))):
+                self.errors.append('abbreviations.scope: must be {"mode": "all"|"only"|"except", '
+                                   '"sections": [names]}')
+        prefer = group.get("expand_prefer", {})
+        if not isinstance(prefer, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) and v.strip() for k, v in prefer.items()):
+            self.errors.append("abbreviations.expand_prefer: must map abbreviations to meanings")
+        rejected = group.get("rejected_suggestions", [])
+        if not isinstance(rejected, list) or not all(isinstance(x, str) for x in rejected):
+            self.errors.append("abbreviations.rejected_suggestions: must be a list of phrases")
         custom = group.get("custom", [])
         if not isinstance(custom, list):
             self.errors.append("abbreviations.custom: must be a list")
