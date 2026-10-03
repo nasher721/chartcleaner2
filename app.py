@@ -464,8 +464,9 @@ async def clean_page():
             def work():
                 cfg = load_config(CONFIG_PATH)
                 if mode != "clean":
-                    return Pipeline(cfg, mode=mode).run(text), None
-                result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text)
+                    return Pipeline(cfg, mode=mode).run(text, track_changes=True), None
+                # Tracked changes stay in memory for the inspect tabs; history drops them.
+                result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text, track_changes=True)
                 return result, run_audit(result.text, cfg)
 
             result, audit = await run.io_bound(work)
@@ -579,11 +580,17 @@ async def clean_page():
                 else:
                     ui.label("✓ Audit: no leftover PHI patterns flagged.").classes("text-xs text-green-600")
 
+            abbr_changes = next((st.details.get("changes") or [] for st in result.stages
+                                 if st.id == "medical_abbreviations"), [])
             with ui.tabs() as tabs:
                 t_result = ui.tab("Result")
                 t_diff = ui.tab("Side-by-side diff")
                 t_stages = ui.tab("What each stage did")
+                t_abbr = ui.tab(f"Abbreviations ({len(abbr_changes)})") if abbr_changes else None
             with ui.tab_panels(tabs, value=t_result).classes("w-full"):
+                if t_abbr is not None:
+                    with ui.tab_panel(t_abbr):
+                        render_abbreviation_changes(abbr_changes)
                 with ui.tab_panel(t_result):
                     out = ui.textarea("", value=result.text)
                     out.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
@@ -1320,6 +1327,75 @@ async def clean_page():
                       type="info")
             return
         open_learn_dialog(str(sel))
+
+    def render_abbreviation_changes(changes: list[dict]) -> None:
+        """Every abbreviation applied in this result, with quick fixes."""
+        cfg = load_config(CONFIG_PATH)
+        custom = {c["term"].casefold(): c for c in
+                  normalize_abbreviation_settings(cfg.get("abbreviations"))["custom"]}
+        groups: dict[tuple[str, str], dict] = {}
+        for c in changes:
+            key = (c["rule"], c["after"])
+            g = groups.setdefault(key, {"term": c["before"], "rule": c["rule"], "after": c["after"],
+                                        "source": c.get("source", "bundled"), "count": 0})
+            g["count"] += 1
+        ui.label("Each abbreviation applied to this result. Disable or change one and the chart "
+                 "is cleaned again.").classes("text-sm opacity-70")
+        for g in sorted(groups.values(), key=lambda g: (-g["count"], g["rule"])):
+            entry = custom.get(g["rule"])
+            source = (f"pack: {entry['pack']}" if entry and entry.get("pack")
+                      else "my rule" if g["source"] == "custom" else "dictionary")
+            with ui.row().classes("w-full items-center gap-2 border-b pb-1"):
+                ui.label(g["term"]).classes("font-medium min-w-[240px]")
+                ui.label("→")
+                ui.label(g["after"]).classes("min-w-[80px]")
+                ui.badge(f"×{g['count']}").props("outline")
+                ui.label(source).classes("text-xs opacity-70 flex-grow")
+                ui.button("Change", icon="edit",
+                          on_click=lambda gg=g: change_abbreviation(gg)).props("flat dense")
+                ui.button("Disable", icon="block",
+                          on_click=lambda gg=g: disable_abbreviation(gg)) \
+                    .props("flat dense color=negative").mark("abbr-disable")
+
+    async def disable_abbreviation(group: dict) -> None:
+        cfg = load_config(CONFIG_PATH)
+        settings = normalize_abbreviation_settings(cfg.get("abbreviations"))
+        match = next((c for c in settings["custom"] if c["term"].casefold() == group["rule"]), None)
+        if match is not None:
+            match["enabled"] = False
+        else:
+            settings["disabled"].append(group["term"])
+        cfg["abbreviations"] = normalize_abbreviation_settings(settings)
+        save_config_with_backup(cfg)
+        ui.notify(f"“{group['term']}” will no longer be abbreviated.", type="positive")
+        await run_clean()
+
+    def change_abbreviation(group: dict) -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-md gap-2"):
+            ui.label(f"Abbreviate “{group['term']}” as…").classes("text-lg font-semibold")
+            new = ui.input("Abbreviation", value=group["after"]).props("outlined autofocus").classes("w-full")
+
+            def save() -> None:
+                value = (new.value or "").strip()
+                if not value:
+                    ui.notify("Enter an abbreviation.", type="warning")
+                    return
+
+                async def persist(acknowledged: bool) -> None:
+                    cfg = abbreviation_with_custom(load_config(CONFIG_PATH), group["term"], value,
+                                                   acknowledged=acknowledged)
+                    save_config_with_backup(cfg)
+                    dlg.close()
+                    await run_clean()
+
+                save_abbreviation_with_safety(
+                    group["term"], value, load_config(CONFIG_PATH),
+                    lambda ack: asyncio.get_running_loop().create_task(persist(ack)))
+
+            with ui.row():
+                ui.button("Save & clean again", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def open_meanings_dialog(ambiguous: dict[str, int]) -> None:
         keep = "(leave as written)"

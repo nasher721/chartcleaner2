@@ -108,6 +108,66 @@ def _scope_controls(load_current: Callable[[], dict], update) -> None:
         sections_sel.set_visibility(scope["mode"] != "all")
 
 
+def _suggestions_dialog(load_current: Callable[[], dict], update,
+                        sample_text: Callable[[], str] | None) -> None:
+    from nicegui import ui
+
+    from .phrase_miner import mine
+
+    chart = sample_text() if sample_text else ""
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl gap-2"):
+        ui.label("Suggested abbreviations").classes("text-lg font-semibold")
+        ui.label("Phrases that repeat in the current chart (or the sample chart), ranked by how much "
+                 "text an abbreviation would save. Copied-forward lines count once; names are skipped.") \
+            .classes("text-sm opacity-70")
+        body = ui.column().classes("w-full gap-1")
+
+        def draw() -> None:
+            body.clear()
+            found = mine(chart, load_current()) if chart.strip() else []
+            with body:
+                if not found:
+                    ui.label("No repeated phrases found. Paste a longer chart on the Clean page "
+                             "and try again.").classes("text-sm")
+                for item in found:
+                    with ui.row().classes("w-full items-center gap-2 border-b pb-1"):
+                        ui.label(f"{item['phrase']}  ×{item['count']}").classes("flex-grow")
+                        short = ui.input("Abbreviation", value=item["suggestion"]).props("dense") \
+                            .classes("w-28")
+                        ui.button("Add", icon="add",
+                                  on_click=lambda i=item, c=short: accept(i["phrase"], c.value)).props("flat dense")
+                        ui.button("Dismiss", on_click=lambda i=item: dismiss(i["phrase"])) \
+                            .props("flat dense color=grey")
+
+        def accept(phrase: str, replacement: str) -> None:
+            replacement = (replacement or "").strip()
+            if not replacement:
+                ui.notify("Enter an abbreviation first.", type="warning")
+                return
+
+            def save(acknowledged: bool) -> None:
+                def mutate(group: dict) -> None:
+                    entry = {"term": phrase, "replacement": replacement, "enabled": True}
+                    if acknowledged:
+                        entry["acknowledged"] = True
+                    group["custom"] = [c for c in group["custom"] if c["term"].casefold() != phrase]
+                    group["custom"].append(entry)
+                update(mutate)
+                draw()
+
+            save_with_safety(phrase, replacement, load_current(), save)
+
+        def dismiss(phrase: str) -> None:
+            def mutate(group: dict) -> None:
+                group["rejected_suggestions"] = list(group.get("rejected_suggestions", [])) + [phrase]
+            update(mutate)
+            draw()
+
+        draw()
+        ui.button("Close", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
 def _packs_dialog(load_current: Callable[[], dict], save_current: Callable[[dict], None],
                   refresh: Callable[[], None]) -> None:
     from nicegui import ui
@@ -334,6 +394,8 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
                       on_click=lambda: _safety_report(load_current)).props("flat")
             ui.button("Export for text expander", icon="keyboard",
                       on_click=lambda: _export_dialog(load_current)).props("flat")
+            ui.button("Suggest from this chart", icon="auto_awesome",
+                      on_click=lambda: _suggestions_dialog(load_current, update, sample_text)).props("flat")
             ui.button("Specialty packs", icon="inventory_2",
                       on_click=lambda: _packs_dialog(load_current, save_current, refresh)).props("flat")
             ui.button("Import / export CSV", icon="table_view",

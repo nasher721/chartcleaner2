@@ -58,6 +58,7 @@ clean-chart.cmd               # Windows
 ./clean-chart --watch ~/Inbox/charts   # auto-clean every file dropped in the folder
 ./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
 ./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
+./clean-chart --mode expand   # spell abbreviations out (or --mode abbreviations to shorten only)
 ```
 
 The CLI prints the same per-stage statistics as the app.
@@ -94,6 +95,24 @@ anyway** re-enables one after an explicit "I understand" confirmation, and
 a term: the dialog suggests a short form (the dictionary's, else initials), shows
 how many places it would change, and warns about Do Not Use or shared
 abbreviations. The Abbreviations tab shows the same live preview while you type.
+
+**Expanding.** The Clean page's **Expand abbreviations** mode (or
+`--mode expand`) spells abbreviations out for colleagues, patients or the AI
+tools. Abbreviations with several meanings (MS, NAD, RA…) are left as written
+and listed; **Choose meanings** saves the one you use. One-letter and
+plain-lowercase short forms (a, x, reg), ALL-CAPS lines and `[[Tn]]` tokens are
+never touched.
+
+**Organizing.** On **My text rules → Abbreviations**:
+- **Where to abbreviate** limits abbreviations to (or keeps them out of) chosen
+  sections, e.g. never inside Medications.
+- **Suggest from this chart** proposes abbreviations for long phrases that keep
+  repeating (copied-forward lines count once; names are skipped).
+- **Specialty packs** add Neuro ICU, Critical Care, Cardiology, Medicine or
+  Nursing abbreviations; Remove takes out only what the pack added.
+- **Import / export CSV** moves your abbreviations to and from a spreadsheet.
+- After a clean, the result's **Abbreviations** tab lists every abbreviation
+  applied, with **Change** and **Disable** to fix one and clean again.
 
 **Text expanders.** **Export for text expander** (or `--export-abbreviations`)
 writes your dictionary for macOS Text Replacements, Espanso, TextExpander or

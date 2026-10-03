@@ -1,6 +1,6 @@
 # Improvement plan — abbreviations, cleaning, integrations
 
-Status: **in progress** (Phases 0–1 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
+Status: **in progress** (Phases 0–2 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
 
 This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
@@ -514,3 +514,14 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
       instead" waits for A8)
 - [x] X1 text-expander export — Abbreviations tab + `--export-abbreviations`
       (short → long only: expanders need short triggers)
+- [x] A8 expand mode — Clean page, `--mode expand`, `service.expand`;
+      ambiguity resolved via `expand_prefer` ("Choose meanings") instead of a
+      CSV context column; ALL-CAPS lines skipped
+- [x] A7 section scope — global `abbreviations.scope` (per-entry sections not
+      built); with no headers, "only" leaves text unchanged (safer than the
+      planned fallback)
+- [x] A6 CSV import/export + five specialty packs (Neuro ICU, Critical Care,
+      Cardiology, Medicine, Nursing); packs exclude bundled terms and conflicts
+- [x] A4 phrase suggestions — current chart; distinct-line counting, names skipped
+- [x] A5 inspect — built as the result's **Abbreviations** tab (Change /
+      Disable + re-run) because the result box is a plain text area
