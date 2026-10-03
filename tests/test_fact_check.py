@@ -17,6 +17,7 @@ from chartcleaner.fact_check import (
     fact_counts,
     stage_category,
 )
+from app_pages import common
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -131,7 +132,6 @@ def test_service_payload_includes_report(cfg):
 
 
 async def test_clean_page_shows_fact_check(user, monkeypatch, tmp_path):
-    from nicegui import Client
 
     from chartcleaner import store
     from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
@@ -145,8 +145,7 @@ async def test_clean_page_shows_fact_check(user, monkeypatch, tmp_path):
     save_config(cfg, path)
     monkeypatch.setattr(store, "append_run", lambda _r: None)
     monkeypatch.setattr(store, "load_prefs", lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
-    page = next(fn for fn, route in Client.page_routes.items() if route == "/")
-    monkeypatch.setitem(page.__globals__, "CONFIG_PATH", path)
+    monkeypatch.setattr(common, "CONFIG_PATH", path)
     before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
     CLEAN_STATE.update(input="Printed by Dr. Lee: K 6.1 called\nPlan: recheck\n", mode="clean",
                        result=None, result_text="", audit=None)

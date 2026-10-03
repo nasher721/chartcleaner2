@@ -7,6 +7,8 @@ from nicegui.testing import User
 from nicegui.testing.user import UserInteraction
 
 import app as cc_app
+from app_pages import common
+from app_pages import clean as clean_mod
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
 from chartcleaner.engine import Pipeline, load_default_config, save_config
 from chartcleaner.local_llm import GroundingResult
@@ -53,10 +55,10 @@ async def _open_ai_panel(user: User, monkeypatch, tmp_path):
                        audit=None, summary=None, qa=[], mode="clean", result_mode="clean")
     monkeypatch.setattr(cc_app.LocalLlmClient, "is_available", lambda self: False)
     monkeypatch.setattr(cc_app.LocalLlmClient, "list_models", lambda self: [])
-    monkeypatch.setitem(cc_app.PREFS, "auto_clean", False)
+    monkeypatch.setitem(common.PREFS, "auto_clean", False)
     config_path = tmp_path / "config.json"
     save_config(load_default_config(), config_path)
-    monkeypatch.setattr(cc_app, "CONFIG_PATH", config_path)
+    monkeypatch.setattr(common, "CONFIG_PATH", config_path)
     @ui.page("/ai-lifecycle")
     async def ai_lifecycle_fixture():
         await cc_app.clean_page()
@@ -98,7 +100,7 @@ async def test_stale_summary_is_discarded_after_chart_change(user: User, monkeyp
         release.wait(timeout=2)
         return _summary("STALE SUMMARY")
 
-    monkeypatch.setattr(cc_app, "summarize", delayed_summary)
+    monkeypatch.setattr(clean_mod, "summarize", delayed_summary)
     worker_tasks = []
     real_io_bound = cc_app.run.io_bound
 
@@ -131,7 +133,7 @@ async def test_stale_answer_is_discarded_after_chart_change(user: User, monkeypa
         release.wait(timeout=2)
         return _answer(question, "STALE ANSWER")
 
-    monkeypatch.setattr(cc_app, "ask_chart", delayed_answer)
+    monkeypatch.setattr(clean_mod, "ask_chart", delayed_answer)
     worker_tasks = []
     real_io_bound = cc_app.run.io_bound
 
@@ -161,12 +163,12 @@ async def test_current_chart_ai_response_is_published(user: User, monkeypatch, t
     before, auto_before, _ = await _open_ai_panel(user, monkeypatch, tmp_path)
     try:
         if kind == "summary":
-            monkeypatch.setattr(cc_app, "summarize", lambda chart, cfg: _summary("CURRENT SUMMARY"))
+            monkeypatch.setattr(clean_mod, "summarize", lambda chart, cfg: _summary("CURRENT SUMMARY"))
             user.find("Summarize").click()
             await user.should_see("CURRENT SUMMARY", retries=20)
             assert CLEAN_STATE["summary"].text == "CURRENT SUMMARY"
         else:
-            monkeypatch.setattr(cc_app, "ask_chart",
+            monkeypatch.setattr(clean_mod, "ask_chart",
                                 lambda question, chart, cfg, history=None: _answer(question, "CURRENT ANSWER"))
             user.find(ui.input).type("What happened?")
             ask_button = next(e for e in user.find(ui.button).elements if e.props.get("label") == "Ask")

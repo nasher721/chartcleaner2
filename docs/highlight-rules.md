@@ -22,6 +22,6 @@ Under **Share & import**:
 - CSV imports preserve abbreviation settings. Invalid files are rejected before saving. Settings saves retain a backup of the prior config.
 - Use **Settings → Export all settings (.zip)** for a complete configuration backup, including pipeline settings, presets, and scripts. Portable rule files exclude charts and history, but saved rule text should still be reviewed before sharing.
 
-Implementation: `app.py` contains the checked modes and page integration; `highlight_rules.py`, `learned_editor.py`, `abbreviation_editor.py`, and `rule_sharing.py` contain the reusable rule/editor logic. Matching and validation changes live in `abbreviations.py`, `stages.py`, and `config_validator.py`; `store.py` exposes portable import/export operations. No dependencies were added.
+Implementation: `app_pages/clean.py` and `app_pages/rules.py` contain the checked modes and page integration; `highlight_rules.py`, `learned_editor.py`, `abbreviation_editor.py`, and `rule_sharing.py` contain the reusable rule/editor logic. Matching and validation changes live in `abbreviations.py`, `stages.py`, and `config_validator.py`; `store.py` exposes portable import/export operations. No dependencies were added.
 
 Validation: run `.venv/bin/python -m pytest -q` from the repository. Browser verification uses an isolated configuration with sample text. Source changes do not rebuild the packaged macOS or Windows installers.

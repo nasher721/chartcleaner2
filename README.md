@@ -364,7 +364,8 @@ regenerates it), and a build test that renders every app page.
 ## Project layout
 
 ```
-app.py                  # the desktop app (NiceGUI, local web UI)
+app.py                  # the desktop app entry point (NiceGUI, local web UI; routes in ROUTES)
+app_pages/              # one module per page + common.py (shared helpers) + updates.py
 medical_cleaner.py      # CLI entrypoint (same engine)
 chartcleaner/
   engine.py             # stage pipeline + per-stage statistics + custom-rule loader
