@@ -15,7 +15,7 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "load_active_config", "format_output", "clean", "abbreviate", "expand", "ask"]
+__all__ = ["FORMATS", "load_active_config", "format_output", "clean", "abbreviate", "expand", "prompt", "ask"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -138,6 +138,16 @@ def expand(text: str, *, preset: str | None = None, source: str = "api",
            record: bool = True, config: dict | None = None) -> dict:
     """Expand abbreviations to full terms; ambiguous ones are listed, not changed."""
     return _single_pass("expand", text, preset, source, record, config)
+
+
+def prompt(text: str, template: str, *, preset: str | None = None, clean_first: bool = True,
+           record: bool = True, source: str = "api", config: dict | None = None) -> dict:
+    """Clean ``text`` (unless ``clean_first`` is False) and wrap it in a prompt template."""
+    from .prompt_templates import render
+
+    cfg = config if config is not None else load_active_config(preset)
+    chart = clean(text, config=cfg, wrap=False, record=record, source=source)["text"] if clean_first else text
+    return {"template": template, "text": render(template, chart, cfg)}
 
 
 def ask(question: str, chart: str, *, preset: str | None = None,

@@ -49,6 +49,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "med_normalize",
         "vitals_summary",
         "note_profiles",
+        "prompt_templates",
         "stage_options",
         "learned_rules",
         "abbreviations",
@@ -259,6 +260,21 @@ class ConfigValidator:
         self._validate_hospital_day_options()
         self._validate_compactor_options()
         self._validate_note_profiles()
+        self._validate_prompt_templates()
+
+    def _validate_prompt_templates(self) -> None:
+        templates = self.cfg.get("prompt_templates")
+        if templates is None:
+            return
+        if not isinstance(templates, list):
+            self.errors.append("prompt_templates: must be a list")
+            return
+        for i, t in enumerate(templates):
+            if not (isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"].strip()
+                    and isinstance(t.get("template"), str)):
+                self.errors.append(f"prompt_templates[{i}]: needs a name and a template")
+            elif t.get("format", "text") not in ("text", "markdown", "xml"):
+                self.errors.append(f"prompt_templates[{i}].format: must be text, markdown or xml")
 
     def _validate_note_profiles(self) -> None:
         profiles = self.cfg.get("note_profiles")

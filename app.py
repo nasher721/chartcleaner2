@@ -86,7 +86,10 @@ from chartcleaner.local_llm import LocalLlmClient
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.delta_engine import extract_note_deltas
+from chartcleaner import api as local_api
 from chartcleaner import rule_examples
+from chartcleaner.prompt_templates import render as render_prompt
+from chartcleaner.prompt_templates import templates as prompt_templates
 from chartcleaner.rule_health import report as rule_health_report
 from chartcleaner.note_type import LABELS as NOTE_TYPE_LABELS
 from chartcleaner.note_type import detect as detect_note_type
@@ -645,6 +648,10 @@ async def clean_page():
                         ui.button("Copy result + stats", icon="data_object",
                                   on_click=lambda: copy_to_clipboard(
                                       result.text + "\n\n<!-- " + result.summary() + " -->")).props("flat")
+                        with ui.dropdown_button("Copy as prompt", icon="smart_toy", auto_close=True) \
+                                .props("flat"):
+                            for tmpl in prompt_templates(load_config(CONFIG_PATH)):
+                                ui.item(tmpl["name"], on_click=lambda n=tmpl["name"]: copy_prompt(n))
                 with ui.tab_panel(t_diff):
                     with ui.scroll_area().classes("w-full border rounded h-[420px] bg-grey-1 dark:bg-grey-10"):
                         ui.html(diff_html(CLEAN_STATE["input"], result.text, flagged))
@@ -1422,6 +1429,14 @@ async def clean_page():
         save_config_with_backup(cfg)
         ui.notify("Saved — this text will be kept on future cleans.", type="positive")
         await run_clean()
+
+    def copy_prompt(name: str) -> None:
+        try:
+            text = render_prompt(name, CLEAN_STATE.get("result_text") or "", load_config(CONFIG_PATH))
+        except Exception as ex:
+            ui.notify(f"Could not build the prompt: {ex}", type="negative")
+            return
+        copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
 
     def render_delta(delta) -> None:
         ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
@@ -3524,6 +3539,80 @@ def settings_page():
                 ui.button("Open backups folder", icon="folder",
                           on_click=lambda: open_folder(store.BACKUPS_DIR)).props("flat")
 
+        # ---- local API ------------------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Local API").classes("font-semibold")
+            ui.label("Lets scripts, launchers (Raycast, Alfred, Keyboard Maestro, AutoHotkey) and the "
+                     "browser extension clean text through this app. It only answers this computer, "
+                     "needs this token, and never logs chart text.").classes("text-xs opacity-60 -mt-1")
+            token_label = ui.label("Token: ••••••••").classes("text-sm cc-mono")
+
+            def show_token() -> None:
+                token_label.set_text(f"Token: {local_api.get_token()}")
+
+            def rotate() -> None:
+                local_api.rotate_token()
+                show_token()
+                ui.notify("New token created; update anything that used the old one.", type="info")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Show", icon="visibility", on_click=show_token).props("flat dense")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(local_api.get_token(), "Token copied")) \
+                    .props("flat dense")
+                ui.button("New token", icon="autorenew",
+                          on_click=lambda: confirm_dialog("Replace the token? Tools using it will "
+                                                          "need the new one.", rotate)).props("flat dense")
+            port = SERVER_PORT or 8765
+            ui.label(f'curl -s http://127.0.0.1:{port}/api/v1/clean -H "Authorization: Bearer $TOKEN" '
+                     f'-H "Content-Type: application/json" -d \'{{"text": "Pt w/ HTN"}}\'') \
+                .classes("text-xs cc-mono opacity-80 break-all")
+
+        # ---- prompt templates ---------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Prompt templates").classes("font-semibold")
+            ui.label("Used by “Copy as prompt” on the Clean page (and --prompt on the command line). "
+                     "Placeholders: {chart} the cleaned chart, {delta} what changed since the last "
+                     "note, {date} today. A template with a built-in's name replaces it.") \
+                .classes("text-xs opacity-60 -mt-1")
+            tmpl_box = ui.column().classes("w-full gap-2")
+
+            def save_templates(items: list[dict]) -> None:
+                cfg = load_config(CONFIG_PATH)
+                cfg["prompt_templates"] = items
+                try:
+                    save_config_with_backup(cfg)
+                except Exception as ex:
+                    ui.notify(f"Could not save: {ex}", type="negative")
+                    return
+                ui.notify("Templates saved.", type="positive")
+                draw_templates()
+
+            def draw_templates() -> None:
+                tmpl_box.clear()
+                mine = list(load_config(CONFIG_PATH).get("prompt_templates") or [])
+                with tmpl_box:
+                    for idx, t in enumerate(mine):
+                        with ui.column().classes("w-full gap-1 border rounded p-2"):
+                            with ui.row().classes("w-full items-center gap-2"):
+                                name = ui.input("Name", value=t.get("name", "")).classes("flex-grow")
+                                fmt = ui.select({"text": "Plain text", "markdown": "Markdown",
+                                                 "xml": "XML sections"}, value=t.get("format", "text"),
+                                                label="Chart format").classes("w-40")
+                            body = ui.textarea("Template", value=t.get("template", "")) \
+                                .props("outlined autogrow").classes("w-full cc-mono")
+                            with ui.row():
+                                ui.button("Save", on_click=lambda i=idx, n=name, f=fmt, b=body: save_templates(
+                                    [*mine[:i], {"name": n.value.strip(), "format": f.value,
+                                                 "template": b.value}, *mine[i + 1:]])).props("flat dense")
+                                ui.button("Delete", on_click=lambda i=idx: save_templates(
+                                    mine[:i] + mine[i + 1:])).props("flat dense color=negative")
+                    ui.button("Add template", icon="add", on_click=lambda: save_templates(
+                        mine + [{"name": f"My template {len(mine) + 1}", "format": "text",
+                                 "template": "Summarize this chart:\n\n{chart}"}])).props("outline")
+
+            draw_templates()
+
         # ---- note types → presets ---------------------------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Note types").classes("font-semibold")
@@ -3731,6 +3820,7 @@ async def _strip_external_fonts(request, call_next):
 
 
 app.add_static_files("/exports", str(store.EXPORTS_DIR))
+local_api.register(app)  # /api/v1/* — loopback + token only (see chartcleaner/api.py)
 
 
 # ---------------------------------------------------------------------------

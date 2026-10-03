@@ -252,6 +252,11 @@ def main():
              "or expand (spell abbreviations out; ambiguous ones are left as written).",
     )
     parser.add_argument(
+        "--prompt", type=str, metavar="TEMPLATE",
+        help='Wrap the cleaned chart in a prompt template, e.g. "Progress note", '
+             '"Sign-out / handoff", "Assessment & plan only", "Discharge summary".',
+    )
+    parser.add_argument(
         "--export-abbreviations", choices=["plist", "espanso", "textexpander", "ahk"],
         metavar="FORMAT",
         help="Export your abbreviations for a text expander: plist (macOS Text "
@@ -324,6 +329,9 @@ def main():
             print("Processing clipboard text...")
             result = cleaner.clean_detailed(input_text)
             final_text = _format_output(result.text, args.delta, args.format)
+            if args.prompt:
+                from chartcleaner.prompt_templates import render
+                final_text = render(args.prompt, result.text, cleaner.config)
             pyperclip.copy(final_text)
 
             _print_summary(result, "Clipboard")
