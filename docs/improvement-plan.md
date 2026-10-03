@@ -1,6 +1,6 @@
 # Improvement plan — abbreviations, cleaning, integrations
 
-Status: **in progress** (Phases 0–3 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
+Status: **done** (Phases 0–4 built; see Manual checks in docs/integrations.md) · Branch: `claude/app-improvements-brainstorm-esuv9a`
 
 This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
@@ -543,3 +543,14 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
 - [x] C7 removed panel — "Removed" tab with Copy / Never remove this
       (`stage_options.<sid>.exceptions`); "Restore here" replaced by Copy
 - [x] C8 rule health — Statistics section; "slow rule" timing not built
+- [x] I3 prompt templates — Clean "Copy as prompt", Settings editor, `--prompt`
+- [x] I1 local REST API — `/api/v1/*`, token in Settings
+- [x] I6 exports — .docx (stdlib), .md + notes folder, "Copy for Epic"
+- [x] I2 hotkeys — `--stdin/--stdout/--preset`; macOS Quick Action generator
+      (untested on a real Mac here — see manual checks); Windows AHK v2 script
+      (uses clipboard mode rather than stdin)
+- [x] I4 MCP server — mcp 2.x `MCPServer`, stdio; now a regular dependency
+- [x] I5 clipboard watcher — Settings toggle (off by default), auto action,
+      Undo, macOS notification; "pause while the app window is focused" not
+      built (the server can't see window focus)
+- [x] I7 browser extension — MV3 context menu → local API → clipboard

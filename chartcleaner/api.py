@@ -3,7 +3,7 @@
 Routes (JSON in, JSON out), all backed by :mod:`chartcleaner.service`:
 
 * ``GET  /api/v1/health`` — ``{"ok": true, "version": ...}`` (no chart data, no token)
-* ``POST /api/v1/clean`` — ``{"text", "preset"?, "format"?, "delta"?}``
+* ``POST /api/v1/clean`` — ``{"text", "preset"?, "format"?, "delta"?, "wrap"?}``
 * ``POST /api/v1/abbreviate`` / ``/api/v1/expand`` — ``{"text", "preset"?}``
 * ``POST /api/v1/prompt`` — ``{"text", "template", "preset"?}``
 
@@ -114,7 +114,8 @@ def register(app) -> None:
     async def api_clean(request: Request):
         return await run(request, ("text",), lambda d: service.clean(
             d["text"], preset=d.get("preset") or None, fmt=d.get("format") or "text",
-            delta=bool(d.get("delta")), source="api:rest"))
+            delta=bool(d.get("delta")), wrap=d["wrap"] if isinstance(d.get("wrap"), bool) else None,
+            source="api:rest"))
 
     @app.post("/api/v1/abbreviate")
     async def api_abbreviate(request: Request):

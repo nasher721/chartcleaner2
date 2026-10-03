@@ -84,3 +84,9 @@ def test_token_file_is_private_and_rotates(client):
     first = api.get_token()
     assert oct(os.stat(api.token_path()).st_mode & 0o777) == "0o600"
     assert api.rotate_token() != first == first
+
+
+def test_clean_can_skip_the_wrapper(client):
+    wrapped = client.post("/api/v1/clean", json={"text": TEXT}).json()["text"]
+    bare = client.post("/api/v1/clean", json={"text": TEXT, "wrap": False}).json()["text"]
+    assert wrapped.startswith("<patient_chart>") and not bare.startswith("<")

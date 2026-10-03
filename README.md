@@ -59,9 +59,18 @@ clean-chart.cmd               # Windows
 ./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
 ./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
 ./clean-chart --mode expand   # spell abbreviations out (or --mode abbreviations to shorten only)
+./clean-chart --stdin --stdout --mode abbreviations   # pipe text through (scripts, Quick Actions)
+./clean-chart --prompt "Progress note"   # clean, then wrap in a prompt template
+./clean-chart --watch-clipboard          # clean Epic text as soon as it is copied
+./clean-chart-mcp                        # MCP server for Claude Desktop / Claude Code
 ```
 
 The CLI prints the same per-stage statistics as the app.
+
+**Using it from other apps** — keyboard shortcuts on selected text (macOS Quick
+Actions, Windows AutoHotkey), the clipboard watcher, Claude Desktop / Claude
+Code via MCP, a local API, a browser extension for Epic web, text expanders,
+Word/Markdown/Epic-safe exports: see [docs/integrations.md](docs/integrations.md).
 
 ---
 
