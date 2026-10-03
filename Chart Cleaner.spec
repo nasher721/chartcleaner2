@@ -20,6 +20,7 @@ if product == 'app':
     # Never bundle mutable configuration, token maps, exports, or custom scripts.
     datas = [(str(ROOT / 'chartcleaner/default_config.json'), 'chartcleaner'),
              (str(ROOT / 'chartcleaner/medical_abbreviations.csv'), 'chartcleaner'),
+             (str(ROOT / 'chartcleaner/abbreviation_do_not_use.json'), 'chartcleaner'),
              (str(ROOT / 'chartcleaner/packs'), 'chartcleaner/packs')]
     for package in ('nicegui', 'spacy', 'en_core_web_sm', 'thinc', 'srsly', 'catalogue',
                     'wasabi', 'weasel', 'preshed', 'murmurhash', 'cymem', 'blis', 'regex',

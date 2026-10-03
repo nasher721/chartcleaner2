@@ -57,9 +57,20 @@ clean-chart.cmd               # Windows
 ./clean-chart --evaluate 50   # synthetic benchmark: recall report card for current rules
 ./clean-chart --watch ~/Inbox/charts   # auto-clean every file dropped in the folder
 ./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
+./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
+./clean-chart --mode expand   # spell abbreviations out (or --mode abbreviations to shorten only)
+./clean-chart --stdin --stdout --mode abbreviations   # pipe text through (scripts, Quick Actions)
+./clean-chart --prompt "Progress note"   # clean, then wrap in a prompt template
+./clean-chart --watch-clipboard          # clean Epic text as soon as it is copied
+./clean-chart-mcp                        # MCP server for Claude Desktop / Claude Code
 ```
 
 The CLI prints the same per-stage statistics as the app.
+
+**Using it from other apps** — keyboard shortcuts on selected text (macOS Quick
+Actions, Windows AutoHotkey), the clipboard watcher, Claude Desktop / Claude
+Code via MCP, a local API, a browser extension for Epic web, text expanders,
+Word/Markdown/Epic-safe exports: see [docs/integrations.md](docs/integrations.md).
 
 ---
 
@@ -78,6 +89,63 @@ The dictionary retains all 1,068 supplied rows. Matching is case-insensitive and
 uses whole terms, longest first, in a single pass. When multiple abbreviations
 share a full term, the first CSV entry is used. The three entries marked
 “Not expanded in source” are retained for reference but do not trigger replacements.
+
+**Abbreviation safety.** Abbreviations on The Joint Commission's Do Not Use list
+and ISMP's dose/frequency/route error-prone list are blocked when used in their
+risky meaning (units → U, subcutaneous → SQ, at bedtime → HS, discontinue → d/c,
+cubic centimeters → cc…), including inside compounds like U/hr. The same letters
+in a safe meaning still apply (IJ for internal jugular, AS for aortic stenosis).
+Blocked bundled rows are not applied; **My text rules → Abbreviations → Allow
+anyway** re-enables one after an explicit "I understand" confirmation, and
+**Safety report** lists every flagged rule. The lists live in
+`chartcleaner/abbreviation_do_not_use.json`.
+
+**Adding abbreviations.** On the Clean page tick **Abbreviate mode** and highlight
+a term: the dialog suggests a short form (the dictionary's, else initials), shows
+how many places it would change, and warns about Do Not Use or shared
+abbreviations. The Abbreviations tab shows the same live preview while you type.
+
+**Expanding.** The Clean page's **Expand abbreviations** mode (or
+`--mode expand`) spells abbreviations out for colleagues, patients or the AI
+tools. Abbreviations with several meanings (MS, NAD, RA…) are left as written
+and listed; **Choose meanings** saves the one you use. One-letter and
+plain-lowercase short forms (a, x, reg), ALL-CAPS lines and `[[Tn]]` tokens are
+never touched.
+
+**Organizing.** On **My text rules → Abbreviations**:
+- **Where to abbreviate** limits abbreviations to (or keeps them out of) chosen
+  sections, e.g. never inside Medications.
+- **Suggest from this chart** proposes abbreviations for long phrases that keep
+  repeating (copied-forward lines count once; names are skipped).
+- **Specialty packs** add Neuro ICU, Critical Care, Cardiology, Medicine or
+  Nursing abbreviations; Remove takes out only what the pack added.
+- **Import / export CSV** moves your abbreviations to and from a spreadsheet.
+- After a clean, the result's **Abbreviations** tab lists every abbreviation
+  applied, with **Change** and **Disable** to fix one and clean again.
+
+**Text expanders.** **Export for text expander** (or `--export-abbreviations`)
+writes your dictionary for macOS Text Replacements, Espanso, TextExpander or
+AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
+
+**Condensing stages (all off by default — turn them on under Pipeline & Rules):**
+- *Lab table compaction* — lab tables and Recent Labs grids → `BMP: Na 132 (L), K 4.1, …`
+  (or fishbones, trends, latest only).
+- *Medication list cleanup* — `atorvastatin 40 mg PO daily`, without brand names,
+  dispense/refill, dates or providers; held/discontinued marked; doses never dropped.
+- *Vitals & I/O summary* — flowsheet rows → ranges and last values; I/O → one line.
+- *Imaging: keep impression* — radiology reports trimmed to title + impression.
+- *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
+Each rewrites a block only when it understands every line of it.
+
+**Reviewing a clean.** Besides Result, Diff and stages, the Clean page shows
+**Removed** (everything the line/block/learned rules deleted, with *Never
+remove this*), **Abbreviations**, and **Changes over time** for multi-day
+charts (only sentences that are new or changed after the first note — a
+fixed copy-forward view that never drops a new sentence or number). The note
+type is detected; Settings → *Note types* can clean each type with its own
+preset. Statistics → *Rule health* lists rules that never match or touch too
+much. Settings → *Check my learned rules* confirms highlighted rules still do
+what they were taught.
 
 Stages run top-to-bottom (you can reorder them in the app):
 

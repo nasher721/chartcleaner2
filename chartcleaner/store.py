@@ -6,6 +6,7 @@ anywhere, and nothing leaves this machine.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -33,7 +34,10 @@ def _resolve_base_dir() -> Path:
 BASE_DIR = _resolve_base_dir()
 MUTABLE_DIR = paths.user_data_dir() if paths.is_frozen() else BASE_DIR
 CONFIG_PATH = MUTABLE_DIR / "config.json"
-DATA_DIR = MUTABLE_DIR / "data"
+# CHARTCLEANER_DATA_DIR moves run history, backups, exports and tokens elsewhere
+# (used by tests that start the app or MCP server as a separate process).
+DATA_DIR = Path(os.environ["CHARTCLEANER_DATA_DIR"]) if os.environ.get("CHARTCLEANER_DATA_DIR") \
+    else MUTABLE_DIR / "data"
 STATS_FILE = DATA_DIR / "stats.jsonl"
 PREFS_FILE = DATA_DIR / "prefs.json"
 PRESETS_DIR = MUTABLE_DIR / "presets"

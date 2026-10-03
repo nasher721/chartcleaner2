@@ -51,3 +51,16 @@ def test_run_batch_empty_file_is_ok(tmp_path):
 def test_batch_result_defaults():
     r = BatchResult(name="x.txt", path="/x.txt", status="error", error="boom")
     assert r.chars_after == 0 and r.findings == 0 and r.cleaned == ""
+
+
+def test_run_batch_delta_view(tmp_path):
+    cfg = load_default_config()
+    cfg.setdefault("nlp_redaction", {})["enabled"] = False
+    note = "Patient stable overnight with no new complaints today."
+    path = tmp_path / "chart.txt"
+    path.write_text(f"Note Date: 10/01/2026\n{note}\n\nNote Date: 10/02/2026\n{note}\nNew fever 38.6.\n",
+                    encoding="utf-8")
+    plain, = run_batch([path], cfg)
+    delta, = run_batch([path], cfg, delta=True)
+    assert "Longitudinal Clinical Updates" in delta.cleaned and "38.6" in delta.cleaned
+    assert "Longitudinal Clinical Updates" not in plain.cleaned

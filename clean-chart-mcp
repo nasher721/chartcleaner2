@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Chart Cleaner MCP server (stdio). Add it to Claude Code with:
+#   claude mcp add chart-cleaner -- "/path/to/this/folder/clean-chart-mcp"
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="${ROOT}/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  echo "No virtual environment found. Run ./install.sh in ${ROOT} first." >&2
+  exit 1
+fi
+cd "$ROOT"
+exec "$PY" -m chartcleaner.mcp_server

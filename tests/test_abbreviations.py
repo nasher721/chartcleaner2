@@ -1,5 +1,6 @@
 import csv
 
+from chartcleaner.abbreviation_safety import is_blocked
 from chartcleaner.abbreviations import SOURCE_PATH
 from chartcleaner.abbreviations import SOURCE_ROW_COUNT, abbreviate
 
@@ -62,9 +63,12 @@ def test_every_defined_source_cell_has_a_mapping():
             qualifier = ""
             if expanded.casefold().endswith(" (likely)"):
                 qualifier = " (likely)"
-            expected.setdefault(expanded.casefold(), row["Abbreviation"].strip() + qualifier)
+            abbreviation = row["Abbreviation"].strip()
+            # Do Not Use rows are never applied from the bundled list.
+            mapped = None if is_blocked(abbreviation, expanded) else abbreviation + qualifier
+            expected.setdefault(expanded.casefold(), mapped)
     for expanded, abbreviation in expected.items():
-        assert abbreviate(expanded)[0] == abbreviation
+        assert abbreviate(expanded)[0] == (abbreviation or expanded)
 
 
 def test_user_override_disable_and_boundary_matching():

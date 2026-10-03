@@ -43,6 +43,13 @@ KNOWN_CONFIG_KEYS = frozenset(
         "section_filter",
         "caps_normalize",
         "line_length",
+        "imaging_impression",
+        "hospital_day",
+        "lab_compaction",
+        "med_normalize",
+        "vitals_summary",
+        "note_profiles",
+        "prompt_templates",
         "stage_options",
         "learned_rules",
         "abbreviations",
@@ -102,6 +109,20 @@ class ConfigValidator:
         if not isinstance(disabled, list) or not all(
                 isinstance(term, str) and term.strip() for term in disabled):
             self.errors.append("abbreviations.disabled: must be a list of non-empty terms")
+        if "scope" in group:
+            scope = group["scope"]
+            if (not isinstance(scope, dict) or scope.get("mode") not in ("all", "only", "except")
+                    or not isinstance(scope.get("sections", []), list)
+                    or not all(isinstance(x, str) for x in scope.get("sections", []))):
+                self.errors.append('abbreviations.scope: must be {"mode": "all"|"only"|"except", '
+                                   '"sections": [names]}')
+        prefer = group.get("expand_prefer", {})
+        if not isinstance(prefer, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) and v.strip() for k, v in prefer.items()):
+            self.errors.append("abbreviations.expand_prefer: must map abbreviations to meanings")
+        rejected = group.get("rejected_suggestions", [])
+        if not isinstance(rejected, list) or not all(isinstance(x, str) for x in rejected):
+            self.errors.append("abbreviations.rejected_suggestions: must be a list of phrases")
         custom = group.get("custom", [])
         if not isinstance(custom, list):
             self.errors.append("abbreviations.custom: must be a list")
@@ -117,6 +138,10 @@ class ConfigValidator:
                     self.errors.append(f"{label}.{key}: must be non-empty text")
             if not isinstance(entry.get("enabled", True), bool):
                 self.errors.append(f"{label}.enabled: must be true/false")
+            if not isinstance(entry.get("acknowledged", False), bool):
+                self.errors.append(f"{label}.acknowledged: must be true/false")
+            if "pack" in entry and not isinstance(entry["pack"], str):
+                self.errors.append(f"{label}.pack: must be text")
             term = entry.get("term")
             if isinstance(term, str):
                 key = term.strip().casefold()
@@ -231,6 +256,92 @@ class ConfigValidator:
         self._validate_section_options()
         self._validate_caps_options()
         self._validate_line_length_options()
+        self._validate_imaging_options()
+        self._validate_hospital_day_options()
+        self._validate_compactor_options()
+        self._validate_note_profiles()
+        self._validate_prompt_templates()
+
+    def _validate_prompt_templates(self) -> None:
+        templates = self.cfg.get("prompt_templates")
+        if templates is None:
+            return
+        if not isinstance(templates, list):
+            self.errors.append("prompt_templates: must be a list")
+            return
+        for i, t in enumerate(templates):
+            if not (isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"].strip()
+                    and isinstance(t.get("template"), str)):
+                self.errors.append(f"prompt_templates[{i}]: needs a name and a template")
+            elif t.get("format", "text") not in ("text", "markdown", "xml"):
+                self.errors.append(f"prompt_templates[{i}].format: must be text, markdown or xml")
+
+    def _validate_note_profiles(self) -> None:
+        profiles = self.cfg.get("note_profiles")
+        if profiles is None:
+            return
+        detect = profiles.get("detect", {}) if isinstance(profiles, dict) else None
+        if not isinstance(detect, dict) or not all(
+                isinstance(k, str) and isinstance(v, list) for k, v in detect.items()):
+            self.errors.append("note_profiles.detect: must map note types to lists of phrases")
+            return
+        for kind, phrases in detect.items():
+            for i, phrase in enumerate(phrases):
+                self._check_regex(phrase, f"note_profiles.detect.{kind}[{i}]", re.IGNORECASE)
+
+    def _validate_compactor_options(self) -> None:
+        labs = self._check_option_group(
+            "lab_compaction", self.default_options["lab_compaction"],
+            {"enabled": ((bool,), "true/false"), "style": ((str,), "line/fishbone"),
+             "latest_only": ((bool,), "true/false"), "keep_reference_ranges": ((bool,), "true/false"),
+             "aliases": ((dict,), "an object of lab name -> short name")})
+        if labs is not None and labs.get("style", "line") not in ("line", "fishbone"):
+            self.errors.append('lab_compaction.style: must be "line" or "fishbone"')
+        meds = self._check_option_group(
+            "med_normalize", self.default_options["med_normalize"],
+            {"enabled": ((bool,), "true/false"), "drop_fields": ((list,), "a list of regex strings"),
+             "route_map": ((dict,), "an object of phrase -> route"),
+             "frequency_map": ((dict,), "an object of phrase -> frequency")})
+        if meds is not None:
+            for i, pattern in enumerate(meds.get("drop_fields") or []):
+                self._check_regex(pattern, f"med_normalize.drop_fields[{i}]", re.IGNORECASE)
+            from .abbreviation_safety import is_blocked
+            for key in ("route_map", "frequency_map"):
+                for phrase, short in (meds.get(key) or {}).items():
+                    if isinstance(short, str) and is_blocked(short, str(phrase)):
+                        self.errors.append(f"med_normalize.{key}: “{short}” for “{phrase}” is a "
+                                           "Do Not Use abbreviation")
+        self._check_option_group("vitals_summary", self.default_options["vitals_summary"],
+                                 {"enabled": ((bool,), "true/false")})
+
+    def _validate_imaging_options(self) -> None:
+        from .compactors.imaging import KEEPABLE
+        im = self._check_option_group(
+            "imaging_impression", self.default_options["imaging_impression"],
+            {"enabled": ((bool,), "true/false"), "keep": ((list,), "a list of section names")})
+        if im is not None and isinstance(im.get("keep"), list):
+            for name in im["keep"]:
+                if name not in KEEPABLE:
+                    self.errors.append(f"imaging_impression.keep: unknown section {name!r} "
+                                       f"(use {', '.join(KEEPABLE)})")
+
+    def _validate_hospital_day_options(self) -> None:
+        from datetime import date
+        hd = self._check_option_group(
+            "hospital_day", self.default_options["hospital_day"],
+            {"enabled": ((bool,), "true/false"), "admit_date": ((str,), '"auto" or YYYY-MM-DD'),
+             "surgery_dates": ((list,), "a list of YYYY-MM-DD dates"), "style": ((str,), "append/replace")})
+        if hd is None:
+            return
+        dates = [hd.get("admit_date")] if hd.get("admit_date") not in (None, "auto") else []
+        dates += hd.get("surgery_dates") if isinstance(hd.get("surgery_dates"), list) else []
+        for value in dates:
+            try:
+                date.fromisoformat(str(value))
+            except ValueError:
+                self.errors.append(f"hospital_day: {value!r} is not a YYYY-MM-DD date")
+        if hd.get("style", "append") not in ("append", "replace"):
+            self.errors.append('hospital_day.style: must be "append" or "replace"')
 
     def _validate_whitespace_options(self) -> None:
         defaults = self.default_options["whitespace"]
@@ -351,6 +462,9 @@ class ConfigValidator:
                 self.errors.append(f"stage_options.{sid}.case_sensitive: must be true/false")
             if "enabled" in opts and not isinstance(opts["enabled"], bool):
                 self.errors.append(f"stage_options.{sid}.enabled: must be true/false")
+            if "exceptions" in opts and not (isinstance(opts["exceptions"], list) and all(
+                    isinstance(x, str) for x in opts["exceptions"])):
+                self.errors.append(f"stage_options.{sid}.exceptions: must be a list of text")
 
     def _validate_deduplication(self) -> None:
         self._validate_duplicate_notes()

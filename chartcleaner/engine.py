@@ -25,6 +25,11 @@ from .custom_rules import (
     list_custom_rules,
     load_custom_module,
 )
+from .compactors import hospital_day as hospital_day_compactor
+from .compactors import imaging as imaging_compactor
+from .compactors import labs as labs_compactor
+from .compactors import meds as meds_compactor
+from .compactors import vitals as vitals_compactor
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
@@ -40,6 +45,7 @@ from .stages import (
     NlpUnavailable,
     RUNNERS,
     get_stage_options,
+    rule_id,
 )
 
 __all__ = [
@@ -47,9 +53,12 @@ __all__ = [
     "NlpUnavailable",
     "CustomRuleError",
     "StageStat",
+    "STAGE_ANCHORS",
+    "rule_id",
     "RunResult",
     "CleanContext",
     "Pipeline",
+    "PIPELINE_MODES",
     "clean_text",
     "load_config",
     "save_config",
@@ -81,8 +90,13 @@ BUILTIN_STAGE_IDS = [
     "literal_replacements",
     "learned_rules",
     "unicode_normalize",
+    "hospital_day",
     "timestamps",
     "sections",
+    "imaging_impression",
+    "lab_compaction",
+    "med_normalize",
+    "vitals_summary",
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
@@ -92,6 +106,17 @@ BUILTIN_STAGE_IDS = [
     "medical_abbreviations",
     "line_length",
 ]
+
+# Where a builtin goes when a saved ``stage_order`` predates it: right after
+# its anchor stage instead of the end. Only stages added after this mechanism
+# are listed, so older saved orders keep producing the output they always did.
+STAGE_ANCHORS: dict[str, str] = {
+    "hospital_day": "unicode_normalize",    # must label dates before timestamps can strip them
+    "imaging_impression": "sections",
+    "lab_compaction": "imaging_impression",
+    "med_normalize": "lab_compaction",
+    "vitals_summary": "med_normalize",
+}
 
 STAGE_LABELS = {
     "metadata_lines": "EMR line metadata",
@@ -105,6 +130,11 @@ STAGE_LABELS = {
     "learned_rules": "Learned rules (highlight → rule)",
     "unicode_normalize": "Unicode normalization",
     "timestamps": "Timestamp removal",
+    "hospital_day": "Hospital day labels",
+    "imaging_impression": "Imaging: keep impression",
+    "lab_compaction": "Lab table compaction",
+    "med_normalize": "Medication list cleanup",
+    "vitals_summary": "Vitals & I/O summary",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -128,6 +158,11 @@ STAGE_KINDS = {
     "learned_rules": "learned",
     "unicode_normalize": "unicode",
     "timestamps": "timestamps",
+    "hospital_day": "hospital_day",
+    "imaging_impression": "imaging",
+    "lab_compaction": "labs",
+    "med_normalize": "meds",
+    "vitals_summary": "vitals",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -203,6 +238,11 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "section_filter": DEFAULT_SECTIONS,
         "caps_normalize": DEFAULT_CAPS,
         "line_length": DEFAULT_LINE_LENGTH,
+        "imaging_impression": imaging_compactor.DEFAULTS,
+        "hospital_day": hospital_day_compactor.DEFAULTS,
+        "lab_compaction": labs_compactor.DEFAULTS,
+        "med_normalize": meds_compactor.DEFAULTS,
+        "vitals_summary": vitals_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
     return validator.validate()
@@ -285,9 +325,8 @@ class RunResult:
 
     def to_history_dict(self, source: str) -> dict:
         def slim_details(details: dict) -> dict:
-            if "token_map" in details:
-                details = {k: v for k, v in details.items() if k != "token_map"}
-            return details
+            # Token maps and tracked changes hold chart text; history never does.
+            return {k: v for k, v in details.items() if k not in {"token_map", "changes"}}
 
         return {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -312,8 +351,10 @@ class RunResult:
 class CleanContext:
     """Handed to custom script rules: lets them report counts and messages."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, *, track_changes: bool = False):
         self._config = config
+        # When True, built-in stages record each change in details["changes"].
+        self.track_changes = track_changes
         self.counters: dict[str, int] = {}
         self.logs: list[str] = []
 
@@ -344,12 +385,16 @@ class StageSpec:
 # Pipeline Implementation
 # ---------------------------------------------------------------------------
 
+# "clean" runs the full pipeline; the other two run a single abbreviation pass.
+PIPELINE_MODES = ("clean", "abbreviations", "expand")
+
+
 class Pipeline:
     """The ordered cleaning pipeline built from a config dict."""
 
     def __init__(self, config: dict, custom_dir: str | Path | None = None, *,
                  mode: str = "clean"):
-        if mode not in {"clean", "abbreviations"}:
+        if mode not in PIPELINE_MODES:
             raise ValueError(f"Unknown cleaning mode: {mode}")
         self.mode = mode
         missing = [k for k in REQUIRED_CONFIG_KEYS if k not in config] if mode == "clean" else []
@@ -382,6 +427,8 @@ class Pipeline:
         if self.mode == "abbreviations":
             return [StageSpec("medical_abbreviations", STAGE_LABELS["medical_abbreviations"],
                               "abbreviations", True)]
+        if self.mode == "expand":
+            return [StageSpec("expand_abbreviations", "Expand abbreviations", "expand", True)]
         customs = list_custom_rules(self.custom_dir)
         by_name = {c["name"]: c for c in customs}
         order = self.config.get("stage_order") or list(BUILTIN_STAGE_IDS)
@@ -394,7 +441,11 @@ class Pipeline:
                 resolved.append(sid)
         for sid in BUILTIN_STAGE_IDS:
             if sid not in resolved and sid != "medical_abbreviations":
-                resolved.append(sid)
+                anchor = STAGE_ANCHORS.get(sid)
+                if anchor in resolved:
+                    resolved.insert(resolved.index(anchor) + 1, sid)
+                else:
+                    resolved.append(sid)
         for c in customs:
             sid = f"custom:{c['name']}"
             if sid not in resolved:
@@ -436,17 +487,22 @@ class Pipeline:
 
     # -- execution -----------------------------------------------------------
 
-    def run(self, text: str, wrap: bool | None = None) -> RunResult:
-        """Execute all pipeline stages in sequence and return the RunResult."""
+    def run(self, text: str, wrap: bool | None = None, *,
+            track_changes: bool = False) -> RunResult:
+        """Execute all pipeline stages in sequence and return the RunResult.
+
+        ``track_changes`` records each regex/abbreviation change in the
+        stage's ``details["changes"]`` (in memory only; never in history).
+        """
         started = time.perf_counter()
-        ctx = CleanContext(self.config)
+        ctx = CleanContext(self.config, track_changes=track_changes)
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
 
         text, stage_stats, warnings = self._execute_stages(text, ctx)
         text, wrapped, wrapper_stat = self._apply_wrapper(
-            text, False if self.mode == "abbreviations" else wrap)
+            text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
 
@@ -527,6 +583,8 @@ def clean_text(
     wrap: bool | None = None,
     *,
     mode: str = "clean",
+    track_changes: bool = False,
 ) -> RunResult:
     """One-shot convenience: build a pipeline and run it."""
-    return Pipeline(config, custom_dir=custom_dir, mode=mode).run(text, wrap=wrap)
+    return Pipeline(config, custom_dir=custom_dir, mode=mode).run(
+        text, wrap=wrap, track_changes=track_changes)

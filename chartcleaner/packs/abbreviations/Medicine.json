@@ -1,0 +1,63 @@
+{
+  "_pack": {
+    "name": "Medicine",
+    "description": "General internal medicine and hospital medicine.",
+    "version": "1.0"
+  },
+  "abbreviations": {
+    "custom": [
+      {
+        "term": "community-acquired pneumonia",
+        "replacement": "CAP"
+      },
+      {
+        "term": "hospital-acquired pneumonia",
+        "replacement": "HAP"
+      },
+      {
+        "term": "gastrointestinal bleed",
+        "replacement": "GIB"
+      },
+      {
+        "term": "upper gastrointestinal bleed",
+        "replacement": "UGIB"
+      },
+      {
+        "term": "lower gastrointestinal bleed",
+        "replacement": "LGIB"
+      },
+      {
+        "term": "type 1 diabetes mellitus",
+        "replacement": "T1DM"
+      },
+      {
+        "term": "hepatic encephalopathy",
+        "replacement": "HE"
+      },
+      {
+        "term": "nothing by mouth",
+        "replacement": "NPO"
+      },
+      {
+        "term": "chest X-ray",
+        "replacement": "CXR"
+      },
+      {
+        "term": "nausea and vomiting",
+        "replacement": "N/V"
+      },
+      {
+        "term": "against medical advice",
+        "replacement": "AMA"
+      },
+      {
+        "term": "oxygen saturation",
+        "replacement": "SpO2"
+      },
+      {
+        "term": "deep vein thrombosis prophylaxis",
+        "replacement": "DVT ppx"
+      }
+    ]
+  }
+}

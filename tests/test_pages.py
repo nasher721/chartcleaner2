@@ -50,7 +50,7 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
         assert CLEAN_STATE['audit'] is None
         assert [s.id for s in CLEAN_STATE['result'].stages] == ['medical_abbreviations']
         await user.should_see('Copy result')
-        await user.should_see('Download .txt')
+        await user.should_see('Text (.txt)')
         await user.should_not_see('Local AI summary')
 
         with user.client:
@@ -117,7 +117,7 @@ async def test_clean_renders_with_available_or_saved_models(
         user.find(marker='run-clean').click()
         await user.should_see('Ask this chart', retries=50)
         await user.should_see('Copy result')
-        await user.should_see('Download .txt')
+        await user.should_see('Text (.txt)')
         await user.should_not_see('Cleaning failed')
         model_select = next(e for e in user.find(ui.select).elements if e.label == 'Model')
         assert model_select.options == expected_options
@@ -267,3 +267,77 @@ async def test_update_confirmation_requires_confirm_click(user: User):
     user.find('Install update').click()
     user.find('Confirm').click()
     assert events == ['handoff']
+
+
+def test_every_page_route_points_at_its_page_function():
+    """A helper inserted under an @ui.page decorator would steal the route."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(cc_app.__file__).read_text(encoding="utf-8"))
+    routes = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                        and dec.func.attr == "page"):
+                    routes[node.name] = dec.args[0].value
+    assert routes == {
+        "clean_page": "/", "batch_page": "/batch", "text_rules_page": "/rules",
+        "pipeline_page": "/pipeline", "stats_page": "/stats", "scripts_page": "/scripts",
+        "settings_page": "/settings",
+    }
+
+
+async def test_expand_mode_and_abbreviations_tab_disable(user: User, monkeypatch, tmp_path):
+    from chartcleaner import store
+    from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
+    from chartcleaner.engine import load_config, load_default_config, save_config
+    from nicegui import ui
+
+    cfg = load_default_config()
+    cfg.setdefault('nlp_redaction', {})['enabled'] = False
+    cfg['audit'] = {'enabled': False}
+    config_path = tmp_path / 'config.json'
+    save_config(cfg, config_path)
+    monkeypatch.setattr(store, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(store, 'append_run', lambda _record: None)
+    monkeypatch.setattr(store, 'append_audit_hits', lambda _hits: None)
+    monkeypatch.setattr(store, 'load_prefs', lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
+    # The fixture ran app.py before this test started, so its pages captured the
+    # real config path; point the running pages at the temp config before writing.
+    from nicegui import Client
+    page = next(fn for fn, path in Client.page_routes.items() if path == '/')
+    monkeypatch.setitem(page.__globals__, 'CONFIG_PATH', config_path)
+    before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
+    CLEAN_STATE.update(input='Pt w/ HTN, MS stable', mode='clean', result=None, result_text='', audit=None)
+    try:
+        await user.open('/')
+        with user.client:
+            next(iter(user.find(ui.toggle).elements)).set_value('expand')
+        user.find(marker='run-clean').click()
+        await user.should_see('Abbreviations expanded', retries=50)
+        assert CLEAN_STATE['result_text'] == 'Pt with hypertension, MS stable'
+        await user.should_see('Choose meanings')
+
+        with user.client:
+            next(iter(user.find(ui.toggle).elements)).set_value('abbreviations')
+        with user.client:
+            cc_app.CLEAN_STATE['input'] = 'Hypertension noted'
+        await user.open('/')
+        user.find(marker='run-clean').click()
+        await user.should_see('Abbreviations (1)', retries=50)
+        assert CLEAN_STATE['result_text'] == 'HTN noted'
+        user.find(marker='abbr-disable').click()
+        import asyncio
+        for _ in range(100):  # the handler saves, then cleans again
+            if CLEAN_STATE['result_text'] == 'Hypertension noted':
+                break
+            await asyncio.sleep(0.05)
+        assert load_config(config_path)['abbreviations']['disabled'] == ['Hypertension']
+        assert CLEAN_STATE['result_text'] == 'Hypertension noted'
+    finally:
+        CLEAN_STATE.clear()
+        CLEAN_STATE.update(before)
+        AUTO_LAST.clear()
+        AUTO_LAST.update(auto_before)

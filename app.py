@@ -65,7 +65,17 @@ from chartcleaner.engine import (
 from chartcleaner.ingest import IngestError, converters_status, load_file, supported_extensions
 from chartcleaner import rulepacks
 from chartcleaner import tokens as tokens_mod
+from chartcleaner.abbreviation_editor import save_with_safety as save_abbreviation_with_safety
+from chartcleaner.abbreviation_editor import show_issues as show_abbreviation_issues
+from chartcleaner.abbreviation_safety import check as abbreviation_check
 from chartcleaner.abbreviations import abbreviate
+from chartcleaner.abbreviations import expand as expand_abbreviations
+from chartcleaner.abbreviations import lookup as lookup_abbreviation
+from chartcleaner.abbreviations import meanings as abbreviation_meanings
+from chartcleaner.abbreviations import normalize_settings as normalize_abbreviation_settings
+from chartcleaner.abbreviations import preview as abbreviation_preview
+from chartcleaner.abbreviations import suggest as suggest_abbreviation
+from chartcleaner.abbreviations import with_custom as abbreviation_with_custom
 from chartcleaner.highlight_rules import SELECTION_HANDLER, make_rule, replace_selection
 from chartcleaner import watcher as watcher_mod
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TEST
@@ -75,6 +85,16 @@ from chartcleaner.evaluate import load_last_evaluation, save_evaluation
 from chartcleaner.local_llm import LocalLlmClient
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
+from chartcleaner.delta_engine import extract_note_deltas
+from chartcleaner import api as local_api
+from chartcleaner import rule_examples
+from chartcleaner.clipboard_watcher import ClipboardWatcher
+from chartcleaner.exporters import save_to_vault, to_docx, to_markdown, to_smartphrase
+from chartcleaner.prompt_templates import render as render_prompt
+from chartcleaner.prompt_templates import templates as prompt_templates
+from chartcleaner.rule_health import report as rule_health_report
+from chartcleaner.note_type import LABELS as NOTE_TYPE_LABELS
+from chartcleaner.note_type import detect as detect_note_type
 from chartcleaner.summarizer import (
     LlmUnavailableError,
     NoModelError,
@@ -247,6 +267,14 @@ async def _stage_and_handoff(manifest, status, notify) -> None:
 
 def esc(s: str) -> str:
     return html_mod.escape(s)
+
+
+def remember_rule_example(pair: list[str], text: str, cfg: dict) -> None:
+    """Keep what a new learned rule was taught to do (see Settings → Check my learned rules)."""
+    try:
+        rule_examples.record(pair, text, cfg)
+    except Exception:
+        pass  # an example is a safety net; never block saving the rule itself
 
 
 def save_config_with_backup(cfg: dict) -> None:
@@ -449,21 +477,37 @@ async def clean_page():
 
     async def do_clean_core(text: str, source: str) -> None:
         mode = mode_sel.value
+        note_info: dict = {}
         set_running(True)
         try:
             def work():
                 cfg = load_config(CONFIG_PATH)
-                if mode == "abbreviations":
-                    return Pipeline(cfg, mode=mode).run(text), None
-                result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text)
+                if mode != "clean":
+                    return Pipeline(cfg, mode=mode).run(text, track_changes=True), None
+                found = detect_note_type(text, cfg)
+                note_info.update(label=found.label, preset=None)
+                preset = (PREFS.get("note_presets") or {}).get(found.note_type or "")
+                if PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
+                    # This run only: applying a preset for real would overwrite config.json.
+                    cfg = store.load_preset(preset)
+                    note_info["preset"] = preset
+                # Tracked changes stay in memory for the inspect tabs; history drops them.
+                result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text, track_changes=True)
                 return result, run_audit(result.text, cfg)
 
+            def delta_work(cleaned: str):
+                try:
+                    return extract_note_deltas(cleaned)
+                except Exception:
+                    return None  # the delta view is a bonus; never fail a clean over it
+
             result, audit = await run.io_bound(work)
+            delta = await run.io_bound(delta_work, result.text) if mode == "clean" else None
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[], result_mode=mode)
+                               summary=None, qa=[], result_mode=mode, delta=delta, note=note_info)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
-                f"{source}:abbreviations" if mode == "abbreviations" else source))
+                f"{source}:{mode}" if mode != "clean" else source))
             # persist reversible-token maps produced by the tokenize stage
             try:
                 for st in result.stages:
@@ -492,7 +536,7 @@ async def clean_page():
             ui.notify("Nothing to clean — paste some text first.", type="warning")
             return
         if len(text) > 2_000_000:
-            if mode_sel.value == "abbreviations":
+            if mode_sel.value != "clean":
                 ui.notify("Input over 2M characters; split it into smaller sections.", type="warning")
                 return
             ui.notify("Input over 2M characters; truncated to 2M.", type="warning")
@@ -507,9 +551,13 @@ async def clean_page():
         if not result:
             return
         with results_col:
-            abbreviations_only = CLEAN_STATE.get("result_mode") == "abbreviations"
-            if abbreviations_only:
+            result_mode = CLEAN_STATE.get("result_mode")
+            single_pass = result_mode in ("abbreviations", "expand")
+            if result_mode == "abbreviations":
                 ui.label("Abbreviations only — other text and formatting preserved. "
+                         "PHI has not been removed.").classes("text-sm")
+            elif result_mode == "expand":
+                ui.label("Abbreviations expanded — other text and formatting preserved. "
                          "PHI has not been removed.").classes("text-sm")
             phi = result.phi_counts()
             chips = ui.row().classes("gap-3 flex-wrap items-stretch")
@@ -517,11 +565,20 @@ async def clean_page():
             stat_chip(chips, "reduction", f"{result.reduction:+.1f}%",
                       "green" if result.reduction >= 0 else "orange")
             stat_chip(chips, "words", f"{result.words_before:,} → {result.words_after:,}", "indigo")
-            if abbreviations_only:
+            if result_mode == "abbreviations":
                 stat_chip(chips, "abbreviations applied", str(sum(s.matches for s in result.stages)))
+            elif result_mode == "expand":
+                stat_chip(chips, "abbreviations expanded", str(sum(s.matches for s in result.stages)))
+                ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
+                if ambiguous:
+                    stat_chip(chips, "ambiguous, left as written", str(sum(ambiguous.values())), "orange")
             else:
                 stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
             stat_chip(chips, "elapsed", f"{result.duration_ms:.0f} ms", "blue-grey")
+            note = CLEAN_STATE.get("note") or {}
+            if note.get("label") and result_mode == "clean":
+                stat_chip(chips, "note type" + (f" · preset {note['preset']}" if note.get("preset") else ""),
+                          note["label"], "teal")
 
             # ---- post-run review: what survived and deserves a second look ----
             audit = CLEAN_STATE.get("audit")
@@ -560,21 +617,56 @@ async def clean_page():
                 else:
                     ui.label("✓ Audit: no leftover PHI patterns flagged.").classes("text-xs text-green-600")
 
+            abbr_changes = next((st.details.get("changes") or [] for st in result.stages
+                                 if st.id == "medical_abbreviations"), [])
             with ui.tabs() as tabs:
                 t_result = ui.tab("Result")
                 t_diff = ui.tab("Side-by-side diff")
                 t_stages = ui.tab("What each stage did")
+                t_abbr = ui.tab(f"Abbreviations ({len(abbr_changes)})") if abbr_changes else None
+                removed = removed_groups(result)
+                t_removed = (ui.tab(f"Removed ({sum(len(g['items']) for g in removed)})")
+                             if removed else None)
+                delta = CLEAN_STATE.get("delta")
+                t_delta = (ui.tab("Changes over time")
+                           if delta is not None and delta.notes_found > 1 else None)
             with ui.tab_panels(tabs, value=t_result).classes("w-full"):
+                if t_delta is not None:
+                    with ui.tab_panel(t_delta):
+                        render_delta(delta)
+                if t_removed is not None:
+                    with ui.tab_panel(t_removed):
+                        render_removed(removed)
+                if t_abbr is not None:
+                    with ui.tab_panel(t_abbr):
+                        render_abbreviation_changes(abbr_changes)
                 with ui.tab_panel(t_result):
                     out = ui.textarea("", value=result.text)
                     out.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
                     with ui.row().classes("gap-2"):
                         ui.button("Copy result", icon="content_copy",
                                   on_click=lambda: copy_to_clipboard(result.text)).props("unelevated color=primary")
-                        ui.button("Download .txt", icon="download", on_click=download_result)
+                        with ui.dropdown_button("Download", icon="download", auto_close=True):
+                            ui.item("Text (.txt)", on_click=download_result)
+                            ui.item("Word (.docx)", on_click=lambda: ui.download.content(
+                                to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))
+                            ui.item("Markdown (.md)", on_click=lambda: ui.download.content(
+                                chart_markdown().encode("utf-8"), "cleaned_chart.md"))
+                        ui.button("Copy for Epic", icon="assignment",
+                                  on_click=lambda: copy_to_clipboard(
+                                      to_smartphrase(CLEAN_STATE["result_text"]),
+                                      "Copied as plain text that pastes cleanly into Epic")) \
+                            .props("flat").tooltip("Plain ASCII, no tabs, lines wrapped at 80 characters")
+                        if PREFS.get("notes_folder"):
+                            ui.button("Save to notes folder", icon="note_add",
+                                      on_click=save_to_notes_folder).props("flat")
                         ui.button("Copy result + stats", icon="data_object",
                                   on_click=lambda: copy_to_clipboard(
                                       result.text + "\n\n<!-- " + result.summary() + " -->")).props("flat")
+                        with ui.dropdown_button("Copy as prompt", icon="smart_toy", auto_close=True) \
+                                .props("flat"):
+                            for tmpl in prompt_templates(load_config(CONFIG_PATH)):
+                                ui.item(tmpl["name"], on_click=lambda n=tmpl["name"]: copy_prompt(n))
                 with ui.tab_panel(t_diff):
                     with ui.scroll_area().classes("w-full border rounded h-[420px] bg-grey-1 dark:bg-grey-10"):
                         ui.html(diff_html(CLEAN_STATE["input"], result.text, flagged))
@@ -597,7 +689,14 @@ async def clean_page():
                         rows.append({"stage": s.label, "matches": s.matches,
                                      "delta": f"{delta:+,}", "status": status})
                     ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
-            if abbreviations_only:
+            if result_mode == "expand" and ambiguous:
+                with ui.row().classes("items-center gap-2"):
+                    ui.label("Not expanded because they have several meanings: "
+                             + ", ".join(f"{a} ×{n}" for a, n in sorted(ambiguous.items())))\
+                        .classes("text-sm")
+                    ui.button("Choose meanings", icon="rule",
+                              on_click=lambda amb=ambiguous: open_meanings_dialog(amb)).props("flat dense")
+            if single_pass:
                 return
             # ---- local AI summary (on-device via Ollama) ----
             summary_refs.clear()
@@ -976,12 +1075,14 @@ async def clean_page():
         try:
             remove_check.set_value(highlight["mode"] == "remove")
             replace_check.set_value(highlight["mode"] == "replace")
+            abbreviate_check.set_value(highlight["mode"] == "abbreviate")
         finally:
             highlight["syncing"] = False
         highlight_note.set_text({
             "off": "Select text normally, or check a mode to teach a rule.",
             "remove": "Highlight text to remove that selection immediately and remember it for future full cleans.",
             "replace": "Highlight text to enter a replacement and remember it for future full cleans.",
+            "abbreviate": "Highlight a term to choose its abbreviation; it is added to your abbreviation dictionary.",
         }[highlight["mode"]])
 
     def apply_highlight(selection: dict, replacement: str) -> bool:
@@ -1010,6 +1111,8 @@ async def clean_page():
             if errors:
                 raise ValueError(errors[0])
             save_config_with_backup(cfg)
+            if added:
+                remember_rule_example(pair, selection["text"], cfg)
             highlight["undo"] = dict(before=before, after=after, pair=pair, added=added,
                                      rules=[list(p) for p in rules], old_enabled=old_enabled)
             input_area.set_value(after)
@@ -1022,6 +1125,122 @@ async def clean_page():
             ui.notify(str(ex), type="negative")
             return False
 
+    def apply_abbreviation(selection: dict, term: str, abbreviation: str, acknowledged: bool) -> bool:
+        if state["running"]:
+            return False
+        try:
+            before = input_area.value or ""
+            text = selection["text"]
+            lead = text[:len(text) - len(text.lstrip())]
+            trail = text[len(text.rstrip()):]
+            after = replace_selection(before, selection, lead + abbreviation + trail)
+            cfg = load_config(CONFIG_PATH)
+            old_group = cfg.get("abbreviations")
+            old_enabled = cfg.get("stage_options", {}).get("medical_abbreviations", {}).get("enabled")
+            cfg = abbreviation_with_custom(cfg, term, abbreviation, acknowledged=acknowledged)
+            if old_enabled is False:
+                cfg.setdefault("stage_options", {}).setdefault("medical_abbreviations", {})["enabled"] = True
+            errors, _ = validate_config(cfg)
+            if errors:
+                raise ValueError(errors[0])
+            save_config_with_backup(cfg)
+            highlight["undo"] = dict(kind="abbreviation", before=before, after=after,
+                                     old_group=old_group, new_group=cfg["abbreviations"],
+                                     old_enabled=old_enabled)
+            input_area.set_value(after)
+            invalidate_output()
+            undo_btn.enable()
+            highlight_status.set_text(
+                f"“{term}” → “{abbreviation}” added to your abbreviations."
+                + (" Medical abbreviations stage enabled." if old_enabled is False else ""))
+            return True
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+            return False
+
+    def undo_abbreviation(undo: dict) -> None:
+        cfg = load_config(CONFIG_PATH)
+        if cfg.get("abbreviations") != undo["new_group"]:
+            raise ValueError("Abbreviations changed since that edit. Review them in My text rules.")
+        if undo["old_group"] is None:
+            cfg.pop("abbreviations", None)
+        else:
+            cfg["abbreviations"] = undo["old_group"]
+        if undo["old_enabled"] is False:
+            cfg.setdefault("stage_options", {}).setdefault("medical_abbreviations", {})["enabled"] = False
+        save_config_with_backup(cfg)
+
+    def open_abbreviate_dialog(selection: dict) -> None:
+        term = selection["text"].strip()
+        if not term:
+            ui.notify("Highlight a term to abbreviate.", type="info")
+            return
+        cfg = load_config(CONFIG_PATH)
+        highlight["pending"] = True
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
+            ui.label("Abbreviate highlighted text").classes("text-lg font-semibold")
+            ui.label(term).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto font-medium")
+            abbr_input = ui.input("Abbreviation", value=suggest_abbreviation(term, cfg)) \
+                .props("outlined autofocus").classes("w-full")
+            issues_box = ui.column().classes("gap-1")
+            hits = ui.label("").classes("text-sm opacity-80")
+
+            def sync() -> None:
+                abbr = (abbr_input.value or "").strip()
+                if not abbr:
+                    issues_box.clear()
+                    hits.set_text("")
+                    return
+                if lookup_abbreviation(term, cfg) == abbr:
+                    issues_box.clear()
+                    hits.set_text(f"Already in your dictionary: “{term}” → “{abbr}” on every clean.")
+                    return
+                show_abbreviation_issues(issues_box, abbreviation_check(term, abbr, cfg))
+                count = abbreviation_preview(input_area.value or "", cfg, term, abbr)["count"]
+                hits.set_text(f"Would change {count} place(s) in this chart on the next clean.")
+
+            abbr_input.on_value_change(lambda _: sync())
+            sync()
+
+            def save() -> None:
+                abbr = (abbr_input.value or "").strip()
+                if not abbr or abbr == term:
+                    ui.notify("Enter a different, shorter form.", type="warning")
+                    return
+
+                def persist(acknowledged: bool) -> None:
+                    if apply_abbreviation(selection, term, abbr, acknowledged):
+                        dlg.close()
+
+                save_abbreviation_with_safety(term, abbr, load_config(CONFIG_PATH), persist)
+
+            expanded, n_expanded, _ = expand_abbreviations(term, cfg)
+            can_expand = n_expanded == 1 and expanded != term
+
+            def expand_instead() -> None:
+                text = selection["text"]
+                lead = text[:len(text) - len(text.lstrip())]
+                trail = text[len(text.rstrip()):]
+                try:
+                    after = replace_selection(input_area.value or "", selection, lead + expanded + trail)
+                except ValueError as ex:
+                    ui.notify(str(ex), type="warning")
+                    return
+                input_area.set_value(after)
+                invalidate_output()
+                highlight_status.set_text(f"“{term}” expanded to “{expanded}” in this chart (no rule saved).")
+                dlg.close()
+
+            ui.label("Updates this selection now and adds the term to your abbreviation dictionary "
+                     "(used by Full clean and Abbreviations only).").classes("text-sm opacity-70")
+            with ui.row():
+                ui.button("Abbreviate & remember", on_click=save).props("unelevated")
+                if can_expand:
+                    ui.button(f"Expand instead → {expanded}", on_click=expand_instead).props("flat")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
+        dlg.open()
+
     def undo_highlight() -> None:
         undo = highlight["undo"]
         if not undo or state["running"]:
@@ -1029,6 +1248,17 @@ async def clean_page():
         if input_area.value != undo["after"]:
             ui.notify("The chart changed since that edit. Use My text rules to remove the saved rule.",
                       type="warning")
+            return
+        if undo.get("kind") == "abbreviation":
+            try:
+                undo_abbreviation(undo)
+                input_area.set_value(undo["before"])
+                invalidate_output()
+                highlight["undo"] = None
+                undo_btn.disable()
+                highlight_status.set_text("Edit undone; your previous abbreviations are restored.")
+            except Exception as ex:
+                ui.notify(str(ex), type="negative")
             return
         try:
             cfg = load_config(CONFIG_PATH)
@@ -1063,6 +1293,9 @@ async def clean_page():
             return
         if highlight["mode"] == "remove":
             apply_highlight(selection, "")
+            return
+        if highlight["mode"] == "abbreviate":
+            open_abbreviate_dialog(selection)
             return
         highlight["pending"] = True
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
@@ -1134,6 +1367,7 @@ async def clean_page():
                         ui.notify("Cannot save rule — " + errs[0], type="negative")
                         return
                     save_config_with_backup(cfg)
+                    remember_rule_example(pair, snippet, cfg)
                 except Exception as ex:
                     report_error("Could not save the learned rule", ex)
                     return
@@ -1163,6 +1397,197 @@ async def clean_page():
             return
         open_learn_dialog(str(sel))
 
+    def removed_groups(result) -> list[dict]:
+        """Text deleted by the line, block and learned-rule stages, grouped by rule."""
+        groups: dict[tuple[str, str], dict] = {}
+        for st in result.stages:
+            if st.id not in REVIEWABLE_REMOVAL_STAGES:
+                continue
+            for c in st.details.get("changes") or []:
+                if c["after"] != "" or not c["before"].strip():
+                    continue
+                g = groups.setdefault((st.id, c["rule"]), {"sid": st.id, "stage": st.label,
+                                                           "rule": c["rule"], "items": []})
+                g["items"].append(c["before"])
+        return sorted(groups.values(), key=lambda g: (-len(g["items"]), g["stage"]))
+
+    def render_removed(groups: list[dict]) -> None:
+        ui.label("Everything the line, block and learned-rule stages deleted. If something "
+                 "clinical was removed, “Never remove this” keeps it on every future clean.") \
+            .classes("text-sm opacity-70")
+        for g in groups:
+            with ui.expansion(f"{g['stage']} — {len(g['items'])} removed",
+                              caption=g["rule"][:120]).classes("w-full"):
+                seen: list[str] = []
+                for text in g["items"]:
+                    if text.strip() not in seen:
+                        seen.append(text.strip())
+                for text in seen[:12]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.label(text[:300] + ("…" if len(text) > 300 else "")) \
+                            .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
+                        ui.button(icon="content_copy",
+                                  on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+                        ui.button("Never remove this", icon="shield",
+                                  on_click=lambda t=text, sid=g["sid"]: keep_text(sid, t)) \
+                            .props("flat dense").mark("never-remove")
+                if len(seen) > 12:
+                    ui.label(f"… {len(seen) - 12} more").classes("text-xs opacity-60")
+
+    async def keep_text(sid: str, text: str) -> None:
+        cfg = load_config(CONFIG_PATH)
+        options = cfg.setdefault("stage_options", {}).setdefault(sid, {})
+        keep = options.setdefault("exceptions", [])
+        snippet = text.strip()[:200]
+        if snippet not in keep:
+            keep.append(snippet)
+        save_config_with_backup(cfg)
+        ui.notify("Saved — this text will be kept on future cleans.", type="positive")
+        await run_clean()
+
+    def chart_markdown() -> str:
+        note = CLEAN_STATE.get("note") or {}
+        return to_markdown(CLEAN_STATE["result_text"], note_type=note.get("label", "")
+                           if note.get("label") != "Not sure" else "")
+
+    def save_to_notes_folder() -> None:
+        try:
+            path = save_to_vault(chart_markdown(), PREFS["notes_folder"])
+        except Exception as ex:
+            ui.notify(f"Could not save: {ex}", type="negative")
+            return
+        ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
+
+    def copy_prompt(name: str) -> None:
+        try:
+            text = render_prompt(name, CLEAN_STATE.get("result_text") or "", load_config(CONFIG_PATH))
+        except Exception as ex:
+            ui.notify(f"Could not build the prompt: {ex}", type="negative")
+            return
+        copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
+
+    def render_delta(delta) -> None:
+        ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
+                 "removed. The first note is kept in full; later notes show only sentences that are "
+                 "new or changed.").classes("text-sm opacity-70")
+        box = ui.textarea("", value=delta.compact_text)
+        box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
+
+        def use_for_ai() -> None:
+            CLEAN_STATE["result_text"] = delta.compact_text
+            ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
+                      type="positive")
+
+        with ui.row().classes("gap-2"):
+            ui.button("Copy", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(delta.compact_text)).props("unelevated")
+            ui.button("Use for AI summary & questions", icon="psychology",
+                      on_click=use_for_ai).props("flat")
+
+    def render_abbreviation_changes(changes: list[dict]) -> None:
+        """Every abbreviation applied in this result, with quick fixes."""
+        cfg = load_config(CONFIG_PATH)
+        custom = {c["term"].casefold(): c for c in
+                  normalize_abbreviation_settings(cfg.get("abbreviations"))["custom"]}
+        groups: dict[tuple[str, str], dict] = {}
+        for c in changes:
+            key = (c["rule"], c["after"])
+            g = groups.setdefault(key, {"term": c["before"], "rule": c["rule"], "after": c["after"],
+                                        "source": c.get("source", "bundled"), "count": 0})
+            g["count"] += 1
+        ui.label("Each abbreviation applied to this result. Disable or change one and the chart "
+                 "is cleaned again.").classes("text-sm opacity-70")
+        for g in sorted(groups.values(), key=lambda g: (-g["count"], g["rule"])):
+            entry = custom.get(g["rule"])
+            source = (f"pack: {entry['pack']}" if entry and entry.get("pack")
+                      else "my rule" if g["source"] == "custom" else "dictionary")
+            with ui.row().classes("w-full items-center gap-2 border-b pb-1"):
+                ui.label(g["term"]).classes("font-medium min-w-[240px]")
+                ui.label("→")
+                ui.label(g["after"]).classes("min-w-[80px]")
+                ui.badge(f"×{g['count']}").props("outline")
+                ui.label(source).classes("text-xs opacity-70 flex-grow")
+                ui.button("Change", icon="edit",
+                          on_click=lambda gg=g: change_abbreviation(gg)).props("flat dense")
+                ui.button("Disable", icon="block",
+                          on_click=lambda gg=g: disable_abbreviation(gg)) \
+                    .props("flat dense color=negative").mark("abbr-disable")
+
+    async def disable_abbreviation(group: dict) -> None:
+        cfg = load_config(CONFIG_PATH)
+        settings = normalize_abbreviation_settings(cfg.get("abbreviations"))
+        match = next((c for c in settings["custom"] if c["term"].casefold() == group["rule"]), None)
+        if match is not None:
+            match["enabled"] = False
+        else:
+            settings["disabled"].append(group["term"])
+        cfg["abbreviations"] = normalize_abbreviation_settings(settings)
+        save_config_with_backup(cfg)
+        ui.notify(f"“{group['term']}” will no longer be abbreviated.", type="positive")
+        await run_clean()
+
+    def change_abbreviation(group: dict) -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-md gap-2"):
+            ui.label(f"Abbreviate “{group['term']}” as…").classes("text-lg font-semibold")
+            new = ui.input("Abbreviation", value=group["after"]).props("outlined autofocus").classes("w-full")
+
+            def save() -> None:
+                value = (new.value or "").strip()
+                if not value:
+                    ui.notify("Enter an abbreviation.", type="warning")
+                    return
+
+                async def persist(acknowledged: bool) -> None:
+                    cfg = abbreviation_with_custom(load_config(CONFIG_PATH), group["term"], value,
+                                                   acknowledged=acknowledged)
+                    save_config_with_backup(cfg)
+                    dlg.close()
+                    await run_clean()
+
+                save_abbreviation_with_safety(
+                    group["term"], value, load_config(CONFIG_PATH),
+                    lambda ack: asyncio.get_running_loop().create_task(persist(ack)))
+
+            with ui.row():
+                ui.button("Save & clean again", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def open_meanings_dialog(ambiguous: dict[str, int]) -> None:
+        keep = "(leave as written)"
+        cfg = load_config(CONFIG_PATH)
+        current = normalize_abbreviation_settings(cfg.get("abbreviations")).get("expand_prefer", {})
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-2"):
+            ui.label("Choose what each abbreviation means").classes("text-lg font-semibold")
+            ui.label("Saved to your abbreviation settings and used every time you expand.") \
+                .classes("text-sm opacity-70")
+            picks = {}
+            for abbr in sorted(ambiguous):
+                options = abbreviation_meanings(abbr) + [keep]
+                picks[abbr] = ui.select(options, label=abbr,
+                                        value=current.get(abbr) if current.get(abbr) in options else keep) \
+                    .classes("w-full")
+
+            async def save() -> None:
+                cfg = load_config(CONFIG_PATH)
+                group = normalize_abbreviation_settings(cfg.get("abbreviations"))
+                prefer = dict(group.get("expand_prefer", {}))
+                for abbr, control in picks.items():
+                    if control.value and control.value != keep:
+                        prefer[abbr] = control.value
+                    else:
+                        prefer.pop(abbr, None)
+                group["expand_prefer"] = prefer
+                cfg["abbreviations"] = normalize_abbreviation_settings(group)
+                save_config_with_backup(cfg)
+                dlg.close()
+                await run_clean()
+
+            with ui.row():
+                ui.button("Save & expand again", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
     # ---- UI ------------------------------------------------------------------
     def on_mode_change(e) -> None:
         CLEAN_STATE.update(mode=e.value, result=None, result_text="", audit=None,
@@ -1172,14 +1597,17 @@ async def clean_page():
         sync_mode_controls()
 
     def sync_mode_controls() -> None:
-        abbreviations_only = mode_sel.value == "abbreviations"
-        clean_btn.set_text("Apply abbreviations" if abbreviations_only else "Clean")
-        preset_sel.set_enabled(not abbreviations_only)
-        mode_note.set_text(
-            "Shortens full medical terms using your abbreviation dictionary. Other text and formatting "
-            "are preserved; PHI is not removed."
-            if abbreviations_only else
-            "Runs your cleaning pipeline, including your medical abbreviation dictionary.")
+        mode = mode_sel.value
+        clean_btn.set_text({"abbreviations": "Apply abbreviations",
+                            "expand": "Expand abbreviations"}.get(mode, "Clean"))
+        preset_sel.set_enabled(mode == "clean")
+        mode_note.set_text({
+            "abbreviations": "Shortens full medical terms using your abbreviation dictionary. Other text "
+                             "and formatting are preserved; PHI is not removed.",
+            "expand": "Spells abbreviations out in full, for colleagues, patients or the AI tools. "
+                      "Abbreviations with several meanings are left as written until you choose one. "
+                      "PHI is not removed.",
+        }.get(mode, "Runs your cleaning pipeline, including your medical abbreviation dictionary."))
 
     with shell("Clean a chart", "clean"):
         errs, _warns = validate_config(load_config(CONFIG_PATH))
@@ -1189,7 +1617,8 @@ async def clean_page():
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs text-red-500")
 
-        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only"},
+        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
+                              "expand": "Expand abbreviations"},
                              value=CLEAN_STATE.get("mode", "clean"),
                              on_change=on_mode_change)
         mode_note = ui.label("").classes("text-sm opacity-70")
@@ -1223,6 +1652,8 @@ async def clean_page():
                     on_change=lambda e: set_highlight_mode("remove", e.value))
                 replace_check = ui.checkbox("Replace mode", value=False,
                     on_change=lambda e: set_highlight_mode("replace", e.value))
+                abbreviate_check = ui.checkbox("Abbreviate mode", value=False,
+                    on_change=lambda e: set_highlight_mode("abbreviate", e.value))
                 undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight).props("flat dense")
                 undo_btn.disable()
             highlight_note = ui.label("Select text normally, or check a mode to teach a rule.").classes("text-sm")
@@ -1363,7 +1794,7 @@ def batch_page():
             files = list(pending)[:500]
 
             def work():
-                return run_batch_files(files, cfg, custom_dir=CUSTOM_DIR)
+                return run_batch_files(files, cfg, custom_dir=CUSTOM_DIR, delta=bool(delta_switch.value))
 
             results = await run.io_bound(work)
             out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -1463,6 +1894,9 @@ def batch_page():
             clear_btn = ui.button("Clear queue", icon="delete_sweep",
                                   on_click=clear_pending).props("flat")
             clear_btn.set_enabled(False)
+            delta_switch = ui.switch("Only what changed between daily notes").tooltip(
+                "Copy-forward delta view: keeps the first note in full, then only new or "
+                "changed paragraphs from each later note.")
             spinner = ui.spinner("dots", size="lg")
             spinner.set_visibility(False)
         results_col = ui.column().classes("w-full gap-3")
@@ -1471,6 +1905,17 @@ def batch_page():
 # ===========================================================================
 # PAGE: Pipeline & Rules
 # ===========================================================================
+
+def _abbreviation_preview_text() -> str:
+    """Chart used for abbreviation previews: the Clean page input, else the sample."""
+    text = CLEAN_STATE.get("input") or ""
+    if text.strip():
+        return text
+    try:
+        return (BASE_DIR / "sample_chart.txt").read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
 
 @ui.page("/rules")
 def text_rules_page():
@@ -1499,7 +1944,8 @@ def text_rules_page():
         def render_tab(name: str) -> None:
             holder, renderer = {
                 "Remove & replace": (learned_holder, render_learned_editor),
-                "Abbreviations": (abbreviation_holder, render_abbreviations),
+                "Abbreviations": (abbreviation_holder, lambda load, save:
+                    render_abbreviations(load, save, sample_text=_abbreviation_preview_text)),
                 "Share & import": (sharing_holder, lambda load, save:
                     render_rule_sharing(load, save, lambda: open_folder(store.EXPORTS_DIR))),
             }[name]
@@ -1527,11 +1973,50 @@ STAGE_EDITORS = {
     "tokenize_phi": ("tokenize", "tokenization"),
     "unicode_normalize": ("unicode", "unicode_normalize"),
     "timestamps": ("timestamps", "timestamp_removal"),
+    "hospital_day": ("form", "hospital_day"),
+    "imaging_impression": ("form", "imaging_impression"),
+    "lab_compaction": ("form", "lab_compaction"),
+    "med_normalize": ("form", "med_normalize"),
+    "vitals_summary": ("form", "vitals_summary"),
     "sections": ("sections", "section_filter"),
     "whitespace": ("whitespace", "whitespace"),
     "caps_normalize": ("caps", "caps_normalize"),
     "bullets": ("bullets", "bullets"),
     "line_length": ("line_length", "line_length"),
+}
+
+# Stages whose deletions the Clean page lists under "Removed" for review.
+REVIEWABLE_REMOVAL_STAGES = ("metadata_lines", "boilerplate", "learned_rules")
+
+# Declarative option forms for the opt-in condensing stages:
+# (option, label, control, choices) — control is switch | text | select | multi | dates.
+STAGE_FORMS: dict[str, list[tuple]] = {
+    "hospital_day": [
+        ("enabled", "Label dates with hospital day (HD#) and post-op day (POD#)", "switch", None),
+        ("admit_date", 'Admission date ("auto" finds "Admission Date:" in the chart, or YYYY-MM-DD)',
+         "text", None),
+        ("surgery_dates", "Surgery dates for POD# (YYYY-MM-DD, comma-separated)", "dates", None),
+        ("style", "Style", "select", {"append": "Keep the date: 10/02/2026 (HD#3)",
+                                      "replace": "Replace the date: HD#3"}),
+    ],
+    "lab_compaction": [
+        ("enabled", "Condense lab tables into one line per panel", "switch", None),
+        ("style", "Style", "select", {"line": "One line per panel (BMP: Na 138, K 4.1, …)",
+                                      "fishbone": "Fishbone diagrams for BMP and CBC"}),
+        ("latest_only", "Show only the latest value from multi-day grids", "switch", None),
+        ("keep_reference_ranges", "Keep reference ranges [135 - 145]", "switch", None),
+    ],
+    "med_normalize": [
+        ("enabled", "Clean up medication lists (drug, dose, route, frequency)", "switch", None),
+    ],
+    "vitals_summary": [
+        ("enabled", "Summarize vitals flowsheets and intake/output", "switch", None),
+    ],
+    "imaging_impression": [
+        ("enabled", "Keep only the Impression of radiology reports", "switch", None),
+        ("keep", "Also keep", "multi", {"findings": "Findings", "indication": "Indication / history",
+                                        "technique": "Technique", "comparison": "Comparison"}),
+    ],
 }
 
 STAGE_DESCRIPTIONS = {
@@ -1546,6 +2031,11 @@ STAGE_DESCRIPTIONS = {
                              "Matches whole terms, longest phrases first, without cascading replacements.",
     "learned_rules": "Rules you taught the app by highlighting text on the Clean page (remove text, remove whole lines, or replace). Each row is [regex, replacement]; an empty replacement removes the match. New rules can also be added here by hand.",
     "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
+    "hospital_day": "Off by default. Adds hospital day (HD#1 = admission day) and post-op day (POD#0 = surgery day) next to each date, so timelines read at a glance. Runs before timestamp removal.",
+    "lab_compaction": "Off by default. Turns lab result tables and Recent Labs grids into one line per panel (BMP, CBC, LFT, Coags) with H/L flags, or fishbone diagrams. A table is only rewritten when every line is a recognized lab; anything else stays as written.",
+    "med_normalize": "Off by default. Inside medication sections, reduces each line to drug, dose, route and frequency: drops brand names, dispense/refill counts, dates and provider names, and marks held or discontinued meds. Never produces Do Not Use abbreviations.",
+    "vitals_summary": "Off by default. Turns vitals flowsheets (several readings per row) into one line of ranges and last values, and Intake/Output totals into one line. Single-reading vitals lines are left alone.",
+    "imaging_impression": "Off by default. In radiology reports (FINDINGS followed by IMPRESSION), removes findings, technique, comparison and indication, keeping the title and the impression. Reports without an impression are left alone.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
     "sections": "Off by default. Drop only the listed sections, or keep only the listed ones. Section boundaries come from your header list unless you supply boundary headers.",
     "whitespace": "Trims trailing spaces and collapses 3+ blank lines by default; seven further switches (CRLF, leading indent, tabs, double spaces, edge trim…).",
@@ -1933,8 +2423,35 @@ def pipeline_page():
                 .props("outlined dense").classes("w-44")
             w_in.on("keydown.enter.prevent", add_allow)
 
+    def render_form(key: str) -> None:
+        o = draft.setdefault(key, {})
+        for opt, label, control, choices in STAGE_FORMS[key]:
+            if control == "switch":
+                ui.switch(label, value=bool(o.get(opt)),
+                          on_change=lambda e, k=opt: o.update({k: e.value}))
+            elif control == "text":
+                ui.input(label, value=str(o.get(opt, "auto") or ""),
+                         on_change=lambda e, k=opt: o.update({k: e.value.strip()})) \
+                    .props("outlined dense").classes("w-full")
+            elif control == "dates":
+                ui.input(label, value=", ".join(o.get(opt) or []),
+                         on_change=lambda e, k=opt: o.update(
+                             {k: [d.strip() for d in e.value.split(",") if d.strip()]})) \
+                    .props("outlined dense").classes("w-full")
+            elif control == "select":
+                ui.select(choices, label=label, value=o.get(opt) or next(iter(choices)),
+                          on_change=lambda e, k=opt: o.update({k: e.value})).classes("w-full")
+            elif control == "multi":
+                ui.select(choices, label=label, multiple=True, value=list(o.get(opt) or []),
+                          on_change=lambda e, k=opt: o.update({k: list(e.value or [])})) \
+                    .props("use-chips").classes("w-full")
+
     def render_stage_editor(sid: str) -> None:
         kind, key = STAGE_EDITORS[sid]
+
+        if kind == "form":
+            render_form(key)
+            return
 
         if kind == "abbreviations":
             ui.label("Your abbreviation dictionary is also used by Abbreviations only on the Clean page. "
@@ -2423,6 +2940,55 @@ def pipeline_page():
 # PAGE: Statistics
 # ===========================================================================
 
+def render_rule_health(runs: list[dict]) -> None:
+    """Statistics → Rule health: rules that never match or touch too much."""
+    try:
+        rows = rule_health_report(load_config(CONFIG_PATH), runs)
+    except Exception:
+        return
+    flagged = [r for r in rows if r["status"] in ("never matched", "very broad")]
+    title = (f"Rule health — {len(flagged)} rule(s) to review" if flagged
+             else "Rule health — no problems found")
+    with ui.expansion(title, icon="health_and_safety").classes("w-full"):
+        ui.label("From your recent runs: rules that never match are probably dead weight; rules "
+                 "that touch over 30% of a chart's lines may be removing real content.") \
+            .classes("text-xs opacity-70")
+        holder = ui.column().classes("w-full gap-1")
+
+        def remove(row: dict) -> None:
+            cfg = load_config(CONFIG_PATH)
+            entries = cfg.get(row["key"]) or []
+            current = [e[0] if isinstance(e, list) else e for e in entries]
+            if row["pattern"] not in current:
+                ui.notify("That rule changed since this report; refresh the page.", type="warning")
+                return
+            entries.pop(current.index(row["pattern"]))
+            save_config_with_backup(cfg)
+            ui.notify("Rule removed (a backup of the previous rules was kept).", type="positive")
+            draw()
+
+        def draw() -> None:
+            holder.clear()
+            current = rule_health_report(load_config(CONFIG_PATH), runs)
+            with holder:
+                for row in [r for r in current if r["status"] != "not enough runs yet"][:60]:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap border-b pb-1"):
+                        color = {"very broad": "orange", "never matched": "grey"}.get(row["status"], "green")
+                        ui.badge(row["status"], color=color)
+                        ui.label(STAGE_LABELS.get(row["stage"], row["stage"])).classes("text-xs w-40")
+                        ui.label(row["pattern"][:90]).classes("text-xs cc-mono flex-grow break-all")
+                        ui.label(f"{row['hits']} hits / {row['runs']} runs").classes("text-xs w-32")
+                        if row["status"] == "never matched":
+                            ui.button("Remove", icon="delete",
+                                      on_click=lambda r=row: confirm_dialog(
+                                          f"Remove this {STAGE_LABELS.get(r['stage'], r['stage'])} rule?",
+                                          lambda: remove(r))).props("flat dense color=negative")
+                if not current or all(r["status"] == "not enough runs yet" for r in current):
+                    ui.label("Not enough runs yet — clean a few more charts.").classes("text-sm")
+
+        draw()
+
+
 @ui.page("/stats")
 def stats_page():
     runs = store.load_runs()
@@ -2436,6 +3002,8 @@ def stats_page():
                 ui.label("Clean a chart on the Clean page — every run is tracked here, "
                          "including per-stage detail.").classes("opacity-60 text-sm")
             return
+
+        render_rule_health(runs)
 
         cards = ui.row().classes("gap-3 flex-wrap")
         stat_chip(cards, "total runs", f"{s['runs']:,}")
@@ -2999,6 +3567,207 @@ def settings_page():
                 ui.button("Open backups folder", icon="folder",
                           on_click=lambda: open_folder(store.BACKUPS_DIR)).props("flat")
 
+        # ---- local API ------------------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Local API").classes("font-semibold")
+            ui.label("Lets scripts, launchers (Raycast, Alfred, Keyboard Maestro, AutoHotkey) and the "
+                     "browser extension clean text through this app. It only answers this computer, "
+                     "needs this token, and never logs chart text.").classes("text-xs opacity-60 -mt-1")
+            token_label = ui.label("Token: ••••••••").classes("text-sm cc-mono")
+
+            def show_token() -> None:
+                token_label.set_text(f"Token: {local_api.get_token()}")
+
+            def rotate() -> None:
+                local_api.rotate_token()
+                show_token()
+                ui.notify("New token created; update anything that used the old one.", type="info")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Show", icon="visibility", on_click=show_token).props("flat dense")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(local_api.get_token(), "Token copied")) \
+                    .props("flat dense")
+                ui.button("New token", icon="autorenew",
+                          on_click=lambda: confirm_dialog("Replace the token? Tools using it will "
+                                                          "need the new one.", rotate)).props("flat dense")
+            port = SERVER_PORT or 8765
+            ui.label(f'curl -s http://127.0.0.1:{port}/api/v1/clean -H "Authorization: Bearer $TOKEN" '
+                     f'-H "Content-Type: application/json" -d \'{{"text": "Pt w/ HTN"}}\'') \
+                .classes("text-xs cc-mono opacity-80 break-all")
+
+        # ---- clipboard watcher --------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Clipboard watcher").classes("font-semibold")
+            ui.label("While on, Epic text you copy anywhere is cleaned with your current rules and "
+                     "the clipboard is replaced with the result, so you can paste it straight "
+                     "away. Only text that looks like a chart is touched. Runs only while Chart "
+                     "Cleaner is open.").classes("text-xs opacity-60 -mt-1")
+            cw_prefs = dict(PREFS.get("clipboard_watcher") or {"enabled": False, "action": "auto"})
+            cw_status = ui.label("").classes("text-sm")
+
+            def cw_save() -> None:
+                PREFS["clipboard_watcher"] = dict(cw_prefs)
+                save_prefs()
+
+            def cw_refresh() -> None:
+                watcher = CLIPBOARD_WATCHER["watcher"]
+                if watcher is None or not watcher.running:
+                    cw_status.set_text("Off.")
+                    return
+                last = watcher.events[-1].message if watcher.events else "Watching — nothing cleaned yet."
+                cw_status.set_text(last)
+
+            def cw_toggle(on: bool) -> None:
+                cw_prefs["enabled"] = bool(on)
+                cw_save()
+                try:
+                    clipboard_watcher(start=bool(on))
+                except Exception as ex:
+                    ui.notify(f"No clipboard available here: {ex}", type="warning")
+                cw_refresh()
+
+            def cw_action(value: str) -> None:
+                cw_prefs["action"] = value
+                cw_save()
+                if CLIPBOARD_WATCHER["watcher"] is not None:
+                    CLIPBOARD_WATCHER["watcher"].action = value
+
+            def cw_undo() -> None:
+                watcher = CLIPBOARD_WATCHER["watcher"]
+                if watcher is not None and watcher.undo():
+                    ui.notify("The original text is back on the clipboard.", type="positive")
+                else:
+                    ui.notify("Nothing to undo.", type="info")
+
+            with ui.row().classes("items-center gap-4 flex-wrap"):
+                ui.switch("Clean Epic text as soon as it's copied", value=bool(cw_prefs.get("enabled")),
+                          on_change=lambda e: cw_toggle(e.value))
+                ui.select({"auto": "Replace the clipboard with the cleaned text",
+                           "notify": "Only notify me"}, value=cw_prefs.get("action", "auto"),
+                          on_change=lambda e: cw_action(e.value)).classes("min-w-[300px]")
+                ui.button("Undo last clipboard clean", icon="undo", on_click=cw_undo).props("flat")
+            ui.timer(2.0, cw_refresh)
+
+        # ---- notes folder (Obsidian or any Markdown folder) ---------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Notes folder").classes("font-semibold")
+            ui.label("Set a folder (for example your Obsidian vault) to get “Save to notes folder” "
+                     "on the Clean page. Each save is a new Markdown note with the date and note "
+                     "type; existing notes are never overwritten.").classes("text-xs opacity-60 -mt-1")
+            ui.input("Folder path", value=str(PREFS.get("notes_folder") or ""),
+                     placeholder="~/Documents/Obsidian/Charts",
+                     on_change=lambda e: (PREFS.update(notes_folder=e.value.strip()), save_prefs())) \
+                .classes("w-full cc-mono")
+
+        # ---- prompt templates ---------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Prompt templates").classes("font-semibold")
+            ui.label("Used by “Copy as prompt” on the Clean page (and --prompt on the command line). "
+                     "Placeholders: {chart} the cleaned chart, {delta} what changed since the last "
+                     "note, {date} today. A template with a built-in's name replaces it.") \
+                .classes("text-xs opacity-60 -mt-1")
+            tmpl_box = ui.column().classes("w-full gap-2")
+
+            def save_templates(items: list[dict]) -> None:
+                cfg = load_config(CONFIG_PATH)
+                cfg["prompt_templates"] = items
+                try:
+                    save_config_with_backup(cfg)
+                except Exception as ex:
+                    ui.notify(f"Could not save: {ex}", type="negative")
+                    return
+                ui.notify("Templates saved.", type="positive")
+                draw_templates()
+
+            def draw_templates() -> None:
+                tmpl_box.clear()
+                mine = list(load_config(CONFIG_PATH).get("prompt_templates") or [])
+                with tmpl_box:
+                    for idx, t in enumerate(mine):
+                        with ui.column().classes("w-full gap-1 border rounded p-2"):
+                            with ui.row().classes("w-full items-center gap-2"):
+                                name = ui.input("Name", value=t.get("name", "")).classes("flex-grow")
+                                fmt = ui.select({"text": "Plain text", "markdown": "Markdown",
+                                                 "xml": "XML sections"}, value=t.get("format", "text"),
+                                                label="Chart format").classes("w-40")
+                            body = ui.textarea("Template", value=t.get("template", "")) \
+                                .props("outlined autogrow").classes("w-full cc-mono")
+                            with ui.row():
+                                ui.button("Save", on_click=lambda i=idx, n=name, f=fmt, b=body: save_templates(
+                                    [*mine[:i], {"name": n.value.strip(), "format": f.value,
+                                                 "template": b.value}, *mine[i + 1:]])).props("flat dense")
+                                ui.button("Delete", on_click=lambda i=idx: save_templates(
+                                    mine[:i] + mine[i + 1:])).props("flat dense color=negative")
+                    ui.button("Add template", icon="add", on_click=lambda: save_templates(
+                        mine + [{"name": f"My template {len(mine) + 1}", "format": "text",
+                                 "template": "Summarize this chart:\n\n{chart}"}])).props("outline")
+
+            draw_templates()
+
+        # ---- note types → presets ---------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Note types").classes("font-semibold")
+            ui.label("The Clean page recognizes the kind of note (discharge summary, H&P, progress, "
+                     "consult, nursing, operative, radiology). Pick a preset for a type and turn on "
+                     "auto-apply to clean that type with it. Only that clean uses the preset; your "
+                     "saved rules are not changed.").classes("text-xs opacity-60 -mt-1")
+            preset_names = {"": "(current rules)", **{n: n for n in store.list_presets()}}
+            mapping = dict(PREFS.get("note_presets") or {})
+
+            def set_mapping(kind: str, value: str) -> None:
+                if value:
+                    mapping[kind] = value
+                else:
+                    mapping.pop(kind, None)
+                PREFS["note_presets"] = dict(mapping)
+                save_prefs()
+
+            with ui.grid(columns=2).classes("w-full gap-2"):
+                for kind, label in NOTE_TYPE_LABELS.items():
+                    ui.select(preset_names, label=label,
+                              value=mapping.get(kind) if mapping.get(kind) in preset_names else "",
+                              on_change=lambda e, k=kind: set_mapping(k, e.value or "")).classes("w-full")
+            ui.switch("Auto-apply the preset for the detected note type",
+                      value=bool(PREFS.get("note_auto_apply")),
+                      on_change=lambda e: (PREFS.update(note_auto_apply=e.value), save_prefs()))
+
+        # ---- learned-rule examples (regression check) -----------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Check my learned rules").classes("font-semibold")
+            ui.label("Every rule you teach by highlighting remembers what it was taught to do. "
+                     "This replays those examples through your current rules and lists any whose "
+                     "result changed, for example because a later rule undoes an earlier one.") \
+                .classes("text-xs opacity-60 -mt-1")
+            examples_out = ui.column().classes("w-full gap-1")
+
+            def check_examples() -> None:
+                report = rule_examples.check(load_config(CONFIG_PATH))
+                examples_out.clear()
+                with examples_out:
+                    if report["stage_disabled"]:
+                        ui.label("The Learned rules stage is turned off, so none of these rules run.") \
+                            .classes("text-sm text-orange-600")
+                    if not report["checked"]:
+                        ui.label("No examples yet — teach a rule by highlighting text on the Clean page.") \
+                            .classes("text-sm")
+                    elif not report["failures"]:
+                        ui.label(f"✓ All {report['checked']} learned rule(s) still do what they were "
+                                 "taught.").classes("text-sm text-green-600")
+                    for f in report["failures"][:20]:
+                        ui.label(f"“{f['text']}” used to become “{f['expected']}”, now becomes "
+                                 f"“{f['now']}”.").classes("text-sm cc-mono")
+
+            def clear_examples() -> None:
+                n = rule_examples.clear()
+                examples_out.clear()
+                ui.notify(f"Removed {n} saved example(s).", type="info")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Check my learned rules", icon="fact_check", on_click=check_examples) \
+                    .props("outline")
+                ui.button("Clear saved examples", icon="delete", on_click=clear_examples).props("flat")
+
         # ---- export / import settings bundle ------------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.button("Share removal, replacement & abbreviation rules", icon="share",
@@ -3143,6 +3912,7 @@ async def _strip_external_fonts(request, call_next):
 
 
 app.add_static_files("/exports", str(store.EXPORTS_DIR))
+local_api.register(app)  # /api/v1/* — loopback + token only (see chartcleaner/api.py)
 
 
 # ---------------------------------------------------------------------------
@@ -3205,8 +3975,38 @@ def _warm_nlp_engines() -> None:
     threading.Thread(target=_work, daemon=True, name="nlp-warmup").start()
 
 
+CLIPBOARD_WATCHER: dict = {"watcher": None}
+
+
+def clipboard_watcher(start: bool | None = None):
+    """The app's clipboard watcher; start=True/False turns it on or off."""
+    watcher = CLIPBOARD_WATCHER["watcher"]
+    if watcher is None:
+        import pyperclip
+        prefs = PREFS.get("clipboard_watcher") or {}
+        watcher = ClipboardWatcher(paste=pyperclip.paste, copy=pyperclip.copy,
+                                   action=prefs.get("action", "auto"))
+        CLIPBOARD_WATCHER["watcher"] = watcher
+    if start is True:
+        watcher.start()
+    elif start is False:
+        watcher.stop()
+    return watcher
+
+
+def _clipboard_startup() -> None:
+    if os.environ.get("NICEGUI_USER_SIMULATION"):
+        return  # tests never watch the real clipboard
+    if (PREFS.get("clipboard_watcher") or {}).get("enabled"):
+        try:
+            clipboard_watcher(start=True)
+        except Exception:
+            pass  # no clipboard on this system: the Settings card says so
+
+
 app.on_startup(_warm_nlp_engines)
 app.on_startup(_update_startup)
+app.on_startup(_clipboard_startup)
 
 
 def main():

@@ -1,0 +1,83 @@
+{
+  "_pack": {
+    "name": "Nursing",
+    "description": "Bedside nursing documentation.",
+    "version": "1.0"
+  },
+  "abbreviations": {
+    "custom": [
+      {
+        "term": "bedside commode",
+        "replacement": "BSC"
+      },
+      {
+        "term": "peripheral IV",
+        "replacement": "PIV"
+      },
+      {
+        "term": "weight-bearing as tolerated",
+        "replacement": "WBAT"
+      },
+      {
+        "term": "non-weight-bearing",
+        "replacement": "NWB"
+      },
+      {
+        "term": "vital signs",
+        "replacement": "VS"
+      },
+      {
+        "term": "fingerstick blood glucose",
+        "replacement": "FSBG"
+      },
+      {
+        "term": "alert and oriented",
+        "replacement": "A&O"
+      },
+      {
+        "term": "pressure injury",
+        "replacement": "PI"
+      },
+      {
+        "term": "call light within reach",
+        "replacement": "CLWR"
+      },
+      {
+        "term": "standby assist",
+        "replacement": "SBA"
+      },
+      {
+        "term": "contact guard assist",
+        "replacement": "CGA"
+      },
+      {
+        "term": "minimum assist",
+        "replacement": "min A"
+      },
+      {
+        "term": "moderate assist",
+        "replacement": "mod A"
+      },
+      {
+        "term": "maximum assist",
+        "replacement": "max A"
+      },
+      {
+        "term": "turn every 2 hours",
+        "replacement": "q2h turns"
+      },
+      {
+        "term": "patient education",
+        "replacement": "pt ed"
+      },
+      {
+        "term": "fall precautions",
+        "replacement": "fall prec"
+      },
+      {
+        "term": "aspiration precautions",
+        "replacement": "asp prec"
+      }
+    ]
+  }
+}

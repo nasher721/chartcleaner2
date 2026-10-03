@@ -8,6 +8,12 @@ from chartcleaner.engine import Pipeline, load_default_config, validate_config
     {"custom": [{"term": "x", "replacement": ""}]},
     {"custom": [{"term": "x", "replacement": "X", "enabled": "false"}]},
     {"custom": [{"term": "x", "replacement": "X"}, {"term": "X", "replacement": "Y"}]},
+    {"custom": [{"term": "x", "replacement": "X", "acknowledged": "yes"}]},
+    {"custom": [{"term": "x", "replacement": "X", "pack": 3}]},
+    {"scope": {"mode": "sometimes", "sections": []}},
+    {"scope": {"mode": "only", "sections": "Plan"}},
+    {"expand_prefer": {"MS": ""}},
+    {"rejected_suggestions": "left side"},
 ])
 def test_invalid_abbreviation_settings_rejected(group):
     cfg = {**load_default_config(), "abbreviations": group}

@@ -1,0 +1,83 @@
+{
+  "_pack": {
+    "name": "Critical Care",
+    "description": "Adult ICU: hemodynamics, ventilation, renal support and lines.",
+    "version": "1.0"
+  },
+  "abbreviations": {
+    "custom": [
+      {
+        "term": "central venous pressure",
+        "replacement": "CVP"
+      },
+      {
+        "term": "acute respiratory distress syndrome",
+        "replacement": "ARDS"
+      },
+      {
+        "term": "extracorporeal membrane oxygenation",
+        "replacement": "ECMO"
+      },
+      {
+        "term": "continuous renal replacement therapy",
+        "replacement": "CRRT"
+      },
+      {
+        "term": "central line-associated bloodstream infection",
+        "replacement": "CLABSI"
+      },
+      {
+        "term": "catheter-associated urinary tract infection",
+        "replacement": "CAUTI"
+      },
+      {
+        "term": "disseminated intravascular coagulation",
+        "replacement": "DIC"
+      },
+      {
+        "term": "diabetic ketoacidosis",
+        "replacement": "DKA"
+      },
+      {
+        "term": "high-flow nasal cannula",
+        "replacement": "HFNC"
+      },
+      {
+        "term": "noninvasive positive pressure ventilation",
+        "replacement": "NIPPV"
+      },
+      {
+        "term": "pressure support ventilation",
+        "replacement": "PSV"
+      },
+      {
+        "term": "assist-control ventilation",
+        "replacement": "ACV"
+      },
+      {
+        "term": "peripherally inserted central catheter",
+        "replacement": "PICC"
+      },
+      {
+        "term": "systemic inflammatory response syndrome",
+        "replacement": "SIRS"
+      },
+      {
+        "term": "Sequential Organ Failure Assessment",
+        "replacement": "SOFA"
+      },
+      {
+        "term": "return of spontaneous circulation",
+        "replacement": "ROSC"
+      },
+      {
+        "term": "cardiopulmonary resuscitation",
+        "replacement": "CPR"
+      },
+      {
+        "term": "targeted temperature management",
+        "replacement": "TTM"
+      }
+    ]
+  }
+}
