@@ -17,6 +17,9 @@ from typing import TYPE_CHECKING, Any, Callable
 from .abbreviations import MAX_TRACKED_CHANGES, abbreviate, expand
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
+from .compactors import labs as labs_compactor
+from .compactors import meds as meds_compactor
+from .compactors import vitals as vitals_compactor
 
 if TYPE_CHECKING:
     from .engine import CleanContext
@@ -826,6 +829,9 @@ RUNNERS: dict[str, Callable] = {
     "timestamps": run_timestamps,
     "hospital_day": hospital_day_compactor.run,
     "imaging": imaging_compactor.run,
+    "labs": labs_compactor.run,
+    "meds": meds_compactor.run,
+    "vitals": vitals_compactor.run,
     "sections": run_sections,
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
@@ -850,6 +856,9 @@ KIND_TO_RUNNER = {
     "timestamps": "timestamps",
     "hospital_day": "hospital_day",
     "imaging_impression": "imaging",
+    "lab_compaction": "labs",
+    "med_normalize": "meds",
+    "vitals_summary": "vitals",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",

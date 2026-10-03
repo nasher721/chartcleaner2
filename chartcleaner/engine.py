@@ -27,6 +27,9 @@ from .custom_rules import (
 )
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
+from .compactors import labs as labs_compactor
+from .compactors import meds as meds_compactor
+from .compactors import vitals as vitals_compactor
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
@@ -91,6 +94,9 @@ BUILTIN_STAGE_IDS = [
     "timestamps",
     "sections",
     "imaging_impression",
+    "lab_compaction",
+    "med_normalize",
+    "vitals_summary",
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
@@ -107,6 +113,9 @@ BUILTIN_STAGE_IDS = [
 STAGE_ANCHORS: dict[str, str] = {
     "hospital_day": "unicode_normalize",    # must label dates before timestamps can strip them
     "imaging_impression": "sections",
+    "lab_compaction": "imaging_impression",
+    "med_normalize": "lab_compaction",
+    "vitals_summary": "med_normalize",
 }
 
 STAGE_LABELS = {
@@ -123,6 +132,9 @@ STAGE_LABELS = {
     "timestamps": "Timestamp removal",
     "hospital_day": "Hospital day labels",
     "imaging_impression": "Imaging: keep impression",
+    "lab_compaction": "Lab table compaction",
+    "med_normalize": "Medication list cleanup",
+    "vitals_summary": "Vitals & I/O summary",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -148,6 +160,9 @@ STAGE_KINDS = {
     "timestamps": "timestamps",
     "hospital_day": "hospital_day",
     "imaging_impression": "imaging",
+    "lab_compaction": "labs",
+    "med_normalize": "meds",
+    "vitals_summary": "vitals",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -225,6 +240,9 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "line_length": DEFAULT_LINE_LENGTH,
         "imaging_impression": imaging_compactor.DEFAULTS,
         "hospital_day": hospital_day_compactor.DEFAULTS,
+        "lab_compaction": labs_compactor.DEFAULTS,
+        "med_normalize": meds_compactor.DEFAULTS,
+        "vitals_summary": vitals_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
     return validator.validate()

@@ -45,6 +45,9 @@ KNOWN_CONFIG_KEYS = frozenset(
         "line_length",
         "imaging_impression",
         "hospital_day",
+        "lab_compaction",
+        "med_normalize",
+        "vitals_summary",
         "stage_options",
         "learned_rules",
         "abbreviations",
@@ -253,6 +256,32 @@ class ConfigValidator:
         self._validate_line_length_options()
         self._validate_imaging_options()
         self._validate_hospital_day_options()
+        self._validate_compactor_options()
+
+    def _validate_compactor_options(self) -> None:
+        labs = self._check_option_group(
+            "lab_compaction", self.default_options["lab_compaction"],
+            {"enabled": ((bool,), "true/false"), "style": ((str,), "line/fishbone"),
+             "latest_only": ((bool,), "true/false"), "keep_reference_ranges": ((bool,), "true/false"),
+             "aliases": ((dict,), "an object of lab name -> short name")})
+        if labs is not None and labs.get("style", "line") not in ("line", "fishbone"):
+            self.errors.append('lab_compaction.style: must be "line" or "fishbone"')
+        meds = self._check_option_group(
+            "med_normalize", self.default_options["med_normalize"],
+            {"enabled": ((bool,), "true/false"), "drop_fields": ((list,), "a list of regex strings"),
+             "route_map": ((dict,), "an object of phrase -> route"),
+             "frequency_map": ((dict,), "an object of phrase -> frequency")})
+        if meds is not None:
+            for i, pattern in enumerate(meds.get("drop_fields") or []):
+                self._check_regex(pattern, f"med_normalize.drop_fields[{i}]", re.IGNORECASE)
+            from .abbreviation_safety import is_blocked
+            for key in ("route_map", "frequency_map"):
+                for phrase, short in (meds.get(key) or {}).items():
+                    if isinstance(short, str) and is_blocked(short, str(phrase)):
+                        self.errors.append(f"med_normalize.{key}: “{short}” for “{phrase}” is a "
+                                           "Do Not Use abbreviation")
+        self._check_option_group("vitals_summary", self.default_options["vitals_summary"],
+                                 {"enabled": ((bool,), "true/false")})
 
     def _validate_imaging_options(self) -> None:
         from .compactors.imaging import KEEPABLE
