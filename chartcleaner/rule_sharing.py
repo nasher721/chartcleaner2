@@ -70,12 +70,20 @@ def _validate_abbreviations(value: Any) -> dict:
             raise ValueError(f"abbreviations.custom[{i}].replacement must be non-empty text")
         if "enabled" in item and not isinstance(item["enabled"], bool):
             raise ValueError(f"abbreviations.custom[{i}].enabled must be true or false")
-        checked.append({"term": item["term"].strip(), "replacement": item["replacement"],
-                        "enabled": item.get("enabled", True)})
+        entry = {"term": item["term"].strip(), "replacement": item["replacement"],
+                 "enabled": item.get("enabled", True)}
+        # "acknowledged" (a Do Not Use override) is deliberately not shared:
+        # each person makes that choice on their own machine.
+        if isinstance(item.get("pack"), str) and item["pack"].strip():
+            entry["pack"] = item["pack"].strip()
+        checked.append(entry)
     terms = [item["term"].casefold() for item in checked]
     if len(terms) != len(set(terms)):
         raise ValueError("abbreviations.custom contains duplicate terms")
-    return {"disabled": list(dict.fromkeys(disabled)), "custom": checked}
+    from .abbreviations import normalize_settings
+    extras = {k: v for k, v in normalize_settings(value).items()
+              if k in ("scope", "expand_prefer")}
+    return {"disabled": list(dict.fromkeys(disabled)), "custom": checked, **extras}
 
 
 def payload_from_config(config: dict) -> dict:
@@ -200,10 +208,16 @@ def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
             current_abbrev = config[ABBREVIATION_KEY]
             existing = {x["term"].strip().casefold() for x in current_abbrev.get("custom", [])}
             additions = [x for x in incoming_abbrev["custom"] if x["term"].casefold() not in existing]
-            out[ABBREVIATION_KEY] = {
-                "disabled": list(dict.fromkeys(current_abbrev.get("disabled", []) + incoming_abbrev["disabled"])),
-                "custom": current_abbrev.get("custom", []) + additions,
-            }
+            # Keep the user's own scope, meaning choices and dismissed
+            # suggestions; incoming ones only fill gaps.
+            merged = {**incoming_abbrev, **current_abbrev}
+            merged["expand_prefer"] = {**incoming_abbrev.get("expand_prefer", {}),
+                                       **current_abbrev.get("expand_prefer", {})}
+            if not merged["expand_prefer"]:
+                merged.pop("expand_prefer")
+            merged["disabled"] = list(dict.fromkeys(current_abbrev.get("disabled", []) + incoming_abbrev["disabled"]))
+            merged["custom"] = current_abbrev.get("custom", []) + additions
+            out[ABBREVIATION_KEY] = merged
     return out
 
 

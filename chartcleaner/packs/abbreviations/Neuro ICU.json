@@ -1,0 +1,67 @@
+{
+  "_pack": {
+    "name": "Neuro ICU",
+    "description": "Neurocritical care: stroke, hemorrhage, ICP and neuromonitoring.",
+    "version": "1.0"
+  },
+  "abbreviations": {
+    "custom": [
+      {
+        "term": "NIH Stroke Scale",
+        "replacement": "NIHSS"
+      },
+      {
+        "term": "epidural hematoma",
+        "replacement": "EDH"
+      },
+      {
+        "term": "continuous EEG",
+        "replacement": "cEEG"
+      },
+      {
+        "term": "hypoxic-ischemic brain injury",
+        "replacement": "HIBI"
+      },
+      {
+        "term": "endovascular thrombectomy",
+        "replacement": "EVT"
+      },
+      {
+        "term": "tissue plasminogen activator",
+        "replacement": "tPA"
+      },
+      {
+        "term": "lumbar drain",
+        "replacement": "LD"
+      },
+      {
+        "term": "decompressive hemicraniectomy",
+        "replacement": "DHC"
+      },
+      {
+        "term": "Guillain-Barre syndrome",
+        "replacement": "GBS"
+      },
+      {
+        "term": "forced vital capacity",
+        "replacement": "FVC"
+      },
+      {
+        "term": "reversible cerebral vasoconstriction syndrome",
+        "replacement": "RCVS"
+      },
+      {
+        "term": "pupillary light reflex",
+        "replacement": "PLR"
+      },
+      {
+        "term": "neurological pupil index",
+        "replacement": "NPi"
+      },
+      {
+        "term": "brain tissue oxygen",
+        "replacement": "PbtO2"
+      }
+    ]
+  }
+}

@@ -108,6 +108,129 @@ def _scope_controls(load_current: Callable[[], dict], update) -> None:
         sections_sel.set_visibility(scope["mode"] != "all")
 
 
+def _packs_dialog(load_current: Callable[[], dict], save_current: Callable[[dict], None],
+                  refresh: Callable[[], None]) -> None:
+    from nicegui import ui
+
+    from . import abbreviation_packs as packs
+
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl gap-2"):
+        ui.label("Specialty abbreviation packs").classes("text-lg font-semibold")
+        ui.label("A pack adds abbreviations that are not in the bundled dictionary. It never "
+                 "overwrites your own entries, and Remove takes out only what the pack added.") \
+            .classes("text-sm opacity-70")
+        body = ui.column().classes("w-full gap-2")
+
+        def act(name: str, install: bool) -> None:
+            config = load_current()
+            if install:
+                config, added, skipped = packs.install(config, name)
+                note = f"Added {added} abbreviation(s) from {name}."
+                if skipped:
+                    note += f" Kept your own entry for {len(skipped)} term(s)."
+            else:
+                config, removed = packs.uninstall(config, name)
+                note = f"Removed {removed} abbreviation(s) from {name}."
+            try:
+                save_current(config)
+            except Exception as error:
+                ui.notify(f"Could not save: {error}", type="negative")
+                return
+            ui.notify(note, type="positive")
+            draw()
+            refresh()
+
+        def draw() -> None:
+            have = packs.installed(load_current())
+            body.clear()
+            with body:
+                for pack in packs.list_packs():
+                    with ui.row().classes("w-full items-center border-b pb-2 gap-2"):
+                        with ui.column().classes("flex-grow gap-0"):
+                            ui.label(pack["name"]).classes("font-medium")
+                            ui.label(f"{pack['description']} {pack['count']} abbreviations.") \
+                                .classes("text-xs opacity-70")
+                        if have.get(pack["name"]):
+                            ui.badge(f"{have[pack['name']]} installed", color="positive")
+                            ui.button("Remove", on_click=lambda n=pack["name"]: act(n, False)) \
+                                .props("flat color=negative")
+                        else:
+                            ui.button("Install", icon="add",
+                                      on_click=lambda n=pack["name"]: act(n, True)).props("flat")
+
+        draw()
+        ui.button("Close", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
+def _csv_dialog(load_current: Callable[[], dict], save_current: Callable[[dict], None],
+                refresh: Callable[[], None]) -> None:
+    from nicegui import ui
+
+    from . import abbreviation_packs as packs
+
+    state: dict = {"rows": []}
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl gap-2"):
+        ui.label("Import or export your abbreviations").classes("text-lg font-semibold")
+        ui.label("Exports your own and pack abbreviations as CSV (opens in Excel or Numbers). "
+                 "Import accepts the same columns: Abbreviation, Expanded version, and "
+                 "optionally Enabled and Pack.").classes("text-sm opacity-70")
+
+        def export() -> None:
+            ui.download.content(packs.export_csv(load_current()).encode("utf-8"),
+                                "my-abbreviations.csv")
+
+        ui.button("Export my abbreviations (.csv)", icon="download", on_click=export).props("outline")
+        summary = ui.label("").classes("text-sm")
+        table_box = ui.column().classes("w-full")
+
+        async def on_upload(event) -> None:
+            if hasattr(event, "file"):
+                data = await event.file.read()
+            else:
+                data = event.content.read()
+            try:
+                rows = packs.preview_import(data.decode("utf-8-sig"), load_current())
+            except (UnicodeDecodeError, ValueError) as error:
+                ui.notify(str(error), type="negative")
+                return
+            state["rows"] = rows
+            counts: dict[str, int] = {}
+            for row in rows:
+                counts[row["status"]] = counts.get(row["status"], 0) + 1
+            summary.set_text("Preview: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+                             + ". Blocked (Do Not Use) and invalid rows are skipped.")
+            table_box.clear()
+            with table_box:
+                ui.table(columns=[
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "term", "label": "Term", "field": "term", "align": "left"},
+                    {"name": "replacement", "label": "Abbreviation", "field": "replacement", "align": "left"},
+                ], rows=[r for r in rows if r["status"] != "same"][:200], row_key="term") \
+                    .classes("w-full").props("dense flat")
+            apply_btn.set_enabled(any(r["status"] in ("new", "changed") for r in rows))
+
+        ui.upload(label="Import .csv", on_upload=on_upload, auto_upload=True).props("accept=.csv") \
+            .classes("w-full")
+
+        def apply() -> None:
+            config, applied = packs.apply_import(load_current(), state["rows"])
+            try:
+                save_current(config)
+            except Exception as error:
+                ui.notify(f"Could not save: {error}", type="negative")
+                return
+            ui.notify(f"Imported {applied} abbreviation(s).", type="positive")
+            refresh()
+            dialog.close()
+
+        with ui.row():
+            apply_btn = ui.button("Apply import", icon="done", on_click=apply).props("unelevated")
+            apply_btn.disable()
+            ui.button("Close", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
 def _safety_report(load_current: Callable[[], dict]) -> None:
     from nicegui import ui
 
@@ -211,6 +334,10 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
                       on_click=lambda: _safety_report(load_current)).props("flat")
             ui.button("Export for text expander", icon="keyboard",
                       on_click=lambda: _export_dialog(load_current)).props("flat")
+            ui.button("Specialty packs", icon="inventory_2",
+                      on_click=lambda: _packs_dialog(load_current, save_current, refresh)).props("flat")
+            ui.button("Import / export CSV", icon="table_view",
+                      on_click=lambda: _csv_dialog(load_current, save_current, refresh)).props("flat")
         listing = ui.column().classes("w-full gap-2")
         with ui.row().classes("items-center"):
             previous = ui.button("Previous", on_click=lambda: turn(-1)).props("flat")

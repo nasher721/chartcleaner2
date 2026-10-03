@@ -1,0 +1,79 @@
+{
+  "_pack": {
+    "name": "Cardiology",
+    "description": "Cardiology and cardiac ICU.",
+    "version": "1.0"
+  },
+  "abbreviations": {
+    "custom": [
+      {
+        "term": "heart failure with preserved ejection fraction",
+        "replacement": "HFpEF"
+      },
+      {
+        "term": "left ventricular ejection fraction",
+        "replacement": "LVEF"
+      },
+      {
+        "term": "coronary artery bypass graft",
+        "replacement": "CABG"
+      },
+      {
+        "term": "percutaneous coronary intervention",
+        "replacement": "PCI"
+      },
+      {
+        "term": "ST-elevation myocardial infarction",
+        "replacement": "STEMI"
+      },
+      {
+        "term": "non-ST-elevation myocardial infarction",
+        "replacement": "NSTEMI"
+      },
+      {
+        "term": "acute coronary syndrome",
+        "replacement": "ACS"
+      },
+      {
+        "term": "tricuspid regurgitation",
+        "replacement": "TR"
+      },
+      {
+        "term": "transcatheter aortic valve replacement",
+        "replacement": "TAVR"
+      },
+      {
+        "term": "implantable cardioverter-defibrillator",
+        "replacement": "ICD"
+      },
+      {
+        "term": "cardiac resynchronization therapy",
+        "replacement": "CRT"
+      },
+      {
+        "term": "direct oral anticoagulant",
+        "replacement": "DOAC"
+      },
+      {
+        "term": "intra-aortic balloon pump",
+        "replacement": "IABP"
+      },
+      {
+        "term": "left ventricular assist device",
+        "replacement": "LVAD"
+      },
+      {
+        "term": "pulmonary capillary wedge pressure",
+        "replacement": "PCWP"
+      },
+      {
+        "term": "brain natriuretic peptide",
+        "replacement": "BNP"
+      },
+      {
+        "term": "atrial flutter",
+        "replacement": "AFL"
+      }
+    ]
+  }
+}

@@ -88,3 +88,27 @@ def test_invalid_import_is_rejected_before_preview_or_save(bad):
     with pytest.raises(ValueError):
         panel.apply(payload)
     assert saved == []
+
+
+def test_shared_abbreviations_carry_scope_and_meanings_but_not_overrides():
+    from chartcleaner.rule_sharing import apply_import, payload_from_config
+
+    source = {**load_default_config(), "abbreviations": {
+        "custom": [{"term": "units", "replacement": "U", "enabled": True, "acknowledged": True},
+                   {"term": "acute coronary syndrome", "replacement": "ACS", "pack": "Cardiology"}],
+        "scope": {"mode": "except", "sections": ["medications"]},
+        "expand_prefer": {"MS": "mental status", "RA": "room air"}}}
+    payload = payload_from_config(source)
+    shared = payload["abbreviations"]
+    assert "acknowledged" not in shared["custom"][0]
+    assert shared["custom"][1]["pack"] == "Cardiology"
+    assert shared["scope"] == {"mode": "except", "sections": ["medications"]}
+
+    mine = {**load_default_config(), "abbreviations": {
+        "disabled": [], "custom": [], "expand_prefer": {"MS": "multiple sclerosis"},
+        "rejected_suggestions": ["left side"]}}
+    merged = apply_import(mine, payload, mode="merge")["abbreviations"]
+    assert merged["expand_prefer"] == {"MS": "multiple sclerosis", "RA": "room air"}
+    assert merged["rejected_suggestions"] == ["left side"]
+    assert merged["scope"] == {"mode": "except", "sections": ["medications"]}
+    assert len(merged["custom"]) == 2

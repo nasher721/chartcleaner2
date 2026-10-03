@@ -446,6 +446,15 @@ def meanings(abbreviation: str) -> list[str]:
     return found
 
 
+def _shouting(text: str, start: int, end: int) -> bool:
+    """True when the rest of the line is mostly upper-case words."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line = text[line_start:start] + " " + text[end:len(text) if line_end < 0 else line_end]
+    words = re.findall(r"[A-Za-z]{2,}", line)
+    return len(words) >= 2 and sum(w.isupper() for w in words) / len(words) > 0.6
+
+
 _SENTENCE_START = re.compile(r"(?:^|[.!?]\s+|\n\s*)$")
 
 
@@ -472,6 +481,8 @@ def expand(text: str, cfg: dict | None = None,
     def replace(match: re.Match[str]) -> str:
         abbr = match.group(0)
         meaning = chosen[abbr]
+        if _shouting(text, match.start(), match.end()):
+            return abbr  # ALL-CAPS line: "PATIENT IS STABLE" is not an abbreviation
         if meaning is None:
             ambiguous[abbr] = ambiguous.get(abbr, 0) + 1
             return abbr
