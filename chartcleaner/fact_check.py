@@ -52,7 +52,7 @@ RULE_STAGES = frozenset({
     "phi_patterns", "clinical_identifiers", "nlp_redaction", "tokenize_phi", "timestamps",
 })
 BY_DESIGN_STAGES = frozenset({
-    "sections", "imaging_impression", "vitals_summary", "lab_compaction",
+    "sections", "imaging_impression", "vitals_summary", "lab_compaction", "neuro_summary",
 })
 DEDUP_STAGES = frozenset({"duplicate_notes", "fuzzy_dedup"})
 # Abbreviating swaps a drug or keyword for a standard short form on purpose.

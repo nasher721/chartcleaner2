@@ -133,6 +133,11 @@ AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 - *Medication list cleanup* — `atorvastatin 40 mg PO daily`, without brand names,
   dispense/refill, dates or providers; held/discontinued marked; doses never dropped.
 - *Vitals & I/O summary* — flowsheet rows → ranges and last values; I/O → one line.
+- *Neuro ICU summaries* — neuro checks (`GCS 13–15 (last 13); Pupils 3 brisk → 3
+  sluggish`), EVD blocks (`EVD: 10 cm H2O, open; output 45 mL over 4 readings; ICP
+  8–22 (last 22; 1 reading >20)`), serial sodium (`Na checks: 141 → 143 → 145`) and
+  drip titrations (`Nicardipine drip: 5–10 mg/hr over 4 entries (last 7.5)`); each
+  part has its own switch.
 - *Imaging: keep impression* — radiology reports trimmed to title + impression.
 - *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
 Each rewrites a block only when it understands every line of it.

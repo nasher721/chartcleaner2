@@ -30,6 +30,7 @@ from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
 from .compactors import meds as meds_compactor
+from .compactors import neuro as neuro_compactor
 from .compactors import vitals as vitals_compactor
 from .stages import (
     DEFAULT_BULLETS,
@@ -98,6 +99,7 @@ BUILTIN_STAGE_IDS = [
     "lab_compaction",
     "med_normalize",
     "vitals_summary",
+    "neuro_summary",
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
@@ -117,6 +119,7 @@ STAGE_ANCHORS: dict[str, str] = {
     "lab_compaction": "imaging_impression",
     "med_normalize": "lab_compaction",
     "vitals_summary": "med_normalize",
+    "neuro_summary": "vitals_summary",
 }
 
 STAGE_LABELS = {
@@ -136,6 +139,7 @@ STAGE_LABELS = {
     "lab_compaction": "Lab table compaction",
     "med_normalize": "Medication list cleanup",
     "vitals_summary": "Vitals & I/O summary",
+    "neuro_summary": "Neuro ICU summaries",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -164,6 +168,7 @@ STAGE_KINDS = {
     "lab_compaction": "labs",
     "med_normalize": "meds",
     "vitals_summary": "vitals",
+    "neuro_summary": "neuro",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -244,6 +249,7 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "lab_compaction": labs_compactor.DEFAULTS,
         "med_normalize": meds_compactor.DEFAULTS,
         "vitals_summary": vitals_compactor.DEFAULTS,
+        "neuro_summary": neuro_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
     return validator.validate()

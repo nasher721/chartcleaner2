@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from chartcleaner.compactors import neuro as neuro_compactor
 
 
 STAGE_EDITORS = {
@@ -26,6 +27,7 @@ STAGE_EDITORS = {
     "lab_compaction": ("form", "lab_compaction"),
     "med_normalize": ("form", "med_normalize"),
     "vitals_summary": ("form", "vitals_summary"),
+    "neuro_summary": ("form", "neuro_summary"),
     "sections": ("sections", "section_filter"),
     "whitespace": ("whitespace", "whitespace"),
     "caps_normalize": ("caps", "caps_normalize"),
@@ -33,6 +35,9 @@ STAGE_EDITORS = {
     "line_length": ("line_length", "line_length"),
 }
 
+
+# Options whose default is on (a switch must show what the stage will do).
+FORM_DEFAULTS = {"neuro_summary": neuro_compactor.DEFAULTS}
 
 # Declarative option forms for the opt-in condensing stages:
 # (option, label, control, choices) — control is switch | text | select | multi | dates.
@@ -58,6 +63,13 @@ STAGE_FORMS: dict[str, list[tuple]] = {
     "vitals_summary": [
         ("enabled", "Summarize vitals flowsheets and intake/output", "switch", None),
     ],
+    "neuro_summary": [
+        ("enabled", "Condense Neuro ICU flowsheets", "switch", None),
+        ("neuro_checks", "Neuro checks: GCS, RASS, NIHSS, pupils, CAM-ICU", "switch", None),
+        ("evd", "EVD output, level and ICP/CPP", "switch", None),
+        ("sodium", "Serial sodium checks", "switch", None),
+        ("drips", "Drip titrations (nicardipine, norepinephrine, …)", "switch", None),
+    ],
     "imaging_impression": [
         ("enabled", "Keep only the Impression of radiology reports", "switch", None),
         ("keep", "Also keep", "multi", {"findings": "Findings", "indication": "Indication / history",
@@ -80,6 +92,7 @@ STAGE_DESCRIPTIONS = {
     "hospital_day": "Off by default. Adds hospital day (HD#1 = admission day) and post-op day (POD#0 = surgery day) next to each date, so timelines read at a glance. Runs before timestamp removal.",
     "lab_compaction": "Off by default. Turns lab result tables and Recent Labs grids into one line per panel (BMP, CBC, LFT, Coags) with H/L flags, or fishbone diagrams. A table is only rewritten when every line is a recognized lab; anything else stays as written.",
     "med_normalize": "Off by default. Inside medication sections, reduces each line to drug, dose, route and frequency: drops brand names, dispense/refill counts, dates and provider names, and marks held or discontinued meds. Never produces Do Not Use abbreviations.",
+    "neuro_summary": "Off by default. Condenses Neuro ICU flowsheets into one line each: neuro checks (GCS, RASS, NIHSS, pupils, CAM-ICU) as ranges and changes, EVD blocks as total output with level and ICP/CPP (readings above icp_threshold, default 20, counted), three or more serial sodium checks as a trend, and three or more titrations of one drip as its range and last rate. A block is rewritten only when every line is understood.",
     "vitals_summary": "Off by default. Turns vitals flowsheets (several readings per row) into one line of ranges and last values, and Intake/Output totals into one line. Single-reading vitals lines are left alone.",
     "imaging_impression": "Off by default. In radiology reports (FINDINGS followed by IMPRESSION), removes findings, technique, comparison and indication, keeping the title and the impression. Reports without an impression are left alone.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
@@ -472,7 +485,7 @@ def pipeline_page():
         o = draft.setdefault(key, {})
         for opt, label, control, choices in STAGE_FORMS[key]:
             if control == "switch":
-                ui.switch(label, value=bool(o.get(opt)),
+                ui.switch(label, value=bool(o.get(opt, FORM_DEFAULTS.get(key, {}).get(opt))),
                           on_change=lambda e, k=opt: o.update({k: e.value}))
             elif control == "text":
                 ui.input(label, value=str(o.get(opt, "auto") or ""),
