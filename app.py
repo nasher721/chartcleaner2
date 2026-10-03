@@ -87,6 +87,9 @@ from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.delta_engine import extract_note_deltas
 from chartcleaner import rule_examples
+from chartcleaner.rule_health import report as rule_health_report
+from chartcleaner.note_type import LABELS as NOTE_TYPE_LABELS
+from chartcleaner.note_type import detect as detect_note_type
 from chartcleaner.summarizer import (
     LlmUnavailableError,
     NoModelError,
@@ -469,12 +472,20 @@ async def clean_page():
 
     async def do_clean_core(text: str, source: str) -> None:
         mode = mode_sel.value
+        note_info: dict = {}
         set_running(True)
         try:
             def work():
                 cfg = load_config(CONFIG_PATH)
                 if mode != "clean":
                     return Pipeline(cfg, mode=mode).run(text, track_changes=True), None
+                found = detect_note_type(text, cfg)
+                note_info.update(label=found.label, preset=None)
+                preset = (PREFS.get("note_presets") or {}).get(found.note_type or "")
+                if PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
+                    # This run only: applying a preset for real would overwrite config.json.
+                    cfg = store.load_preset(preset)
+                    note_info["preset"] = preset
                 # Tracked changes stay in memory for the inspect tabs; history drops them.
                 result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text, track_changes=True)
                 return result, run_audit(result.text, cfg)
@@ -488,7 +499,7 @@ async def clean_page():
             result, audit = await run.io_bound(work)
             delta = await run.io_bound(delta_work, result.text) if mode == "clean" else None
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[], result_mode=mode, delta=delta)
+                               summary=None, qa=[], result_mode=mode, delta=delta, note=note_info)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -559,6 +570,10 @@ async def clean_page():
             else:
                 stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
             stat_chip(chips, "elapsed", f"{result.duration_ms:.0f} ms", "blue-grey")
+            note = CLEAN_STATE.get("note") or {}
+            if note.get("label") and result_mode == "clean":
+                stat_chip(chips, "note type" + (f" · preset {note['preset']}" if note.get("preset") else ""),
+                          note["label"], "teal")
 
             # ---- post-run review: what survived and deserves a second look ----
             audit = CLEAN_STATE.get("audit")
@@ -604,6 +619,9 @@ async def clean_page():
                 t_diff = ui.tab("Side-by-side diff")
                 t_stages = ui.tab("What each stage did")
                 t_abbr = ui.tab(f"Abbreviations ({len(abbr_changes)})") if abbr_changes else None
+                removed = removed_groups(result)
+                t_removed = (ui.tab(f"Removed ({sum(len(g['items']) for g in removed)})")
+                             if removed else None)
                 delta = CLEAN_STATE.get("delta")
                 t_delta = (ui.tab("Changes over time")
                            if delta is not None and delta.notes_found > 1 else None)
@@ -611,6 +629,9 @@ async def clean_page():
                 if t_delta is not None:
                     with ui.tab_panel(t_delta):
                         render_delta(delta)
+                if t_removed is not None:
+                    with ui.tab_panel(t_removed):
+                        render_removed(removed)
                 if t_abbr is not None:
                     with ui.tab_panel(t_abbr):
                         render_abbreviation_changes(abbr_changes)
@@ -1354,6 +1375,54 @@ async def clean_page():
             return
         open_learn_dialog(str(sel))
 
+    def removed_groups(result) -> list[dict]:
+        """Text deleted by the line, block and learned-rule stages, grouped by rule."""
+        groups: dict[tuple[str, str], dict] = {}
+        for st in result.stages:
+            if st.id not in REVIEWABLE_REMOVAL_STAGES:
+                continue
+            for c in st.details.get("changes") or []:
+                if c["after"] != "" or not c["before"].strip():
+                    continue
+                g = groups.setdefault((st.id, c["rule"]), {"sid": st.id, "stage": st.label,
+                                                           "rule": c["rule"], "items": []})
+                g["items"].append(c["before"])
+        return sorted(groups.values(), key=lambda g: (-len(g["items"]), g["stage"]))
+
+    def render_removed(groups: list[dict]) -> None:
+        ui.label("Everything the line, block and learned-rule stages deleted. If something "
+                 "clinical was removed, “Never remove this” keeps it on every future clean.") \
+            .classes("text-sm opacity-70")
+        for g in groups:
+            with ui.expansion(f"{g['stage']} — {len(g['items'])} removed",
+                              caption=g["rule"][:120]).classes("w-full"):
+                seen: list[str] = []
+                for text in g["items"]:
+                    if text.strip() not in seen:
+                        seen.append(text.strip())
+                for text in seen[:12]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.label(text[:300] + ("…" if len(text) > 300 else "")) \
+                            .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
+                        ui.button(icon="content_copy",
+                                  on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+                        ui.button("Never remove this", icon="shield",
+                                  on_click=lambda t=text, sid=g["sid"]: keep_text(sid, t)) \
+                            .props("flat dense").mark("never-remove")
+                if len(seen) > 12:
+                    ui.label(f"… {len(seen) - 12} more").classes("text-xs opacity-60")
+
+    async def keep_text(sid: str, text: str) -> None:
+        cfg = load_config(CONFIG_PATH)
+        options = cfg.setdefault("stage_options", {}).setdefault(sid, {})
+        keep = options.setdefault("exceptions", [])
+        snippet = text.strip()[:200]
+        if snippet not in keep:
+            keep.append(snippet)
+        save_config_with_backup(cfg)
+        ui.notify("Saved — this text will be kept on future cleans.", type="positive")
+        await run_clean()
+
     def render_delta(delta) -> None:
         ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
                  "removed. The first note is kept in full; later notes show only sentences that are "
@@ -1872,6 +1941,9 @@ STAGE_EDITORS = {
     "bullets": ("bullets", "bullets"),
     "line_length": ("line_length", "line_length"),
 }
+
+# Stages whose deletions the Clean page lists under "Removed" for review.
+REVIEWABLE_REMOVAL_STAGES = ("metadata_lines", "boilerplate", "learned_rules")
 
 # Declarative option forms for the opt-in condensing stages:
 # (option, label, control, choices) — control is switch | text | select | multi | dates.
@@ -2825,6 +2897,55 @@ def pipeline_page():
 # PAGE: Statistics
 # ===========================================================================
 
+def render_rule_health(runs: list[dict]) -> None:
+    """Statistics → Rule health: rules that never match or touch too much."""
+    try:
+        rows = rule_health_report(load_config(CONFIG_PATH), runs)
+    except Exception:
+        return
+    flagged = [r for r in rows if r["status"] in ("never matched", "very broad")]
+    title = (f"Rule health — {len(flagged)} rule(s) to review" if flagged
+             else "Rule health — no problems found")
+    with ui.expansion(title, icon="health_and_safety").classes("w-full"):
+        ui.label("From your recent runs: rules that never match are probably dead weight; rules "
+                 "that touch over 30% of a chart's lines may be removing real content.") \
+            .classes("text-xs opacity-70")
+        holder = ui.column().classes("w-full gap-1")
+
+        def remove(row: dict) -> None:
+            cfg = load_config(CONFIG_PATH)
+            entries = cfg.get(row["key"]) or []
+            current = [e[0] if isinstance(e, list) else e for e in entries]
+            if row["pattern"] not in current:
+                ui.notify("That rule changed since this report; refresh the page.", type="warning")
+                return
+            entries.pop(current.index(row["pattern"]))
+            save_config_with_backup(cfg)
+            ui.notify("Rule removed (a backup of the previous rules was kept).", type="positive")
+            draw()
+
+        def draw() -> None:
+            holder.clear()
+            current = rule_health_report(load_config(CONFIG_PATH), runs)
+            with holder:
+                for row in [r for r in current if r["status"] != "not enough runs yet"][:60]:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap border-b pb-1"):
+                        color = {"very broad": "orange", "never matched": "grey"}.get(row["status"], "green")
+                        ui.badge(row["status"], color=color)
+                        ui.label(STAGE_LABELS.get(row["stage"], row["stage"])).classes("text-xs w-40")
+                        ui.label(row["pattern"][:90]).classes("text-xs cc-mono flex-grow break-all")
+                        ui.label(f"{row['hits']} hits / {row['runs']} runs").classes("text-xs w-32")
+                        if row["status"] == "never matched":
+                            ui.button("Remove", icon="delete",
+                                      on_click=lambda r=row: confirm_dialog(
+                                          f"Remove this {STAGE_LABELS.get(r['stage'], r['stage'])} rule?",
+                                          lambda: remove(r))).props("flat dense color=negative")
+                if not current or all(r["status"] == "not enough runs yet" for r in current):
+                    ui.label("Not enough runs yet — clean a few more charts.").classes("text-sm")
+
+        draw()
+
+
 @ui.page("/stats")
 def stats_page():
     runs = store.load_runs()
@@ -2838,6 +2959,8 @@ def stats_page():
                 ui.label("Clean a chart on the Clean page — every run is tracked here, "
                          "including per-stage detail.").classes("opacity-60 text-sm")
             return
+
+        render_rule_health(runs)
 
         cards = ui.row().classes("gap-3 flex-wrap")
         stat_chip(cards, "total runs", f"{s['runs']:,}")
@@ -3400,6 +3523,33 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Open backups folder", icon="folder",
                           on_click=lambda: open_folder(store.BACKUPS_DIR)).props("flat")
+
+        # ---- note types → presets ---------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Note types").classes("font-semibold")
+            ui.label("The Clean page recognizes the kind of note (discharge summary, H&P, progress, "
+                     "consult, nursing, operative, radiology). Pick a preset for a type and turn on "
+                     "auto-apply to clean that type with it. Only that clean uses the preset; your "
+                     "saved rules are not changed.").classes("text-xs opacity-60 -mt-1")
+            preset_names = {"": "(current rules)", **{n: n for n in store.list_presets()}}
+            mapping = dict(PREFS.get("note_presets") or {})
+
+            def set_mapping(kind: str, value: str) -> None:
+                if value:
+                    mapping[kind] = value
+                else:
+                    mapping.pop(kind, None)
+                PREFS["note_presets"] = dict(mapping)
+                save_prefs()
+
+            with ui.grid(columns=2).classes("w-full gap-2"):
+                for kind, label in NOTE_TYPE_LABELS.items():
+                    ui.select(preset_names, label=label,
+                              value=mapping.get(kind) if mapping.get(kind) in preset_names else "",
+                              on_change=lambda e, k=kind: set_mapping(k, e.value or "")).classes("w-full")
+            ui.switch("Auto-apply the preset for the detected note type",
+                      value=bool(PREFS.get("note_auto_apply")),
+                      on_change=lambda e: (PREFS.update(note_auto_apply=e.value), save_prefs()))
 
         # ---- learned-rule examples (regression check) -----------------------------
         with ui.card().classes("w-full gap-2"):

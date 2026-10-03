@@ -118,6 +118,26 @@ never touched.
 writes your dictionary for macOS Text Replacements, Espanso, TextExpander or
 AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 
+**Condensing stages (all off by default — turn them on under Pipeline & Rules):**
+- *Lab table compaction* — lab tables and Recent Labs grids → `BMP: Na 132 (L), K 4.1, …`
+  (or fishbones, trends, latest only).
+- *Medication list cleanup* — `atorvastatin 40 mg PO daily`, without brand names,
+  dispense/refill, dates or providers; held/discontinued marked; doses never dropped.
+- *Vitals & I/O summary* — flowsheet rows → ranges and last values; I/O → one line.
+- *Imaging: keep impression* — radiology reports trimmed to title + impression.
+- *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
+Each rewrites a block only when it understands every line of it.
+
+**Reviewing a clean.** Besides Result, Diff and stages, the Clean page shows
+**Removed** (everything the line/block/learned rules deleted, with *Never
+remove this*), **Abbreviations**, and **Changes over time** for multi-day
+charts (only sentences that are new or changed after the first note — a
+fixed copy-forward view that never drops a new sentence or number). The note
+type is detected; Settings → *Note types* can clean each type with its own
+preset. Statistics → *Rule health* lists rules that never match or touch too
+much. Settings → *Check my learned rules* confirms highlighted rules still do
+what they were taught.
+
 Stages run top-to-bottom (you can reorder them in the app):
 
 | # | Stage | What it does |

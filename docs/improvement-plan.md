@@ -1,6 +1,6 @@
 # Improvement plan — abbreviations, cleaning, integrations
 
-Status: **in progress** (Phases 0–2 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
+Status: **in progress** (Phases 0–3 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
 
 This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
@@ -525,3 +525,21 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
 - [x] A4 phrase suggestions — current chart; distinct-line counting, names skipped
 - [x] A5 inspect — built as the result's **Abbreviations** tab (Change /
       Disable + re-run) because the result box is a plain text area
+- [x] C4 imaging impression and C9 hospital day — opt-in stages, Pipeline-page
+      forms (declarative `STAGE_FORMS`)
+- [x] C5 changes over time — Clean tab + Batch option. **Also fixed the delta
+      engine**, which could drop new facts (paragraph-level ≥85% similarity
+      pruning, lines <30 chars skipped); it now prunes only sentences that
+      literally repeat
+- [x] C10 learned-rule examples — `rule_examples.py`, Settings check, test
+      (no separate privacy toggle: examples hold the same text the rule
+      already stores)
+- [x] C1 labs, C2 meds, C3 vitals/I/O — opt-in stages; blocks are rewritten
+      only when every line parses (`window_hours` for vitals not built: the
+      summary covers the readings shown)
+- [x] C6 note type — detection + Settings mapping (in prefs, not config,
+      because presets replace config.json); the preset applies to that
+      clean only. Batch detection not built
+- [x] C7 removed panel — "Removed" tab with Copy / Never remove this
+      (`stage_options.<sid>.exceptions`); "Restore here" replaced by Copy
+- [x] C8 rule health — Statistics section; "slow rule" timing not built

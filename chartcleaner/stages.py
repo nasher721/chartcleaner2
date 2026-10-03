@@ -143,26 +143,44 @@ def _tracking(ctx: Any) -> bool:
 
 
 def _subn_tracked(
-    regex: re.Pattern, replacement: str, text: str, changes: list[dict] | None, pattern: str
+    regex: re.Pattern, replacement: str, text: str, changes: list[dict] | None, pattern: str,
+    exceptions: list[str] | None = None,
 ) -> tuple[str, int]:
-    """``regex.subn`` that also records each change while ``changes`` is a list."""
-    if changes is None:
+    """``regex.subn`` that also records each change while ``changes`` is a list.
+
+    A match containing any of ``exceptions`` (case-insensitive) is left as is
+    and not counted: the user said "never remove this".
+    """
+    if changes is None and not exceptions:
         return regex.subn(replacement, text)
     rid = rule_id(pattern)
+    keep = [e.casefold() for e in exceptions or []]
+    skipped = 0
 
     def repl(match: re.Match) -> str:
+        nonlocal skipped
+        found = match.group(0)
+        if keep and any(k in found.casefold() for k in keep):
+            skipped += 1
+            return found
         after = match.expand(replacement)
-        if len(changes) < MAX_TRACKED_CHANGES:
+        if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
             changes.append({
                 "rule": pattern,
                 "rule_id": rid,
-                "before": match.group(0),
+                "before": found,
                 "after": after,
                 "line": text.count("\n", 0, match.start()) + 1,
             })
         return after
 
-    return regex.subn(repl, text)
+    out, n = regex.subn(repl, text)
+    return out, n - skipped
+
+
+def _exceptions(cfg: dict, sid: str | None) -> list[str]:
+    values = get_stage_options(cfg, sid).get("exceptions") if sid else None
+    return [v for v in values if isinstance(v, str) and v.strip()] if isinstance(values, list) else []
 
 
 def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | None) -> dict:
@@ -180,11 +198,12 @@ def run_regex_list(
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags &= ~re.IGNORECASE
     changes: list[dict] | None = [] if _tracking(ctx) else None
+    keep = _exceptions(cfg, sid)
     hits: dict[str, int] = {}
     total = 0
     for pattern in cfg[key]:
         r = re.compile(pattern, flags=flags)
-        text, n = _subn_tracked(r, "", text, changes, pattern)
+        text, n = _subn_tracked(r, "", text, changes, pattern, keep)
         if n:
             hits[rule_id(pattern)] = n
         total += n
@@ -199,11 +218,12 @@ def run_regex_pairs(
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags = 0
     changes: list[dict] | None = [] if _tracking(ctx) else None
+    keep = _exceptions(cfg, sid)
     hits: dict[str, int] = {}
     total = 0
     for pattern, replacement in (cfg.get(key) or []):
         r = re.compile(pattern, flags=flags)
-        text, n = _subn_tracked(r, replacement, text, changes, pattern)
+        text, n = _subn_tracked(r, replacement, text, changes, pattern, keep)
         if n:
             hits[rule_id(pattern)] = n
         total += n

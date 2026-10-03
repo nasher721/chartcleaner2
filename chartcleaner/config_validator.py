@@ -48,6 +48,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "lab_compaction",
         "med_normalize",
         "vitals_summary",
+        "note_profiles",
         "stage_options",
         "learned_rules",
         "abbreviations",
@@ -257,6 +258,20 @@ class ConfigValidator:
         self._validate_imaging_options()
         self._validate_hospital_day_options()
         self._validate_compactor_options()
+        self._validate_note_profiles()
+
+    def _validate_note_profiles(self) -> None:
+        profiles = self.cfg.get("note_profiles")
+        if profiles is None:
+            return
+        detect = profiles.get("detect", {}) if isinstance(profiles, dict) else None
+        if not isinstance(detect, dict) or not all(
+                isinstance(k, str) and isinstance(v, list) for k, v in detect.items()):
+            self.errors.append("note_profiles.detect: must map note types to lists of phrases")
+            return
+        for kind, phrases in detect.items():
+            for i, phrase in enumerate(phrases):
+                self._check_regex(phrase, f"note_profiles.detect.{kind}[{i}]", re.IGNORECASE)
 
     def _validate_compactor_options(self) -> None:
         labs = self._check_option_group(
@@ -431,6 +446,9 @@ class ConfigValidator:
                 self.errors.append(f"stage_options.{sid}.case_sensitive: must be true/false")
             if "enabled" in opts and not isinstance(opts["enabled"], bool):
                 self.errors.append(f"stage_options.{sid}.enabled: must be true/false")
+            if "exceptions" in opts and not (isinstance(opts["exceptions"], list) and all(
+                    isinstance(x, str) for x in opts["exceptions"])):
+                self.errors.append(f"stage_options.{sid}.exceptions: must be a list of text")
 
     def _validate_deduplication(self) -> None:
         self._validate_duplicate_notes()
