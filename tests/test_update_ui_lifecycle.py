@@ -2,7 +2,8 @@
 
 from types import SimpleNamespace
 
-import app
+from app_pages import common
+from app_pages import updates as app  # update logic lives in app_pages.updates
 from chartcleaner.update import UpdateStatus, Version
 
 
@@ -13,18 +14,18 @@ async def test_automatic_check_uses_previous_timestamp_and_records_result(monkey
             assert kwargs["last_checked"] == 123.0
             return None, UpdateStatus("error", "network_error", 456.0, platform="macos-arm64")
 
-    before = dict(app.PREFS)
+    before = dict(common.PREFS)
     monkeypatch.setattr(app.sys, "frozen", True, raising=False)
     monkeypatch.setattr(app, "_update_client", lambda: Client())
-    app.PREFS["update_last_checked"] = 123.0
+    common.PREFS["update_last_checked"] = 123.0
     try:
         _manifest, status = await app._check_for_updates(automatic=True)
         assert status.code == "network_error"
-        assert app.PREFS["update_last_checked"] == 456.0
-        assert "retry manually" in app.PREFS["update_status"]
+        assert common.PREFS["update_last_checked"] == 456.0
+        assert "retry manually" in common.PREFS["update_status"]
     finally:
-        app.PREFS.clear()
-        app.PREFS.update(before)
+        common.PREFS.clear()
+        common.PREFS.update(before)
 
 
 async def test_manual_check_surfaces_update_available_without_network(monkeypatch):
@@ -33,17 +34,17 @@ async def test_manual_check_surfaces_update_available_without_network(monkeypatc
             return SimpleNamespace(version=Version.parse("2.4.0")), UpdateStatus(
                 "update_available", checked_at=10.0, version="2.4.0", platform="windows-x64")
 
-    before = dict(app.PREFS)
+    before = dict(common.PREFS)
     monkeypatch.setattr(app.sys, "frozen", True, raising=False)
     monkeypatch.setattr(app, "_update_client", lambda: Client())
     try:
         manifest, status = await app._check_for_updates(automatic=False, force=True)
         assert str(manifest.version) == "2.4.0"
         assert status.state == "update_available"
-        assert app.PREFS["update_status"] == "Update available: v2.4.0"
+        assert common.PREFS["update_status"] == "Update available: v2.4.0"
     finally:
-        app.PREFS.clear()
-        app.PREFS.update(before)
+        common.PREFS.clear()
+        common.PREFS.update(before)
 
 
 async def test_startup_health_marker_is_called_before_auto_check(monkeypatch):
@@ -113,16 +114,16 @@ async def test_throttle_preserves_actual_check_across_restarts(monkeypatch, tmp_
     monkeypatch.setattr(app.sys, 'frozen', True, raising=False)
     monkeypatch.setattr(app, '_update_client', lambda: client)
     monkeypatch.setattr(app.store, 'PREFS_FILE', tmp_path / 'prefs.json')
-    monkeypatch.setattr(app, 'PREFS', dict(app.store.DEFAULT_PREFS))
+    monkeypatch.setattr(common, 'PREFS', dict(app.store.DEFAULT_PREFS))
     await app._check_for_updates(automatic=True)
     assert len(requests) == 1
     clock[0] += 23 * 3600
-    monkeypatch.setattr(app, 'PREFS', app.store.load_prefs())
+    monkeypatch.setattr(common, 'PREFS', app.store.load_prefs())
     await app._check_for_updates(automatic=True)
     assert app.store.load_prefs()['update_last_checked'] == 100.0
-    assert app.PREFS['update_status'] == 'Up to date'
+    assert common.PREFS['update_status'] == 'Up to date'
     clock[0] += 23 * 3600
-    monkeypatch.setattr(app, 'PREFS', app.store.load_prefs())
+    monkeypatch.setattr(common, 'PREFS', app.store.load_prefs())
     await app._check_for_updates(automatic=True)
     assert len(requests) == 2
     assert app.store.load_prefs()['update_last_checked'] == clock[0]
@@ -130,7 +131,7 @@ async def test_throttle_preserves_actual_check_across_restarts(monkeypatch, tmp_
 
 async def test_disabled_auto_keeps_timestamp_and_manual_check_still_runs(monkeypatch):
     calls = []
-    monkeypatch.setattr(app, 'PREFS', dict(app.PREFS, update_auto_check=False, update_last_checked=123.0))
+    monkeypatch.setattr(common, 'PREFS', dict(common.PREFS, update_auto_check=False, update_last_checked=123.0))
     monkeypatch.setattr(app.sys, 'frozen', True, raising=False)
     monkeypatch.setattr(app, 'save_prefs', lambda: None)
 
@@ -141,10 +142,10 @@ async def test_disabled_auto_keeps_timestamp_and_manual_check_still_runs(monkeyp
 
     monkeypatch.setattr(app, '_update_client', lambda: Client())
     await app._automatic_update_check()
-    assert calls == [] and app.PREFS['update_last_checked'] == 123.0
+    assert calls == [] and common.PREFS['update_last_checked'] == 123.0
     await app._check_for_updates(automatic=False, force=True)
     assert calls == [{'automatic': False, 'last_checked': None, 'force': True}]
-    assert app.PREFS['update_last_checked'] == 456.0
+    assert common.PREFS['update_last_checked'] == 456.0
 
 
 async def test_handoff_runs_off_loop_and_exits_only_after_success(monkeypatch, tmp_path):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 import app as cc_app
+from app_pages import common
 from chartcleaner.engine import load_default_config, load_config, save_config
 from chartcleaner.highlight_rules import make_rule
 
@@ -21,8 +22,8 @@ def clean_fixture(monkeypatch, tmp_path):
     cfg["audit"] = {"enabled": False}
     path = tmp_path / "config.json"
     save_config(cfg, path)
-    monkeypatch.setattr(cc_app, "CONFIG_PATH", path)
-    monkeypatch.setitem(cc_app.PREFS, "auto_clean", False)
+    monkeypatch.setattr(common, "CONFIG_PATH", path)
+    monkeypatch.setitem(common.PREFS, "auto_clean", False)
     return cfg, path
 
 

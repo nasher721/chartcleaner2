@@ -31,7 +31,8 @@ INSTRUCTIONS = (
 )
 
 
-def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool = False) -> dict[str, Any]:
+def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool = False,
+                trends: bool = False) -> dict[str, Any]:
     """Clean a chart exactly like the Chart Cleaner app.
 
     Args:
@@ -39,9 +40,12 @@ def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool =
         preset: Optional saved preset name (see list_presets); empty uses current rules.
         format: "text", "markdown", "json" or "xml" (sectioned for LLMs).
         delta: Keep only what changed between daily notes (copy-forward removed).
+        trends: Add lab trends and medication changes across the chart's notes.
     """
-    out = service.clean(text, preset=preset or None, fmt=format, delta=delta, source="api:mcp")
-    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings") if k in out}
+    out = service.clean(text, preset=preset or None, fmt=format, delta=delta, trends=trends,
+                        source="api:mcp")
+    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings", "trends")
+            if k in out}
 
 
 def abbreviate(text: str, preset: str = "") -> dict[str, Any]:

@@ -22,7 +22,7 @@ Lines the rules don't recognize stay exactly as written.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterator
 
 DEFAULTS: dict[str, Any] = {"enabled": False, "drop_fields": [], "route_map": {},
                             "frequency_map": {}}
@@ -106,6 +106,45 @@ def _normalize(line: str, drops: list[re.Pattern], routes, freqs) -> str:
     return bullet.rstrip() + (" " if bullet.strip() else "") + body if body else line
 
 
+def med_section_lines(lines: list) -> Iterator[tuple[int, str]]:
+    """(index, line) for every non-blank line inside a medication section."""
+    in_meds = False
+    for i, line in enumerate(lines):
+        if line is None:
+            continue
+        if _HEADER.match(line):
+            in_meds = True
+            continue
+        if not in_meds:
+            continue
+        if not line.strip():
+            nxt = next((l for l in lines[i + 1:] if l and l.strip()), "")
+            in_meds = bool(re.match(r"^[ \t]*(?:[-•*·]|\d+[.)])?[ \t]*[a-z]", nxt))
+            continue
+        if _OTHER_HEADER.match(line) and not re.search(r"\d", line) and not _COLUMN_HEADER.match(line):
+            in_meds = False
+            continue
+        yield i, line
+
+
+def medication_list(text: str, cfg: dict | None = None) -> list[str]:
+    """Normalized medication lines from every medication section in ``text``."""
+    options = {**DEFAULTS, **((cfg or {}).get("med_normalize") or {})}
+    drops = [re.compile(p, re.IGNORECASE) for p in _DROP + list(options.get("drop_fields") or [])]
+    routes = _phrase_map(ROUTES, options.get("route_map"))
+    freqs = _phrase_map(FREQUENCIES, options.get("frequency_map"))
+    out = []
+    lines = text.split("\n")
+    for _, line in med_section_lines(lines):
+        if _COLUMN_HEADER.match(line):
+            continue
+        norm = _normalize(line, drops, routes, freqs)
+        norm = re.sub(r"^[ \t]*(?:[-•*·]|\d+[.)])[ \t]*", "", norm).strip()
+        if norm:
+            out.append(norm)
+    return out
+
+
 def run(text: str, cfg: dict, ctx: Any = None) -> tuple[str, int, dict]:
     options = {**DEFAULTS, **(cfg.get("med_normalize") or {})}
     if not options.get("enabled"):
@@ -115,23 +154,10 @@ def run(text: str, cfg: dict, ctx: Any = None) -> tuple[str, int, dict]:
     freqs = _phrase_map(FREQUENCIES, options.get("frequency_map"))
     lines: list[str | None] = list(text.split("\n"))
     changed = 0
-    in_meds = False
-    for i, line in enumerate(lines):
-        if _HEADER.match(line):
-            in_meds = True
-            continue
-        if not in_meds:
-            continue
-        if not line.strip():
-            nxt = next((l for l in lines[i + 1:] if l.strip()), "")
-            in_meds = bool(re.match(r"^[ \t]*(?:[-•*·]|\d+[.)])?[ \t]*[a-z]", nxt))
-            continue
+    for i, line in med_section_lines(lines):
         if _COLUMN_HEADER.match(line):
             lines[i] = None  # removed below
             changed += 1
-            continue
-        if _OTHER_HEADER.match(line) and not re.search(r"\d", line):
-            in_meds = False
             continue
         new = _normalize(line, drops, routes, freqs)
         if new != line:

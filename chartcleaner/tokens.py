@@ -23,6 +23,7 @@ from pathlib import Path
 from . import store
 
 __all__ = [
+    "load_token_map",
     "tokenize",
     "untokenize",
     "tokenize_phi_spans",
@@ -134,10 +135,14 @@ def newest_token_map() -> tuple[Path, dict[str, str]] | None:
         return None
     path = Path(maps[0]["file"])
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return path, dict(data.get("map") or {})
-    except (OSError, json.JSONDecodeError):
+        return path, store.load_token_map(path)
+    except Exception:  # unreadable, or encrypted with another machine's key
         return None
+
+
+def load_token_map(path: str | Path) -> dict[str, str]:
+    """A saved map (encrypted or legacy plain JSON) — used by ``--tokens-file``."""
+    return store.load_token_map(path)
 
 
 def build_map_record(mapping: dict[str, str], source: str = "") -> str:

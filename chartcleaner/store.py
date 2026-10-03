@@ -63,6 +63,13 @@ DEFAULT_PREFS = {
     "update_last_checked": None,
     "update_status": "Not checked",
     "update_status_code": None,
+    # Kept here so load_prefs doesn't drop them (it keeps known keys only).
+    "notes_folder": "",
+    "clipboard_watcher": {"enabled": False, "action": "auto"},
+    "note_presets": {},
+    "note_auto_apply": False,
+    # Delete token maps and batch/watcher output older than this (0 = keep).
+    "retention_days": 14,
 }
 
 
@@ -212,7 +219,8 @@ def save_export(text: str, base_name: str = "cleaned") -> str:
 def prune_exports(max_age_hours: float = 24.0) -> None:
     ensure_dirs()
     cutoff = time.time() - max_age_hours * 3600
-    for f in list(EXPORTS_DIR.glob("*.txt")) + list(EXPORTS_DIR.glob("*.zip")):
+    for f in list(EXPORTS_DIR.glob("*.txt")) + list(EXPORTS_DIR.glob("*.zip")) \
+            + list(EXPORTS_DIR.glob("*.docx")) + list(EXPORTS_DIR.glob("*.md")):
         try:
             if f.stat().st_mtime < cutoff:
                 f.unlink()
@@ -441,19 +449,28 @@ TOKEN_MAPS_TO_KEEP = 10
 WATCH_CONFIG_FILE = DATA_DIR / "watch.json"
 
 
+def _token_map_files() -> list[Path]:
+    """Oldest-first: encrypted ``.enc`` maps and legacy plain ``.json`` ones."""
+    if not TOKENS_DIR.exists():
+        return []
+    return sorted(list(TOKENS_DIR.glob("tokens-*.enc")) + list(TOKENS_DIR.glob("tokens-*.json")),
+                  key=lambda p: p.stem)
+
+
 def save_token_map(mapping: dict[str, str], source: str = "") -> Path:
-    """Persist one run's value→token map as a timestamped JSON file."""
+    """Persist one run's value→token map, encrypted (see secure_store)."""
+    from . import secure_store
+
     ensure_dirs()
-    dest = TOKENS_DIR / f"tokens-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    dest = TOKENS_DIR / f"tokens-{time.strftime('%Y%m%d-%H%M%S')}.enc"
     if not dest.exists():  # two runs in the same second share the file
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "source": source,
             "map": mapping,
         }
-        dest.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8")
-    for old in sorted(TOKENS_DIR.glob("tokens-*.json"))[:-TOKEN_MAPS_TO_KEEP]:
+        secure_store.write_text(dest, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    for old in _token_map_files()[:-TOKEN_MAPS_TO_KEEP]:
         try:
             old.unlink()
         except OSError:
@@ -461,25 +478,29 @@ def save_token_map(mapping: dict[str, str], source: str = "") -> Path:
     return dest
 
 
+def _read_token_record(path: Path) -> dict:
+    from . import secure_store
+    data = json.loads(secure_store.read_text(path))
+    if not isinstance(data, dict):
+        raise ValueError("not a token map")
+    return data
+
+
 def list_token_maps() -> list[dict]:
-    """Newest-first token map summaries: [{file, ts, count}]."""
-    if not TOKENS_DIR.exists():
-        return []
+    """Newest-first token map summaries: [{file, ts, count}] (count -1 = unreadable)."""
     out: list[dict] = []
-    for p in sorted(TOKENS_DIR.glob("tokens-*.json"), reverse=True):
+    for p in reversed(_token_map_files()):
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            data = _read_token_record(p)
             out.append({"file": str(p), "ts": str(data.get("ts") or p.stem),
                         "count": len(data.get("map") or {})})
-        except (json.JSONDecodeError, OSError):
+        except Exception:
             out.append({"file": str(p), "ts": p.stem, "count": -1})
     return out
 
 
 def load_token_map(path: str | Path) -> dict[str, str]:
-    p = Path(path)
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return dict(data.get("map") or {})
+    return dict(_read_token_record(Path(path)).get("map") or {})
 
 
 def delete_token_map(path: str | Path) -> bool:
@@ -488,6 +509,98 @@ def delete_token_map(path: str | Path) -> bool:
         p.unlink()
         return True
     return False
+
+
+def encrypt_legacy_token_maps() -> int:
+    """Re-save plain-text token maps from older versions encrypted; returns how many."""
+    from . import secure_store
+
+    n = 0
+    for p in list(TOKENS_DIR.glob("tokens-*.json")) if TOKENS_DIR.exists() else []:
+        try:
+            raw = p.read_bytes()
+            if not secure_store.is_encrypted(raw):
+                secure_store.write_text(p.with_suffix(".enc"), raw.decode("utf-8"))
+            p.unlink()
+            n += 1
+        except (OSError, UnicodeDecodeError):
+            continue
+    return n
+
+
+# ---------------------------------------------------------------------------
+# retention: chart-bearing files are deleted after prefs["retention_days"]
+# ---------------------------------------------------------------------------
+
+WATCHED_OUT_DIR = DATA_DIR / "watched_out"
+
+
+def _chart_data_paths() -> list[Path]:
+    """Files and folders under data/ that hold chart text or PHI."""
+    paths: list[Path] = _token_map_files()
+    if EXPORTS_DIR.exists():
+        paths += [p for p in EXPORTS_DIR.iterdir() if p.name != ".gitkeep"]
+    if WATCHED_OUT_DIR.exists():
+        paths += list(WATCHED_OUT_DIR.iterdir())
+    return paths
+
+
+def _remove(path: Path) -> bool:
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def purge_old_data(days: float | None = None) -> int:
+    """Delete chart-bearing files older than ``days`` (default: the pref).
+
+    Also encrypts any plain-text token maps left by older versions. Run
+    history, config backups and rules hold no chart text and are kept.
+    Returns the number of files/folders removed.
+    """
+    try:
+        encrypt_legacy_token_maps()
+    except Exception:
+        pass
+    if days is None:
+        days = float(load_prefs().get("retention_days") or 0)
+    if days <= 0:
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for p in _chart_data_paths():
+        try:
+            if p.stat().st_mtime < cutoff and _remove(p):
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+_last_purge = 0.0
+
+
+def maybe_purge_old_data(every_seconds: float = 3600.0) -> None:
+    """:func:`purge_old_data` at most once an hour, for long-running processes."""
+    global _last_purge
+    now = time.time()
+    if now - _last_purge < every_seconds:
+        return
+    _last_purge = now
+    try:
+        purge_old_data()
+    except Exception:
+        pass  # housekeeping must never break a clean
+
+
+def delete_all_chart_data() -> int:
+    """"Delete stored chart data now": token maps, exports and watcher output."""
+    return sum(_remove(p) for p in _chart_data_paths())
 
 
 # ---------------------------------------------------------------------------

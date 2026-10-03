@@ -7,6 +7,7 @@ from nicegui.testing import User
 
 from chartcleaner.engine import clean_text, validate_config
 
+from app_pages import common
 
 def base(**over) -> dict:
     cfg = {"emr_line_metadata": [r"^Printed by .*$"], "boilerplate": [], "epic_phi_patterns": [],
@@ -43,7 +44,6 @@ async def test_removed_tab_never_remove_saves_exception(user: User, monkeypatch,
     from chartcleaner import store
     from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
     from chartcleaner.engine import load_config, load_default_config, save_config
-    from nicegui import Client
 
     cfg = load_default_config()
     cfg["nlp_redaction"] = {"enabled": False}
@@ -53,8 +53,7 @@ async def test_removed_tab_never_remove_saves_exception(user: User, monkeypatch,
     save_config(cfg, path)
     monkeypatch.setattr(store, "append_run", lambda _r: None)
     monkeypatch.setattr(store, "load_prefs", lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
-    page = next(fn for fn, route in Client.page_routes.items() if route == "/")
-    monkeypatch.setitem(page.__globals__, "CONFIG_PATH", path)
+    monkeypatch.setattr(common, "CONFIG_PATH", path)
     before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
     CLEAN_STATE.update(input="Printed by Dr. Lee: K 6.1 called\nPlan: recheck\n", mode="clean",
                        result=None, result_text="", audit=None)

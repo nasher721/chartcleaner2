@@ -33,6 +33,9 @@ class BatchResult:
     phi_total: int = 0
     findings: int = 0
     elapsed_ms: int = 0
+    # clinical-facts check: "" when off, else the headline ("ok" status shows as ✓)
+    facts: str = ""
+    facts_status: str = ""
     cleaned: str = ""
     # slim per-stage summaries so batch runs still feed the Statistics dashboard
     stages: list[dict] = field(default_factory=list)
@@ -69,6 +72,8 @@ def run_batch(
                 phi_total=sum(result.phi_counts().values()),
                 findings=findings,
                 elapsed_ms=result.duration_ms,
+                facts=result.fact_check.headline() if result.fact_check else "",
+                facts_status=result.fact_check.status if result.fact_check else "",
                 cleaned=format_output(result.text, "text", delta)[0] if delta else result.text,
                 stages=[{"label": s.label, "matches": s.matches,
                          "before": s.chars_before, "after": s.chars_after,
