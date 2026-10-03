@@ -133,6 +133,11 @@ AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 - *Medication list cleanup* — `atorvastatin 40 mg PO daily`, without brand names,
   dispense/refill, dates or providers; held/discontinued marked; doses never dropped.
 - *Vitals & I/O summary* — flowsheet rows → ranges and last values; I/O → one line.
+- *Neuro ICU summaries* — neuro checks (`GCS 13–15 (last 13); Pupils 3 brisk → 3
+  sluggish`), EVD blocks (`EVD: 10 cm H2O, open; output 45 mL over 4 readings; ICP
+  8–22 (last 22; 1 reading >20)`), serial sodium (`Na checks: 141 → 143 → 145`) and
+  drip titrations (`Nicardipine drip: 5–10 mg/hr over 4 entries (last 7.5)`); each
+  part has its own switch.
 - *Imaging: keep impression* — radiology reports trimmed to title + impression.
 - *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
 Each rewrites a block only when it understands every line of it.
@@ -141,7 +146,14 @@ Each rewrites a block only when it understands every line of it.
 **Removed** (everything the line/block/learned rules deleted, with *Never
 remove this*), **Abbreviations**, and **Changes over time** for multi-day
 charts (only sentences that are new or changed after the first note — a
-fixed copy-forward view that never drops a new sentence or number). The note
+fixed copy-forward view that never drops a new sentence or number), and
+**Trends** for multi-note charts: each lab's value per note (`Na: 128 → 132 →
+135 ↑`) and medication-list changes between notes (started / stopped / dose
+changed); `clean-chart --trends` and the API/MCP `trends` option put the same
+block above the output. Every clean also runs a **clinical-facts check**: numbers
+with units, lab/vital/score values, medications, allergies and code status are
+counted before and after each stage, and anything that disappeared is listed
+with the stage that removed it (red when a reformatting stage lost it). The note
 type is detected; Settings → *Note types* can clean each type with its own
 preset. Statistics → *Rule health* lists rules that never match or touch too
 much. Settings → *Check my learned rules* confirms highlighted rules still do
@@ -230,13 +242,20 @@ def clean(text: str, ctx) -> str:
 | `data/stats.jsonl` | One line per cleaning run — the statistics history |
 | `data/audit_hits.jsonl` | One line per run — which leftover patterns the audit saw |
 | `data/backups/` | Timestamped config backups (newest 5, restorable in Settings) |
-| `data/tokens/` | Reversible-tokenization maps (newest 10) — **these undo your cleaning** |
+| `data/tokens/` | Reversible-tokenization maps (newest 10), **encrypted** — the key is in the macOS Keychain, protected by Windows DPAPI, or in `data/.datakey` elsewhere. **These undo your cleaning.** |
 | `data/evaluation.json` | The last recall report card from the evaluation harness |
 | `data/watch.json` | Folder-watcher configuration |
-| `data/exports/` | Downloaded results (auto-pruned after 24 h) |
+| `data/exports/` | Downloaded results (auto-pruned after 24 h) and batch output |
+| `data/watched_out/` | Folder-watcher output (when no other folder is chosen) |
 | `custom_rules/` | Your Python cleaning stages |
 
 Everything stays on this machine. Delete `data/` to reset all history.
+
+**Retention:** token maps, batch output and folder-watcher output in `data/` are deleted
+after 14 days by default (Settings → Stored chart data; 0 keeps them). The same card has
+**Delete stored chart data now**. Run history, backups and rules hold no chart text and
+are kept. Encrypted token maps can't be read on another machine — copying the folder
+doesn't carry the key.
 
 ---
 
@@ -357,7 +376,8 @@ regenerates it), and a build test that renders every app page.
 ## Project layout
 
 ```
-app.py                  # the desktop app (NiceGUI, local web UI)
+app.py                  # the desktop app entry point (NiceGUI, local web UI; routes in ROUTES)
+app_pages/              # one module per page + common.py (shared helpers) + updates.py
 medical_cleaner.py      # CLI entrypoint (same engine)
 chartcleaner/
   engine.py             # stage pipeline + per-stage statistics + custom-rule loader

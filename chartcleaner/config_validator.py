@@ -48,6 +48,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "lab_compaction",
         "med_normalize",
         "vitals_summary",
+        "neuro_summary",
         "note_profiles",
         "prompt_templates",
         "stage_options",
@@ -55,6 +56,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "abbreviations",
         "clinical_identifiers",
         "local_llm",
+        "fact_check",
     }
 )
 
@@ -261,6 +263,8 @@ class ConfigValidator:
         self._validate_compactor_options()
         self._validate_note_profiles()
         self._validate_prompt_templates()
+        self._check_option_group("fact_check", {"enabled": True},
+                                 {"enabled": ((bool,), "true/false")})
 
     def _validate_prompt_templates(self) -> None:
         templates = self.cfg.get("prompt_templates")
@@ -313,6 +317,13 @@ class ConfigValidator:
                                            "Do Not Use abbreviation")
         self._check_option_group("vitals_summary", self.default_options["vitals_summary"],
                                  {"enabled": ((bool,), "true/false")})
+        neuro = self._check_option_group(
+            "neuro_summary", self.default_options["neuro_summary"],
+            {"enabled": ((bool,), "true/false"), "neuro_checks": ((bool,), "true/false"),
+             "evd": ((bool,), "true/false"), "sodium": ((bool,), "true/false"),
+             "drips": ((bool,), "true/false"), "icp_threshold": ((int, float), "a number")})
+        if neuro is not None and isinstance(neuro.get("icp_threshold"), bool):
+            self.errors.append("neuro_summary.icp_threshold: wrong type (expected a number)")
 
     def _validate_imaging_options(self) -> None:
         from .compactors.imaging import KEEPABLE

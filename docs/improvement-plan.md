@@ -554,3 +554,36 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
       Undo, macOS notification; "pause while the app window is focused" not
       built (the server can't see window focus)
 - [x] I7 browser extension — MV3 context menu → local API → clipboard
+
+---
+
+# Phase 5 (2026-10-03) — trust, privacy, structure, neuro ICU
+
+Order: 1 → 4 → 5 → 2 → 3. Branch `claude/magical-volta-w468nq`.
+
+- [x] **P1 "Nothing clinical lost" check** — `chartcleaner/fact_check.py`. Facts =
+  numbers with units, labelled lab/vital/score values, BPs, drug names (whitelist +
+  generic stems), allergy/code-status words. `Pipeline.run(fact_check=None)` snapshots
+  fact counts after every stage that changed the text and attributes each loss to a
+  stage: *unexpected* (reformatting stages), *rule* (regex/learned/custom/PHI), *by
+  design* (sections, imaging, vitals/neuro/lab summaries; dedup only when the value
+  is gone from the output). `result.fact_check` (FactReport) holds chart text; history
+  keeps `summary()` counts. Clean page badge + list (“Never remove this” for regex
+  stages), Batch column, CLI stderr, `service.clean` payload. Config `fact_check.enabled`.
+- [x] **P4 Encrypted PHI + retention** — `chartcleaner/secure_store.py` (Fernet;
+  key in macOS Keychain / Windows DPAPI / 0600 `data/.datakey`;
+  `CHARTCLEANER_KEY_BACKEND` forces one). Token maps are `tokens-*.enc`; legacy
+  `.json` maps load and are re-saved encrypted. `store.purge_old_data()` (startup +
+  hourly) deletes token maps, exports/batch output and `data/watched_out` older than
+  `prefs.retention_days` (default 14). Settings → *Stored chart data*. Also fixed:
+  prefs not in `DEFAULT_PREFS` were dropped on load; `--tokens-file`; tests writing
+  the real `data/prefs.json`.
+- [x] **P5 Split app.py** — `app_pages/` (one module per page, `common.py`,
+  `updates.py`); routes in `app.ROUTES`; rebindable names read as `common.X`
+  (enforced by a test).
+- [x] **P2 Trends** — `chartcleaner/trends.py`: per-note lab values (lab-compaction
+  aliases, case rules for short names) and med-list changes between notes; Clean
+  page *Trends* tab, `--trends`, API/MCP `trends`.
+- [x] **P3 Neuro ICU condensers** — stage `neuro_summary` (anchor `vitals_summary`,
+  off by default): neuro checks, EVD/ICP (`icp_threshold`), serial sodium, drip
+  titrations; each part switchable.

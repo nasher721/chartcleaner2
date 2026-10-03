@@ -83,7 +83,7 @@ curl -s http://127.0.0.1:8765/api/v1/clean -H "Authorization: Bearer $TOKEN" \
 ```
 Routes:
 - `/api/v1/health`
-- `/api/v1/clean`, with optional `format`, `delta` and `wrap`
+- `/api/v1/clean`, with optional `format`, `delta`, `trends` and `wrap` (the response also carries `fact_check`)
 - `/api/v1/abbreviate`, `/api/v1/expand`
 - `/api/v1/prompt`, with `template`
 

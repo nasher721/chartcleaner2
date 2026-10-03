@@ -10,6 +10,7 @@ global app state between tests.
 import pytest
 
 import app as cc_app
+from app_pages import common
 from chartcleaner.appstate import PENDING_RULE
 from nicegui.testing import User
 
@@ -100,9 +101,9 @@ async def test_clean_renders_with_available_or_saved_models(
     cfg['local_llm'] = {'model': saved_model}
     config_path = tmp_path / 'config.json'
     save_config(cfg, config_path)
-    monkeypatch.setattr(cc_app, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(common, 'CONFIG_PATH', config_path)
     monkeypatch.setattr(store, 'append_run', lambda _record: None)
-    monkeypatch.setitem(cc_app.PREFS, 'auto_clean', False)
+    monkeypatch.setitem(common.PREFS, 'auto_clean', False)
     monkeypatch.setattr(LocalLlmClient, 'is_available', lambda self: available)
     monkeypatch.setattr(LocalLlmClient, 'list_models', lambda self: list(models))
     before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
@@ -157,8 +158,8 @@ async def test_pipeline_sample_counts_medical_abbreviations(user: User, monkeypa
 
     config_path = tmp_path / 'config.json'
     save_config(load_default_config(), config_path)
-    monkeypatch.setattr(cc_app, 'CONFIG_PATH', config_path)
-    monkeypatch.setattr(cc_app, 'CUSTOM_DIR', tmp_path)
+    monkeypatch.setattr(common, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(common, 'CUSTOM_DIR', tmp_path)
     monkeypatch.setitem(PIPE_TEST, 'text', 'Anterior cerebral artery; twice daily.')
 
     @ui.page('/pipeline')
@@ -213,14 +214,14 @@ async def test_settings_shows_update_controls_and_local_data_boundary(user: User
 async def test_source_checkout_update_status_is_local():
     import app as cc_app
 
-    before = dict(cc_app.PREFS)
+    before = dict(common.PREFS)
     try:
         _manifest, status = await cc_app._check_for_updates(automatic=False, force=True)
         assert status["state"] == "source"
-        assert cc_app.PREFS["update_status_code"] == "source_mode"
+        assert common.PREFS["update_status_code"] == "source_mode"
     finally:
-        cc_app.PREFS.clear()
-        cc_app.PREFS.update(before)
+        common.PREFS.clear()
+        common.PREFS.update(before)
 
 
 async def test_ai_panels_render_after_clean_run(user: User):
@@ -270,23 +271,30 @@ async def test_update_confirmation_requires_confirm_click(user: User):
 
 
 def test_every_page_route_points_at_its_page_function():
-    """A helper inserted under an @ui.page decorator would steal the route."""
-    import ast
+    """Routes are registered in app.py's ROUTES table (not with decorators)."""
+    assert {path: fn.__name__ for path, fn in cc_app.ROUTES.items()} == {
+        "/": "clean_page", "/batch": "batch_page", "/rules": "text_rules_page",
+        "/pipeline": "pipeline_page", "/stats": "stats_page", "/scripts": "scripts_page",
+        "/settings": "settings_page",
+    }
+
+
+def test_page_modules_read_rebindable_names_through_common():
+    """Tests patch common.CONFIG_PATH/PREFS/CUSTOM_DIR; a page module holding its
+    own copy (a bare name, or an @ui.page decorator re-registering it) would
+    escape the patch and write the real config.json."""
+    import re
     from pathlib import Path
 
-    tree = ast.parse(Path(cc_app.__file__).read_text(encoding="utf-8"))
-    routes = {}
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for dec in node.decorator_list:
-                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
-                        and dec.func.attr == "page"):
-                    routes[node.name] = dec.args[0].value
-    assert routes == {
-        "clean_page": "/", "batch_page": "/batch", "text_rules_page": "/rules",
-        "pipeline_page": "/pipeline", "stats_page": "/stats", "scripts_page": "/scripts",
-        "settings_page": "/settings",
-    }
+    root = Path(cc_app.__file__).parent
+    for path in [root / "app.py", *sorted((root / "app_pages").glob("*.py"))]:
+        if path.name == "common.py":
+            continue
+        code = path.read_text(encoding="utf-8")
+        bare = re.findall(r"(?<![\w.])(CONFIG_PATH|PREFS|CUSTOM_DIR)\b", code)
+        assert not bare, f"{path.name} uses {bare[0]} without common."
+        if path.parent.name == "app_pages":
+            assert "@ui.page" not in code, f"{path.name}: register routes in app.ROUTES"
 
 
 async def test_expand_mode_and_abbreviations_tab_disable(user: User, monkeypatch, tmp_path):
@@ -304,11 +312,7 @@ async def test_expand_mode_and_abbreviations_tab_disable(user: User, monkeypatch
     monkeypatch.setattr(store, 'append_run', lambda _record: None)
     monkeypatch.setattr(store, 'append_audit_hits', lambda _hits: None)
     monkeypatch.setattr(store, 'load_prefs', lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
-    # The fixture ran app.py before this test started, so its pages captured the
-    # real config path; point the running pages at the temp config before writing.
-    from nicegui import Client
-    page = next(fn for fn, path in Client.page_routes.items() if path == '/')
-    monkeypatch.setitem(page.__globals__, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(common, 'CONFIG_PATH', config_path)
     before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
     CLEAN_STATE.update(input='Pt w/ HTN, MS stable', mode='clean', result=None, result_text='', audit=None)
     try:

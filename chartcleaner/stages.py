@@ -19,6 +19,7 @@ from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
 from .compactors import meds as meds_compactor
+from .compactors import neuro as neuro_compactor
 from .compactors import vitals as vitals_compactor
 
 if TYPE_CHECKING:
@@ -852,6 +853,7 @@ RUNNERS: dict[str, Callable] = {
     "labs": labs_compactor.run,
     "meds": meds_compactor.run,
     "vitals": vitals_compactor.run,
+    "neuro": neuro_compactor.run,
     "sections": run_sections,
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
@@ -879,6 +881,7 @@ KIND_TO_RUNNER = {
     "lab_compaction": "labs",
     "med_normalize": "meds",
     "vitals_summary": "vitals",
+    "neuro_summary": "neuro",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
