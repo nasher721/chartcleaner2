@@ -55,6 +55,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "abbreviations",
         "clinical_identifiers",
         "local_llm",
+        "fact_check",
     }
 )
 
@@ -261,6 +262,8 @@ class ConfigValidator:
         self._validate_compactor_options()
         self._validate_note_profiles()
         self._validate_prompt_templates()
+        self._check_option_group("fact_check", {"enabled": True},
+                                 {"enabled": ((bool,), "true/false")})
 
     def _validate_prompt_templates(self) -> None:
         templates = self.cfg.get("prompt_templates")

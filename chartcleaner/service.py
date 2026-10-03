@@ -81,6 +81,7 @@ def _payload(result: RunResult, text: str) -> dict:
         "phi": result.phi_counts(),
         "warnings": list(result.warnings),
         "stages": _slim_stages(result),
+        **({"fact_check": result.fact_check.to_dict()} if result.fact_check else {}),
     }
 
 

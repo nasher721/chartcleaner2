@@ -71,8 +71,20 @@ def _print_summary(result, label: str):
         extra = f", {sum(s.details.get('phi', {}).values())} PHI" if s.details.get("phi") else ""
         print(f"  - {s.label}: {s.matches} match(es), "
               f"{s.chars_before - s.chars_after:+,} chars{extra}")
+    _print_fact_check(result)
     for w in result.warnings:
         print(f"  ! {w}", file=sys.stderr)
+
+
+def _print_fact_check(result, limit: int = 5) -> None:
+    """Warn on stderr when the clinical-facts check lost or removed values."""
+    report = getattr(result, "fact_check", None)
+    if report is None or report.status == "ok":
+        return
+    print(f"  ! Clinical facts: {report.headline()}", file=sys.stderr)
+    for x in [x for x in report.losses if x.category != "by_design"][:limit]:
+        print(f"    - {x.display} ({x.stage_label}): {x.lines[0][:100] if x.lines else ''}",
+              file=sys.stderr)
 
 
 def _print_audit(audit, limit: int = 10) -> None:
@@ -139,6 +151,7 @@ def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
     else:
         pyperclip.copy(out)
     print(f"{result.summary()}", file=sys.stderr)
+    _print_fact_check(result)
 
 
 def _run_export_abbreviations(args) -> None:

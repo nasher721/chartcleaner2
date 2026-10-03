@@ -617,6 +617,9 @@ async def clean_page():
                 else:
                     ui.label("✓ Audit: no leftover PHI patterns flagged.").classes("text-xs text-green-600")
 
+            if result.fact_check is not None and not single_pass:
+                render_fact_check(result.fact_check)
+
             abbr_changes = next((st.details.get("changes") or [] for st in result.stages
                                  if st.id == "medical_abbreviations"), [])
             with ui.tabs() as tabs:
@@ -1434,6 +1437,45 @@ async def clean_page():
                 if len(seen) > 12:
                     ui.label(f"… {len(seen) - 12} more").classes("text-xs opacity-60")
 
+    def render_fact_check(report) -> None:
+        """The "Nothing clinical lost" badge and, when something went, the list."""
+        status = report.status
+        icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
+                       "alert": ("report", "red")}[status]
+        if not report.losses:
+            with ui.row().classes("items-center gap-1").mark("fact-check"):
+                ui.icon(icon, color=color)
+                ui.label(report.headline()).classes(f"text-sm text-{color}")
+            return
+        titles = {"unexpected": "Lost by a stage that should only reformat",
+                  "rule": "Removed by a removal rule",
+                  "by_design": "Dropped by a section or summary setting"}
+        with ui.expansion(report.headline(), icon=icon, value=status == "alert") \
+                .classes(f"w-full text-{color}").mark("fact-check"):
+            ui.label("Numbers with units, lab and vital values, medications and safety words "
+                     "(allergies, code status) are counted before and after every stage.") \
+                .classes("text-xs opacity-70")
+            for cat in ("unexpected", "rule", "by_design"):
+                items = [x for x in report.losses if x.category == cat]
+                if not items:
+                    continue
+                ui.label(titles[cat]).classes("text-sm font-semibold mt-1")
+                for x in items[:20]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.badge(x.display + (f" ×{x.count}" if x.count > 1 else "")) \
+                            .props(f"outline color={'red' if cat == 'unexpected' else 'orange' if cat == 'rule' else 'grey'}")
+                        ui.label(f"{x.stage_label}: {x.lines[0][:240] if x.lines else ''}") \
+                            .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
+                        if x.lines:
+                            ui.button(icon="content_copy",
+                                      on_click=lambda t=x.lines[0]: copy_to_clipboard(t)).props("flat dense")
+                        if x.lines and x.stage_id in EXCEPTION_STAGES:
+                            ui.button("Never remove this", icon="shield",
+                                      on_click=lambda t=x.lines[0], sid=x.stage_id: keep_text(sid, t)) \
+                                .props("flat dense")
+                if len(items) > 20:
+                    ui.label(f"… {len(items) - 20} more").classes("text-xs opacity-60")
+
     async def keep_text(sid: str, text: str) -> None:
         cfg = load_config(CONFIG_PATH)
         options = cfg.setdefault("stage_options", {}).setdefault(sid, {})
@@ -1825,6 +1867,7 @@ def batch_page():
                     {"name": "reduction", "label": "Reduction", "field": "reduction"},
                     {"name": "phi", "label": "PHI redacted", "field": "phi"},
                     {"name": "findings", "label": "Audit findings", "field": "findings"},
+                    {"name": "facts", "label": "Clinical facts", "field": "facts", "align": "left"},
                     {"name": "ms", "label": "Elapsed", "field": "ms", "align": "left"},
                     {"name": "status", "label": "Status", "field": "status", "align": "left"},
                 ]
@@ -1835,10 +1878,13 @@ def batch_page():
                                      "chars": f"{r.chars_before:,} → {r.chars_after:,}",
                                      "reduction": f"{r.reduction:+.1f}%",
                                      "phi": r.phi_total, "findings": r.findings,
+                                     "facts": ("✓ kept" if r.facts_status == "ok" else
+                                               ("⚠ " if r.facts_status == "review" else "✕ ")
+                                               + r.facts) if r.facts_status else "—",
                                      "ms": f"{r.elapsed_ms:,} ms", "status": "ok"})
                     else:
                         rows.append({"file": r.name, "chars": "—", "reduction": "—",
-                                     "phi": "—", "findings": "—",
+                                     "phi": "—", "findings": "—", "facts": "—",
                                      "ms": f"{r.elapsed_ms:,} ms",
                                      "status": f"error: {r.error}"})
                 ui.table(columns=cols, rows=rows, row_key="file",
@@ -1987,6 +2033,8 @@ STAGE_EDITORS = {
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
 REVIEWABLE_REMOVAL_STAGES = ("metadata_lines", "boilerplate", "learned_rules")
+# Regex stages that honor stage_options.<sid>.exceptions ("Never remove this").
+EXCEPTION_STAGES = ("metadata_lines", "boilerplate", "learned_rules", "literal_replacements")
 
 # Declarative option forms for the opt-in condensing stages:
 # (option, label, control, choices) — control is switch | text | select | multi | dates.

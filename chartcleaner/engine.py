@@ -25,6 +25,7 @@ from .custom_rules import (
     list_custom_rules,
     load_custom_module,
 )
+from . import fact_check as fact_check_mod
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
@@ -290,6 +291,8 @@ class RunResult:
     chars_before: int = 0
     words_before: int = 0
     lines_before: int = 0
+    # FactReport from fact_check (holds chart text; history keeps summary only)
+    fact_check: Any = None
 
     @property
     def chars_after(self) -> int:
@@ -345,6 +348,7 @@ class RunResult:
                 for s in self.stages
             ],
             "warnings": self.warnings,
+            **({"fact_check": self.fact_check.summary()} if self.fact_check else {}),
         }
 
 
@@ -488,23 +492,36 @@ class Pipeline:
     # -- execution -----------------------------------------------------------
 
     def run(self, text: str, wrap: bool | None = None, *,
-            track_changes: bool = False) -> RunResult:
+            track_changes: bool = False, fact_check: bool | None = None) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
         stage's ``details["changes"]`` (in memory only; never in history).
+        ``fact_check`` (default: config ``fact_check.enabled``, clean mode
+        only) compares clinical facts before and after every stage and puts a
+        :class:`~chartcleaner.fact_check.FactReport` in ``result.fact_check``.
         """
         started = time.perf_counter()
         ctx = CleanContext(self.config, track_changes=track_changes)
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
+        if fact_check is None:
+            fact_check = self.mode == "clean" and bool(
+                (self.config.get("fact_check") or fact_check_mod.DEFAULTS).get("enabled", True))
+        tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
-        text, stage_stats, warnings = self._execute_stages(text, ctx)
+        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker)
         text, wrapped, wrapper_stat = self._apply_wrapper(
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
+        report = None
+        if tracker is not None:
+            try:
+                report = tracker.report(text)
+            except Exception as e:  # the check must never break a clean
+                warnings.append(f"Clinical-facts check failed: {type(e).__name__}: {e}")
 
         return RunResult(
             text=text,
@@ -515,10 +532,11 @@ class Pipeline:
             chars_before=chars_before,
             words_before=words_before,
             lines_before=lines_before,
+            fact_check=report,
         )
 
     def _execute_stages(
-        self, text: str, ctx: CleanContext
+        self, text: str, ctx: CleanContext, tracker: Any = None
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
@@ -526,11 +544,14 @@ class Pipeline:
         for spec in self.stages:
             st = StageStat(id=spec.id, label=spec.label, kind=spec.kind, enabled=spec.enabled)
             st.chars_before = len(text)
+            before = text
             text, st, warning = self._execute_single_stage(spec, text, ctx, st)
             if warning:
                 warnings.append(warning)
             st.chars_after = len(text)
             stats.append(st)
+            if tracker is not None and text != before:
+                tracker.after_stage(spec.id, spec.label, text)
 
         return text, stats, warnings
 
@@ -584,7 +605,8 @@ def clean_text(
     *,
     mode: str = "clean",
     track_changes: bool = False,
+    fact_check: bool | None = None,
 ) -> RunResult:
     """One-shot convenience: build a pipeline and run it."""
     return Pipeline(config, custom_dir=custom_dir, mode=mode).run(
-        text, wrap=wrap, track_changes=track_changes)
+        text, wrap=wrap, track_changes=track_changes, fact_check=fact_check)
