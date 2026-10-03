@@ -6,7 +6,8 @@ import csv
 from pathlib import Path
 from typing import Callable
 
-from .abbreviations import SOURCE_PATH, normalize_settings
+from .abbreviation_safety import check, is_blocked, needs_override, report
+from .abbreviations import SOURCE_PATH, normalize_settings, preview
 
 PAGE_SIZE = 25
 
@@ -26,8 +27,121 @@ def _bundled() -> list[dict[str, str]]:
     return result
 
 
-def render(load_current: Callable[[], dict], save_current: Callable[[dict], None]):
-    """Render a searchable paginated editor using fresh config reads on writes."""
+def show_issues(container, issues) -> None:
+    """Render safety issues (block = red, warn = amber) into ``container``."""
+    from nicegui import ui
+
+    container.clear()
+    with container:
+        for issue in issues:
+            color = "text-negative" if issue.level == "block" else "text-warning"
+            icon = "block" if issue.level == "block" else "warning"
+            with ui.row().classes("items-start gap-1 no-wrap"):
+                ui.icon(icon).classes(color)
+                text = issue.message + (f" Use “{issue.use_instead}” instead." if issue.use_instead else "")
+                ui.label(text).classes(f"text-sm {color}")
+
+
+def save_with_safety(term: str, replacement: str, cfg: dict, save: Callable[[bool], None]) -> None:
+    """Save directly, or ask for an explicit override when a rule is Do Not Use.
+
+    ``save(acknowledged)`` is called with True only after the user ticks the
+    override box.
+    """
+    from nicegui import ui
+
+    issues = check(term, replacement, cfg)
+    if not needs_override(issues):
+        save(False)
+        for issue in issues:
+            ui.notify(issue.message, type="warning")
+        return
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl gap-2"):
+        ui.label(f"“{term}” → “{replacement}” is a Do Not Use abbreviation").classes("text-lg font-semibold")
+        show_issues(ui.column().classes("gap-1"), issues)
+        ui.label("Blocked abbreviations are never applied unless you allow them here. "
+                 "Your choice is saved with the rule.").classes("text-sm opacity-70")
+        understood = ui.checkbox("I understand the risk — use this abbreviation anyway")
+
+        def confirm() -> None:
+            dialog.close()
+            save(True)
+
+        with ui.row():
+            allow = ui.button("Save anyway", on_click=confirm).props("unelevated color=negative")
+            allow.bind_enabled_from(understood, "value")
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
+def _safety_report(load_current: Callable[[], dict]) -> None:
+    from nicegui import ui
+
+    rows = report(load_current())
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl gap-2"):
+        ui.label("Abbreviation safety report").classes("text-lg font-semibold")
+        ui.label("Rules in your dictionary that are on The Joint Commission Do Not Use list or "
+                 "ISMP's error-prone list. Blocked rules are not applied; allow one from the "
+                 "dictionary list if you really need it.").classes("text-sm opacity-70")
+        if not rows:
+            ui.label("No Do Not Use abbreviations found.").classes("text-positive")
+        else:
+            ui.table(columns=[
+                {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                {"name": "term", "label": "Term", "field": "term", "align": "left"},
+                {"name": "abbreviation", "label": "Abbreviation", "field": "abbreviation", "align": "left"},
+                {"name": "use", "label": "Use instead", "field": "use_instead", "align": "left"},
+                {"name": "source", "label": "Source", "field": "source", "align": "left"},
+            ], rows=rows, row_key="term").classes("w-full").props("dense flat")
+        ui.button("Close", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
+def _export_dialog(load_current: Callable[[], dict]) -> None:
+    from nicegui import ui
+
+    from .expander_export import entries, export_filename, render as render_export
+
+    labels = {"plist": "macOS Text Replacements (.plist)", "espanso": "Espanso (.yml)",
+              "textexpander": "TextExpander (.csv)", "ahk": "AutoHotkey v2 for Windows (.ahk)"}
+    help_text = {
+        "plist": "Drag the file into System Settings → Keyboard → Text Replacements.",
+        "espanso": "Put the file in Espanso's match folder (espanso path shows it).",
+        "textexpander": "In TextExpander choose File → Import Snippets and pick the file.",
+        "ahk": "Double-click the file with AutoHotkey v2 installed (add it to Startup to keep it on).",
+    }
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-xl gap-2"):
+        ui.label("Export for a text expander").classes("text-lg font-semibold")
+        ui.label("Type the prefix plus an abbreviation anywhere (for example ;sah) and the "
+                 "expander types the full term. Do Not Use abbreviations are left out.") \
+            .classes("text-sm opacity-70")
+        fmt = ui.select(labels, value="plist", label="Format").classes("w-full")
+        prefix = ui.input("Prefix typed before each abbreviation", value=";").classes("w-full")
+        bundled = ui.switch("Include the bundled dictionary (not only my abbreviations)", value=True)
+        how = ui.label(help_text["plist"]).classes("text-sm")
+        fmt.on_value_change(lambda e: how.set_text(help_text[e.value]))
+
+        def download() -> None:
+            pairs = entries(load_current(), prefix=prefix.value or "",
+                            include_bundled=bool(bundled.value))
+            if not pairs:
+                ui.notify("Nothing to export.", type="warning")
+                return
+            ui.download.content(render_export(fmt.value, pairs), export_filename(fmt.value))
+            ui.notify(f"Exported {len(pairs)} abbreviation(s).", type="positive")
+
+        with ui.row():
+            ui.button("Download", icon="download", on_click=download).props("unelevated")
+            ui.button("Close", on_click=dialog.close).props("flat")
+    dialog.open()
+
+
+def render(load_current: Callable[[], dict], save_current: Callable[[dict], None],
+           sample_text: Callable[[], str] | None = None):
+    """Render a searchable paginated editor using fresh config reads on writes.
+
+    ``sample_text`` returns the chart used for live previews of a new rule.
+    """
     from nicegui import ui
 
     state = {"query": "", "page": 0}
@@ -53,9 +167,15 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
         ui.label("Medical abbreviation dictionary").classes("text-lg font-semibold")
         search = ui.input("Search terms or replacements", on_change=lambda event: change_search(event.value)).props("clearable")
         with ui.row().classes("w-full items-center"):
-            term_input = ui.input("New expanded term").classes("flex-grow")
-            replacement_input = ui.input("Replacement").classes("flex-grow")
+            term_input = ui.input("New expanded term", on_change=lambda _: refresh_preview()).classes("flex-grow")
+            replacement_input = ui.input("Replacement", on_change=lambda _: refresh_preview()).classes("flex-grow")
             ui.button("Add custom", icon="add", on_click=lambda: add_custom(term_input, replacement_input))
+        preview_box = ui.column().classes("w-full gap-1")
+        with ui.row().classes("items-center gap-2"):
+            ui.button("Safety report", icon="health_and_safety",
+                      on_click=lambda: _safety_report(load_current)).props("flat")
+            ui.button("Export for text expander", icon="keyboard",
+                      on_click=lambda: _export_dialog(load_current)).props("flat")
         listing = ui.column().classes("w-full gap-2")
         with ui.row().classes("items-center"):
             previous = ui.button("Previous", on_click=lambda: turn(-1)).props("flat")
@@ -67,17 +187,47 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
         state["page"] = 0
         refresh()
 
+    def refresh_preview() -> None:
+        term = (term_input.value or "").strip()
+        replacement = (replacement_input.value or "").strip()
+        preview_box.clear()
+        if not term or not replacement:
+            return
+        config = load_current()
+        with preview_box:
+            issues = ui.column().classes("gap-1")
+            show_issues(issues, check(term, replacement, config))
+            chart = sample_text() if sample_text else ""
+            if not chart.strip():
+                return
+            try:
+                result = preview(chart, config, term, replacement)
+            except Exception:
+                return
+            ui.label(f"Would change {result['count']} place(s) in the current chart.") \
+                .classes("text-sm font-medium")
+            for sample in result["samples"]:
+                ui.label(f"{sample['before']}  →  {sample['after']}").classes("text-xs opacity-80 cc-mono")
+
     def add_custom(term_control, replacement_control) -> None:
         term = (term_control.value or "").strip()
         replacement = (replacement_control.value or "").strip()
         if not term or not replacement:
             ui.notify("Both term and replacement are required", type="warning")
             return
-        def mutate(group: dict) -> None:
-            group["custom"] = [x for x in group["custom"] if x["term"].casefold() != term.casefold()]
-            group["custom"].append({"term": term, "replacement": replacement, "enabled": True})
-        update(mutate)
-        term_control.value = replacement_control.value = ""
+
+        def save(acknowledged: bool) -> None:
+            def mutate(group: dict) -> None:
+                group["custom"] = [x for x in group["custom"] if x["term"].casefold() != term.casefold()]
+                entry = {"term": term, "replacement": replacement, "enabled": True}
+                if acknowledged:
+                    entry["acknowledged"] = True
+                group["custom"].append(entry)
+            update(mutate)
+            term_control.value = replacement_control.value = ""
+            preview_box.clear()
+
+        save_with_safety(term, replacement, load_current(), save)
 
     def turn(delta: int) -> None:
         state["page"] = max(0, state["page"] + delta)
@@ -104,29 +254,38 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
         listing.clear()
         with listing:
             for item in entries[state["page"] * PAGE_SIZE:(state["page"] + 1) * PAGE_SIZE]:
-                _row(item, update)
+                _row(item, update, load_current)
 
     refresh()
     return listing
 
 
-def _row(item: dict, update: Callable[[Callable[[dict], None]], None]) -> None:
+def _row(item: dict, update: Callable[[Callable[[dict], None]], None],
+         load_current: Callable[[], dict]) -> None:
     from nicegui import ui
 
+    blocked = (is_blocked(item["replacement"], item["term"])
+               and not (item.get("custom") and item.get("acknowledged")))
     with ui.row().classes("w-full items-center flex-wrap border-b pb-1"):
         ui.label(item["term"]).classes("font-medium min-w-[280px]")
         ui.label("→")
         ui.label(item["replacement"]).classes("min-w-[90px]")
-        if item.get("custom"):
+        if blocked:
+            ui.badge("Blocked: Do Not Use", color="negative").tooltip(
+                " ".join(i.message for i in check(item["term"], item["replacement"]) if i.level == "block"))
+        if blocked and not item.get("custom"):
+            ui.button("Allow anyway", icon="lock_open",
+                      on_click=lambda value=item: _allow(update, load_current, value)).props("flat")
+        elif item.get("custom"):
             enabled = item.get("enabled", not item.get("disabled", False))
             ui.switch("Enabled", value=enabled, on_change=lambda event, term=item["term"]: _set_custom_enabled(update, term, event.value))
-            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value)).props("flat")
+            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value, load_current)).props("flat")
             ui.button("Remove", icon="delete", on_click=lambda term=item["term"]: _remove_custom(update, term)).props("flat color=negative")
         elif item.get("disabled"):
-            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value)).props("flat")
+            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value, load_current)).props("flat")
             ui.button("Restore bundled", on_click=lambda term=item["term"]: _restore(update, term)).props("flat")
         else:
-            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value)).props("flat")
+            ui.button("Edit", icon="edit", on_click=lambda value=item: _edit_custom(update, value, load_current)).props("flat")
             ui.button("Disable", on_click=lambda term=item["term"]: _disable(update, term)).props("flat")
 
 
@@ -137,7 +296,18 @@ def _set_custom_enabled(update, term: str, enabled: bool) -> None:
     update(mutate)
 
 
-def _edit_custom(update, item: dict) -> None:
+def _allow(update, load_current: Callable[[], dict], item: dict) -> None:
+    def save(acknowledged: bool) -> None:
+        def mutate(group: dict) -> None:
+            group["custom"] = [x for x in group["custom"] if x["term"].casefold() != item["term"].casefold()]
+            group["custom"].append({"term": item["term"], "replacement": item["replacement"],
+                                    "enabled": True, "acknowledged": acknowledged})
+        update(mutate)
+
+    save_with_safety(item["term"], item["replacement"], load_current(), save)
+
+
+def _edit_custom(update, item: dict, load_current: Callable[[], dict]) -> None:
     from nicegui import ui
 
     with ui.context.client.content, ui.dialog() as dialog, ui.card():
@@ -149,15 +319,25 @@ def _edit_custom(update, item: dict) -> None:
             if not new_term or not new_replacement:
                 ui.notify("Both term and replacement are required", type="warning")
                 return
-            def mutate(group: dict) -> None:
-                if any(x["term"].casefold() == new_term.casefold()
-                       and x["term"].casefold() != item["term"].casefold()
-                       for x in group["custom"]):
-                    raise ValueError("A custom entry with that term already exists")
-                group["custom"] = [x for x in group["custom"] if x["term"].casefold() != item["term"].casefold()]
-                group["custom"].append({"term": new_term, "replacement": new_replacement, "enabled": item.get("enabled", True)})
-            update(mutate)
-            dialog.close()
+            def persist(acknowledged: bool) -> None:
+                def mutate(group: dict) -> None:
+                    if any(x["term"].casefold() == new_term.casefold()
+                           and x["term"].casefold() != item["term"].casefold()
+                           for x in group["custom"]):
+                        raise ValueError("A custom entry with that term already exists")
+                    group["custom"] = [x for x in group["custom"] if x["term"].casefold() != item["term"].casefold()]
+                    entry = {"term": new_term, "replacement": new_replacement, "enabled": item.get("enabled", True)}
+                    if acknowledged:
+                        entry["acknowledged"] = True
+                    group["custom"].append(entry)
+                update(mutate)
+                dialog.close()
+
+            unchanged = (new_term == item["term"] and new_replacement == item["replacement"])
+            if unchanged and item.get("acknowledged"):
+                persist(True)  # already allowed; don't ask again
+            else:
+                save_with_safety(new_term, new_replacement, load_current(), persist)
         with ui.row():
             ui.button("Save", on_click=save)
             ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -176,4 +356,4 @@ def _restore(update, term: str) -> None:
     update(lambda group: group.__setitem__("disabled", [x for x in group["disabled"] if x.casefold() != term.casefold()]))
 
 
-__all__ = ["render", "PAGE_SIZE"]
+__all__ = ["render", "save_with_safety", "show_issues", "PAGE_SIZE"]

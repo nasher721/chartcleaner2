@@ -267,3 +267,23 @@ async def test_update_confirmation_requires_confirm_click(user: User):
     user.find('Install update').click()
     user.find('Confirm').click()
     assert events == ['handoff']
+
+
+def test_every_page_route_points_at_its_page_function():
+    """A helper inserted under an @ui.page decorator would steal the route."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(cc_app.__file__).read_text(encoding="utf-8"))
+    routes = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for dec in node.decorator_list:
+                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                        and dec.func.attr == "page"):
+                    routes[node.name] = dec.args[0].value
+    assert routes == {
+        "clean_page": "/", "batch_page": "/batch", "text_rules_page": "/rules",
+        "pipeline_page": "/pipeline", "stats_page": "/stats", "scripts_page": "/scripts",
+        "settings_page": "/settings",
+    }

@@ -117,6 +117,10 @@ class ConfigValidator:
                     self.errors.append(f"{label}.{key}: must be non-empty text")
             if not isinstance(entry.get("enabled", True), bool):
                 self.errors.append(f"{label}.enabled: must be true/false")
+            if not isinstance(entry.get("acknowledged", False), bool):
+                self.errors.append(f"{label}.acknowledged: must be true/false")
+            if "pack" in entry and not isinstance(entry["pack"], str):
+                self.errors.append(f"{label}.pack: must be text")
             term = entry.get("term")
             if isinstance(term, str):
                 key = term.strip().casefold()

@@ -1,0 +1,43 @@
+{
+    "_about": "Error-prone abbreviations. An entry applies when the abbreviation matches one of 'abbr' (ignoring case, periods and spaces) AND the full term being abbreviated matches 'meaning' (case-insensitive regex), so IJ for 'internal jugular' is fine while IJ for 'injection' is not. 'block' entries come from The Joint Commission's Do Not Use list and ISMP's dose, frequency and route entries; saving one needs an explicit override. 'warn' entries only warn.",
+    "entries": [
+        {"abbr": ["U"], "meaning": "\\bunits?\\b", "level": "block", "source": "The Joint Commission", "problem": "Mistaken for 0, 4 or cc", "use": "units"},
+        {"abbr": ["IU"], "meaning": "international\\s+units?", "level": "block", "source": "The Joint Commission", "problem": "Mistaken for IV or 10", "use": "international units"},
+        {"abbr": ["QD", "q1d"], "meaning": "\\b(daily|every\\s+day|once\\s+(a\\s+)?day|once\\s+daily)\\b", "level": "block", "source": "The Joint Commission", "problem": "Mistaken for QID", "use": "daily"},
+        {"abbr": ["QOD"], "meaning": "every\\s+other\\s+day|alternate\\s+days", "level": "block", "source": "The Joint Commission", "problem": "Mistaken for QD or QID", "use": "every other day"},
+        {"abbr": ["MS"], "meaning": "morphine|magnesium", "level": "block", "source": "The Joint Commission", "problem": "Can mean morphine sulfate or magnesium sulfate", "use": "morphine sulfate / magnesium sulfate"},
+        {"abbr": ["MSO4", "MSO₄"], "meaning": "", "level": "block", "source": "The Joint Commission", "problem": "Confused with magnesium sulfate", "use": "morphine sulfate"},
+        {"abbr": ["MgSO4", "MgSO₄"], "meaning": "", "level": "block", "source": "The Joint Commission", "problem": "Confused with morphine sulfate", "use": "magnesium sulfate"},
+        {"abbr": ["cc"], "meaning": "cubic\\s+cent", "level": "block", "source": "ISMP", "problem": "Mistaken for u (units)", "use": "mL"},
+        {"abbr": ["µg", "μg", "ug"], "meaning": "", "level": "block", "source": "ISMP", "problem": "Mistaken for mg", "use": "mcg"},
+        {"abbr": ["SC", "SQ", "sub q", "subq"], "meaning": "subcut", "level": "block", "source": "ISMP", "problem": "SC mistaken for SL; SQ mistaken for 5 every", "use": "subcut or subcutaneously"},
+        {"abbr": ["HS", "qhs"], "meaning": "bedtime|hora\\s+somni|half[\\s-]+strength|at\\s+night|nightly", "level": "block", "source": "ISMP", "problem": "Mistaken for half-strength or every hour", "use": "at bedtime / half-strength"},
+        {"abbr": ["qn"], "meaning": "night", "level": "block", "source": "ISMP", "problem": "Mistaken for qh (every hour)", "use": "nightly or at bedtime"},
+        {"abbr": ["TIW", "BIW"], "meaning": "week", "level": "block", "source": "ISMP", "problem": "Mistaken for three times a day or twice weekly", "use": "3 times weekly / 2 times weekly"},
+        {"abbr": ["D/C"], "meaning": "discharg|discontinu", "level": "block", "source": "ISMP", "problem": "Can mean discharge or discontinue", "use": "discharge / discontinue"},
+        {"abbr": ["AD", "AS", "AU"], "meaning": "\\bear", "level": "block", "source": "ISMP", "problem": "Ear abbreviations mistaken for each other or for OD/OS/OU", "use": "right ear / left ear / both ears"},
+        {"abbr": ["OD", "OS", "OU"], "meaning": "\\beyes?\\b|daily|every\\s+day", "level": "block", "source": "ISMP", "problem": "Eye abbreviations mistaken for each other or for AD/AS/AU", "use": "right eye / left eye / both eyes / daily"},
+        {"abbr": ["IN"], "meaning": "intranasal|nasal", "level": "block", "source": "ISMP", "problem": "Mistaken for IM or IV", "use": "intranasal"},
+        {"abbr": ["IJ"], "meaning": "inject", "level": "block", "source": "ISMP", "problem": "Mistaken for IV", "use": "injection"},
+        {"abbr": ["BT"], "meaning": "bedtime", "level": "block", "source": "ISMP", "problem": "Mistaken for BID", "use": "bedtime"},
+        {"abbr": ["SSI"], "meaning": "insulin|iodine", "level": "block", "source": "ISMP", "problem": "Can mean sliding scale insulin or strong solution of iodine", "use": "sliding scale insulin"},
+        {"abbr": ["SSRI"], "meaning": "insulin", "level": "block", "source": "ISMP", "problem": "Mistaken for selective serotonin reuptake inhibitor", "use": "sliding scale regular insulin"},
+        {"abbr": ["UD"], "meaning": "direct|unit\\s+dose", "level": "block", "source": "ISMP", "problem": "Mistaken for unit dose", "use": "as directed"},
+        {"abbr": ["APAP"], "meaning": "acetaminophen", "level": "warn", "source": "ISMP", "problem": "Not recognized as acetaminophen by everyone", "use": "acetaminophen"},
+        {"abbr": ["AZT"], "meaning": "zidovudine|azathioprine", "level": "warn", "source": "ISMP", "problem": "Can mean zidovudine or azathioprine", "use": "zidovudine"},
+        {"abbr": ["CPZ"], "meaning": "chlorpromazine|prochlorperazine", "level": "warn", "source": "ISMP", "problem": "Mistaken for prochlorperazine", "use": "chlorpromazine"},
+        {"abbr": ["HCT"], "meaning": "hydrocortisone|hydrochlorothiazide", "level": "warn", "source": "ISMP", "problem": "Can mean hydrocortisone or hydrochlorothiazide", "use": "hydrocortisone / hydrochlorothiazide"},
+        {"abbr": ["HCTZ"], "meaning": "hydrochlorothiazide", "level": "warn", "source": "ISMP", "problem": "Mistaken for hydrocortisone", "use": "hydrochlorothiazide"},
+        {"abbr": ["MTX"], "meaning": "methotrexate", "level": "warn", "source": "ISMP", "problem": "Mistaken for mitoxantrone", "use": "methotrexate"},
+        {"abbr": ["PCA"], "meaning": "procainamide|patient[\\s-]+controlled", "level": "warn", "source": "ISMP", "problem": "Can mean procainamide or patient-controlled analgesia", "use": "procainamide / patient-controlled analgesia"},
+        {"abbr": ["PTU"], "meaning": "propylthiouracil", "level": "warn", "source": "ISMP", "problem": "Mistaken for mercaptopurine", "use": "propylthiouracil"},
+        {"abbr": ["TAC"], "meaning": "", "level": "warn", "source": "ISMP", "problem": "Can mean triamcinolone, tetracaine/adrenaline/cocaine, or tacrolimus", "use": "the full drug name"},
+        {"abbr": ["TNK"], "meaning": "tenecteplase", "level": "warn", "source": "ISMP", "problem": "Mistaken for TPA", "use": "tenecteplase"},
+        {"abbr": ["TXA"], "meaning": "tranexamic", "level": "warn", "source": "ISMP", "problem": "Not recognized as tranexamic acid by everyone", "use": "tranexamic acid"},
+        {"abbr": ["ZnSO4"], "meaning": "", "level": "warn", "source": "ISMP", "problem": "Mistaken for morphine sulfate", "use": "zinc sulfate"}
+    ],
+    "patterns": [
+        {"regex": "(?<![\\d.])\\d+\\.0+(?![\\d.])", "level": "block", "source": "The Joint Commission", "problem": "Trailing zero: 1.0 is misread as 10", "use": "1 (no trailing zero)"},
+        {"regex": "(?<![\\d.])\\.\\d", "level": "block", "source": "The Joint Commission", "problem": "Missing leading zero: .5 is misread as 5", "use": "0.5 (always a leading zero)"}
+    ]
+}

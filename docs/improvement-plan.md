@@ -1,6 +1,6 @@
 # Improvement plan — abbreviations, cleaning, integrations
 
-Status: **in progress** (Phase 0 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
+Status: **in progress** (Phases 0–1 done) · Branch: `claude/app-improvements-brainstorm-esuv9a`
 
 This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
@@ -506,4 +506,11 @@ Suggested PR groups: **PR 1** = F1–F3 · **PR 2** = A1–A3 + X1 ·
       in-memory only and stripped from history
 - [x] F3 service layer — `chartcleaner/service.py` (`clean`, `abbreviate`,
       `ask`, `format_output`); the CLI now uses `format_output`
-- [ ] F4 validator coverage (lands with each new config group)
+- [ ] F4 validator coverage (lands with each new config group; `acknowledged`/`pack` done)
+- [x] A3 safety — meaning-aware Do Not Use list; bundled DNU rows blocked by
+      default (decision 1); compound parts checked; Safety report
+- [x] A2 live preview — Abbreviations tab and the highlight dialog
+- [x] A1 highlight → abbreviate — "Abbreviate mode" with undo ("Expand
+      instead" waits for A8)
+- [x] X1 text-expander export — Abbreviations tab + `--export-abbreviations`
+      (short → long only: expanders need short triggers)

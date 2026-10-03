@@ -88,6 +88,22 @@ def _format_output(text: str, delta: bool, fmt: str) -> str:
     return out
 
 
+def _run_export_abbreviations(args) -> None:
+    from chartcleaner.expander_export import entries, export_filename, render
+    try:
+        cfg = load_config(_SCRIPT_DIR / "config.json")
+    except ConfigError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    pairs = entries(cfg, prefix=args.export_prefix,
+                    include_bundled=not args.export_custom_only)
+    dest = Path(args.export_to or export_filename(args.export_abbreviations)).expanduser()
+    if dest.is_dir():
+        dest = dest / export_filename(args.export_abbreviations)
+    dest.write_bytes(render(args.export_abbreviations, pairs))
+    print(f"Wrote {len(pairs)} abbreviation(s) to {dest}")
+
+
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
                  audit: bool = False, delta: bool = False, out_format: str = "text") -> None:
     """Processes a single file (.txt/.md/.docx/.pdf) and saves the output."""
@@ -230,7 +246,23 @@ def main():
         "--format", choices=["text", "markdown", "json", "xml"], default="text",
         help="Structured export format for LLMs (text, markdown, json, xml).",
     )
+    parser.add_argument(
+        "--export-abbreviations", choices=["plist", "espanso", "textexpander", "ahk"],
+        metavar="FORMAT",
+        help="Export your abbreviations for a text expander: plist (macOS Text "
+             "Replacements), espanso, textexpander, or ahk (AutoHotkey).",
+    )
+    parser.add_argument("--export-to", type=str, metavar="PATH",
+                        help="Where to write --export-abbreviations (default: current folder).")
+    parser.add_argument("--export-prefix", type=str, default=";",
+                        help="Characters typed before each abbreviation (default ';').")
+    parser.add_argument("--export-custom-only", action="store_true",
+                        help="Export only your own abbreviations, not the bundled dictionary.")
     args = parser.parse_args()
+
+    if args.export_abbreviations:
+        _run_export_abbreviations(args)
+        return
 
     if args.untoken is not None:
         src = None if args.untoken == "__clipboard__" else args.untoken

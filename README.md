@@ -57,6 +57,7 @@ clean-chart.cmd               # Windows
 ./clean-chart --evaluate 50   # synthetic benchmark: recall report card for current rules
 ./clean-chart --watch ~/Inbox/charts   # auto-clean every file dropped in the folder
 ./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
+./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
 ```
 
 The CLI prints the same per-stage statistics as the app.
@@ -78,6 +79,25 @@ The dictionary retains all 1,068 supplied rows. Matching is case-insensitive and
 uses whole terms, longest first, in a single pass. When multiple abbreviations
 share a full term, the first CSV entry is used. The three entries marked
 “Not expanded in source” are retained for reference but do not trigger replacements.
+
+**Abbreviation safety.** Abbreviations on The Joint Commission's Do Not Use list
+and ISMP's dose/frequency/route error-prone list are blocked when used in their
+risky meaning (units → U, subcutaneous → SQ, at bedtime → HS, discontinue → d/c,
+cubic centimeters → cc…), including inside compounds like U/hr. The same letters
+in a safe meaning still apply (IJ for internal jugular, AS for aortic stenosis).
+Blocked bundled rows are not applied; **My text rules → Abbreviations → Allow
+anyway** re-enables one after an explicit "I understand" confirmation, and
+**Safety report** lists every flagged rule. The lists live in
+`chartcleaner/abbreviation_do_not_use.json`.
+
+**Adding abbreviations.** On the Clean page tick **Abbreviate mode** and highlight
+a term: the dialog suggests a short form (the dictionary's, else initials), shows
+how many places it would change, and warns about Do Not Use or shared
+abbreviations. The Abbreviations tab shows the same live preview while you type.
+
+**Text expanders.** **Export for text expander** (or `--export-abbreviations`)
+writes your dictionary for macOS Text Replacements, Espanso, TextExpander or
+AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 
 Stages run top-to-bottom (you can reorder them in the app):
 

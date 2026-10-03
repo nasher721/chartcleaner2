@@ -198,3 +198,89 @@ async def test_rules_page_mounts_with_isolated_config(user, clean_fixture):
     await user.should_see("Remove & replace")
     await user.should_see("Abbreviations")
     await user.should_see("Share & import")
+
+
+def _input(user, label):
+    from nicegui import ui
+
+    matches = [element for element in user.find(ui.input).elements
+               if element.props.get("label") == label]
+    assert len(matches) == 1
+    return matches[0]
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_abbreviate_mode_saves_custom_rule_and_undo_restores(user, clean_fixture):
+    _cfg, path = clean_fixture
+    text = "Pt has left side weakness today"
+    cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
+                              summary=None, qa=[])
+    await _open_clean(user, "/highlight-abbreviate")
+    with user.client:
+        _checkbox(user, "Abbreviate mode").set_value(True)
+    assert _checkbox(user, "Remove mode").value is False
+    user.find(marker="highlight-source").trigger("mouseup", _selection(text, " left side weakness "))
+    await user.should_see("Abbreviate highlighted text")
+    assert _input(user, "Abbreviation").value == "LSW"
+    await user.should_see("Would change 1 place(s)")
+    user.find("Abbreviate & remember").click()
+
+    assert _chart_textarea(user).value == "Pt has LSW today"
+    custom = load_config(path)["abbreviations"]["custom"]
+    assert custom == [{"term": "left side weakness", "replacement": "LSW", "enabled": True}]
+
+    user.find("Undo last highlight").click()
+    assert _chart_textarea(user).value == text
+    assert "abbreviations" not in load_config(path)
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_abbreviate_mode_do_not_use_needs_override(user, clean_fixture):
+    _cfg, path = clean_fixture
+    text = "Give 10 units now"
+    cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
+                              summary=None, qa=[])
+    await _open_clean(user, "/highlight-abbreviate-dnu")
+    with user.client:
+        _checkbox(user, "Abbreviate mode").set_value(True)
+    user.find(marker="highlight-source").trigger("mouseup", _selection(text, "units"))
+    await user.should_see("Abbreviate highlighted text")
+    with user.client:
+        _input(user, "Abbreviation").set_value("U")
+    user.find("Abbreviate & remember").click()
+    await user.should_see("is a Do Not Use abbreviation")
+    assert "abbreviations" not in load_config(path)
+
+    with user.client:
+        _checkbox(user, "I understand the risk — use this abbreviation anyway").set_value(True)
+    user.find("Save anyway").click()
+    assert _chart_textarea(user).value == "Give 10 U now"
+    assert load_config(path)["abbreviations"]["custom"] == [
+        {"term": "units", "replacement": "U", "enabled": True, "acknowledged": True}]
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_abbreviation_editor_blocks_and_allows(user, clean_fixture):
+    from nicegui import ui
+
+    _cfg, path = clean_fixture
+
+    @ui.page("/rules-abbr")
+    def fixture_page():
+        cc_app.text_rules_page()
+
+    await user.open("/rules-abbr")
+    tabs = [e for e in user.find(ui.tab).elements if e.props.get("label") == "Abbreviations"]
+    with user.client:
+        tabs[0].parent_slot.parent.set_value("Abbreviations")
+    await user.should_see("Safety report")
+    with user.client:
+        _input(user, "Search terms or replacements").set_value("Units")
+    await user.should_see("Blocked: Do Not Use")
+    user.find("Allow anyway").click()
+    await user.should_see("is a Do Not Use abbreviation")
+    with user.client:
+        _checkbox(user, "I understand the risk — use this abbreviation anyway").set_value(True)
+    user.find("Save anyway").click()
+    custom = load_config(path)["abbreviations"]["custom"]
+    assert {"term": "Units", "replacement": "U", "enabled": True, "acknowledged": True} in custom

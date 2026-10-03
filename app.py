@@ -65,7 +65,14 @@ from chartcleaner.engine import (
 from chartcleaner.ingest import IngestError, converters_status, load_file, supported_extensions
 from chartcleaner import rulepacks
 from chartcleaner import tokens as tokens_mod
+from chartcleaner.abbreviation_editor import save_with_safety as save_abbreviation_with_safety
+from chartcleaner.abbreviation_editor import show_issues as show_abbreviation_issues
+from chartcleaner.abbreviation_safety import check as abbreviation_check
 from chartcleaner.abbreviations import abbreviate
+from chartcleaner.abbreviations import lookup as lookup_abbreviation
+from chartcleaner.abbreviations import preview as abbreviation_preview
+from chartcleaner.abbreviations import suggest as suggest_abbreviation
+from chartcleaner.abbreviations import with_custom as abbreviation_with_custom
 from chartcleaner.highlight_rules import SELECTION_HANDLER, make_rule, replace_selection
 from chartcleaner import watcher as watcher_mod
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TEST
@@ -976,12 +983,14 @@ async def clean_page():
         try:
             remove_check.set_value(highlight["mode"] == "remove")
             replace_check.set_value(highlight["mode"] == "replace")
+            abbreviate_check.set_value(highlight["mode"] == "abbreviate")
         finally:
             highlight["syncing"] = False
         highlight_note.set_text({
             "off": "Select text normally, or check a mode to teach a rule.",
             "remove": "Highlight text to remove that selection immediately and remember it for future full cleans.",
             "replace": "Highlight text to enter a replacement and remember it for future full cleans.",
+            "abbreviate": "Highlight a term to choose its abbreviation; it is added to your abbreviation dictionary.",
         }[highlight["mode"]])
 
     def apply_highlight(selection: dict, replacement: str) -> bool:
@@ -1022,6 +1031,103 @@ async def clean_page():
             ui.notify(str(ex), type="negative")
             return False
 
+    def apply_abbreviation(selection: dict, term: str, abbreviation: str, acknowledged: bool) -> bool:
+        if state["running"]:
+            return False
+        try:
+            before = input_area.value or ""
+            text = selection["text"]
+            lead = text[:len(text) - len(text.lstrip())]
+            trail = text[len(text.rstrip()):]
+            after = replace_selection(before, selection, lead + abbreviation + trail)
+            cfg = load_config(CONFIG_PATH)
+            old_group = cfg.get("abbreviations")
+            old_enabled = cfg.get("stage_options", {}).get("medical_abbreviations", {}).get("enabled")
+            cfg = abbreviation_with_custom(cfg, term, abbreviation, acknowledged=acknowledged)
+            if old_enabled is False:
+                cfg.setdefault("stage_options", {}).setdefault("medical_abbreviations", {})["enabled"] = True
+            errors, _ = validate_config(cfg)
+            if errors:
+                raise ValueError(errors[0])
+            save_config_with_backup(cfg)
+            highlight["undo"] = dict(kind="abbreviation", before=before, after=after,
+                                     old_group=old_group, new_group=cfg["abbreviations"],
+                                     old_enabled=old_enabled)
+            input_area.set_value(after)
+            invalidate_output()
+            undo_btn.enable()
+            highlight_status.set_text(
+                f"“{term}” → “{abbreviation}” added to your abbreviations."
+                + (" Medical abbreviations stage enabled." if old_enabled is False else ""))
+            return True
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+            return False
+
+    def undo_abbreviation(undo: dict) -> None:
+        cfg = load_config(CONFIG_PATH)
+        if cfg.get("abbreviations") != undo["new_group"]:
+            raise ValueError("Abbreviations changed since that edit. Review them in My text rules.")
+        if undo["old_group"] is None:
+            cfg.pop("abbreviations", None)
+        else:
+            cfg["abbreviations"] = undo["old_group"]
+        if undo["old_enabled"] is False:
+            cfg.setdefault("stage_options", {}).setdefault("medical_abbreviations", {})["enabled"] = False
+        save_config_with_backup(cfg)
+
+    def open_abbreviate_dialog(selection: dict) -> None:
+        term = selection["text"].strip()
+        if not term:
+            ui.notify("Highlight a term to abbreviate.", type="info")
+            return
+        cfg = load_config(CONFIG_PATH)
+        highlight["pending"] = True
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
+            ui.label("Abbreviate highlighted text").classes("text-lg font-semibold")
+            ui.label(term).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto font-medium")
+            abbr_input = ui.input("Abbreviation", value=suggest_abbreviation(term, cfg)) \
+                .props("outlined autofocus").classes("w-full")
+            issues_box = ui.column().classes("gap-1")
+            hits = ui.label("").classes("text-sm opacity-80")
+
+            def sync() -> None:
+                abbr = (abbr_input.value or "").strip()
+                if not abbr:
+                    issues_box.clear()
+                    hits.set_text("")
+                    return
+                if lookup_abbreviation(term, cfg) == abbr:
+                    issues_box.clear()
+                    hits.set_text(f"Already in your dictionary: “{term}” → “{abbr}” on every clean.")
+                    return
+                show_abbreviation_issues(issues_box, abbreviation_check(term, abbr, cfg))
+                count = abbreviation_preview(input_area.value or "", cfg, term, abbr)["count"]
+                hits.set_text(f"Would change {count} place(s) in this chart on the next clean.")
+
+            abbr_input.on_value_change(lambda _: sync())
+            sync()
+
+            def save() -> None:
+                abbr = (abbr_input.value or "").strip()
+                if not abbr or abbr == term:
+                    ui.notify("Enter a different, shorter form.", type="warning")
+                    return
+
+                def persist(acknowledged: bool) -> None:
+                    if apply_abbreviation(selection, term, abbr, acknowledged):
+                        dlg.close()
+
+                save_abbreviation_with_safety(term, abbr, load_config(CONFIG_PATH), persist)
+
+            ui.label("Updates this selection now and adds the term to your abbreviation dictionary "
+                     "(used by Full clean and Abbreviations only).").classes("text-sm opacity-70")
+            with ui.row():
+                ui.button("Abbreviate & remember", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
+        dlg.open()
+
     def undo_highlight() -> None:
         undo = highlight["undo"]
         if not undo or state["running"]:
@@ -1029,6 +1135,17 @@ async def clean_page():
         if input_area.value != undo["after"]:
             ui.notify("The chart changed since that edit. Use My text rules to remove the saved rule.",
                       type="warning")
+            return
+        if undo.get("kind") == "abbreviation":
+            try:
+                undo_abbreviation(undo)
+                input_area.set_value(undo["before"])
+                invalidate_output()
+                highlight["undo"] = None
+                undo_btn.disable()
+                highlight_status.set_text("Edit undone; your previous abbreviations are restored.")
+            except Exception as ex:
+                ui.notify(str(ex), type="negative")
             return
         try:
             cfg = load_config(CONFIG_PATH)
@@ -1063,6 +1180,9 @@ async def clean_page():
             return
         if highlight["mode"] == "remove":
             apply_highlight(selection, "")
+            return
+        if highlight["mode"] == "abbreviate":
+            open_abbreviate_dialog(selection)
             return
         highlight["pending"] = True
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
@@ -1223,6 +1343,8 @@ async def clean_page():
                     on_change=lambda e: set_highlight_mode("remove", e.value))
                 replace_check = ui.checkbox("Replace mode", value=False,
                     on_change=lambda e: set_highlight_mode("replace", e.value))
+                abbreviate_check = ui.checkbox("Abbreviate mode", value=False,
+                    on_change=lambda e: set_highlight_mode("abbreviate", e.value))
                 undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight).props("flat dense")
                 undo_btn.disable()
             highlight_note = ui.label("Select text normally, or check a mode to teach a rule.").classes("text-sm")
@@ -1472,6 +1594,17 @@ def batch_page():
 # PAGE: Pipeline & Rules
 # ===========================================================================
 
+def _abbreviation_preview_text() -> str:
+    """Chart used for abbreviation previews: the Clean page input, else the sample."""
+    text = CLEAN_STATE.get("input") or ""
+    if text.strip():
+        return text
+    try:
+        return (BASE_DIR / "sample_chart.txt").read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
 @ui.page("/rules")
 def text_rules_page():
     from chartcleaner.abbreviation_editor import render as render_abbreviations
@@ -1499,7 +1632,8 @@ def text_rules_page():
         def render_tab(name: str) -> None:
             holder, renderer = {
                 "Remove & replace": (learned_holder, render_learned_editor),
-                "Abbreviations": (abbreviation_holder, render_abbreviations),
+                "Abbreviations": (abbreviation_holder, lambda load, save:
+                    render_abbreviations(load, save, sample_text=_abbreviation_preview_text)),
                 "Share & import": (sharing_holder, lambda load, save:
                     render_rule_sharing(load, save, lambda: open_folder(store.EXPORTS_DIR))),
             }[name]
