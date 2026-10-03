@@ -11,6 +11,8 @@ nicegui>=2.14.0,<4.0.0
 # File ingest (.pdf text) + folder watcher (v2.2 ecosystem pack)
 pymupdf>=1.24.0
 watchdog>=4.0.0
+# MCP server for Claude Desktop / Claude Code (clean-chart-mcp)
+mcp>=2.3,<3
 # Optional engines (auto-detected — install any of these for extra power):
 #   markitdown   — advanced Word/PDF conversion
 #   docling      — layout-aware document parsing (large download)

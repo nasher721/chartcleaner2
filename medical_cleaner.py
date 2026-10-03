@@ -30,10 +30,18 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 class MedicalCleaner:
     """Backwards-compatible wrapper around the chartcleaner engine."""
 
-    def __init__(self, config_path=None, wrap_output: bool = True, mode: str = "clean"):
+    def __init__(self, config_path=None, wrap_output: bool = True, mode: str = "clean",
+                 preset: str | None = None):
         path = (_SCRIPT_DIR / "config.json") if config_path is None else Path(config_path)
         try:
-            self.config = load_config(path)
+            if preset:
+                from chartcleaner import store
+                self.config = store.load_preset(preset)
+            else:
+                self.config = load_config(path)
+        except FileNotFoundError:
+            print(f"Error: no preset named {preset!r}", file=sys.stderr)
+            sys.exit(1)
         except ConfigError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
@@ -90,8 +98,47 @@ def _format_output(text: str, delta: bool, fmt: str) -> str:
     else:
         out, delta_res = format_output(text, fmt, delta)
     if delta_res is not None and delta_res.notes_found > 1:
-        print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed")
+        print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed", file=sys.stderr)
     return out
+
+
+def _run_watch_clipboard() -> None:
+    from chartcleaner.clipboard_watcher import ClipboardWatcher
+
+    def say(_title: str, message: str) -> None:
+        print(message)
+
+    watcher = ClipboardWatcher(paste=pyperclip.paste, copy=pyperclip.copy, notify=say)
+    watcher.start()
+    print("Watching the clipboard — copy Epic text to clean it. Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        watcher.stop()
+        print("Stopped.")
+
+
+def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
+    """stdin/clipboard in, result to stdout/clipboard; only the result on stdout."""
+    text = sys.stdin.read() if args.stdin else pyperclip.paste()
+    if not text.strip():
+        print("Nothing to clean.", file=sys.stderr)
+        sys.exit(1)
+    result = cleaner.clean_detailed(text)
+    if args.format == "docx":
+        print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
+        sys.exit(1)
+    out = _format_output(result.text, args.delta, args.format)
+    if args.prompt:
+        from chartcleaner.prompt_templates import render
+        out = render(args.prompt, result.text, cleaner.config)
+    if args.stdout:
+        sys.stdout.write(out)
+        sys.stdout.flush()
+    else:
+        pyperclip.copy(out)
+    print(f"{result.summary()}", file=sys.stderr)
 
 
 def _run_export_abbreviations(args) -> None:
@@ -262,6 +309,15 @@ def main():
         help="clean (full pipeline, default), abbreviations (shorten terms only), "
              "or expand (spell abbreviations out; ambiguous ones are left as written).",
     )
+    parser.add_argument("--watch-clipboard", action="store_true",
+                        help="Clean Epic text as soon as it is copied (until Ctrl+C).")
+    parser.add_argument("--stdin", action="store_true",
+                        help="Read the chart from standard input instead of the clipboard.")
+    parser.add_argument("--stdout", action="store_true",
+                        help="Write only the result to standard output (for Quick Actions, "
+                             "hotkeys and scripts); messages go to standard error.")
+    parser.add_argument("--preset", type=str, metavar="NAME",
+                        help="Clean with a saved preset instead of config.json.")
     parser.add_argument(
         "--prompt", type=str, metavar="TEMPLATE",
         help='Wrap the cleaned chart in a prompt template, e.g. "Progress note", '
@@ -294,7 +350,15 @@ def main():
         _run_evaluate(args.evaluate, cleaner)
         return
 
-    cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode)
+    cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode, preset=args.preset)
+
+    if args.stdin or args.stdout:
+        _run_pipe(args, cleaner)
+        return
+
+    if args.watch_clipboard:
+        _run_watch_clipboard()
+        return
 
     if args.watch:
         watch_dir = Path(args.watch).expanduser()

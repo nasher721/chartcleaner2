@@ -88,6 +88,7 @@ from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.delta_engine import extract_note_deltas
 from chartcleaner import api as local_api
 from chartcleaner import rule_examples
+from chartcleaner.clipboard_watcher import ClipboardWatcher
 from chartcleaner.exporters import save_to_vault, to_docx, to_markdown, to_smartphrase
 from chartcleaner.prompt_templates import render as render_prompt
 from chartcleaner.prompt_templates import templates as prompt_templates
@@ -3595,6 +3596,59 @@ def settings_page():
                      f'-H "Content-Type: application/json" -d \'{{"text": "Pt w/ HTN"}}\'') \
                 .classes("text-xs cc-mono opacity-80 break-all")
 
+        # ---- clipboard watcher --------------------------------------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Clipboard watcher").classes("font-semibold")
+            ui.label("While on, Epic text you copy anywhere is cleaned with your current rules and "
+                     "the clipboard is replaced with the result, so you can paste it straight "
+                     "away. Only text that looks like a chart is touched. Runs only while Chart "
+                     "Cleaner is open.").classes("text-xs opacity-60 -mt-1")
+            cw_prefs = dict(PREFS.get("clipboard_watcher") or {"enabled": False, "action": "auto"})
+            cw_status = ui.label("").classes("text-sm")
+
+            def cw_save() -> None:
+                PREFS["clipboard_watcher"] = dict(cw_prefs)
+                save_prefs()
+
+            def cw_refresh() -> None:
+                watcher = CLIPBOARD_WATCHER["watcher"]
+                if watcher is None or not watcher.running:
+                    cw_status.set_text("Off.")
+                    return
+                last = watcher.events[-1].message if watcher.events else "Watching — nothing cleaned yet."
+                cw_status.set_text(last)
+
+            def cw_toggle(on: bool) -> None:
+                cw_prefs["enabled"] = bool(on)
+                cw_save()
+                try:
+                    clipboard_watcher(start=bool(on))
+                except Exception as ex:
+                    ui.notify(f"No clipboard available here: {ex}", type="warning")
+                cw_refresh()
+
+            def cw_action(value: str) -> None:
+                cw_prefs["action"] = value
+                cw_save()
+                if CLIPBOARD_WATCHER["watcher"] is not None:
+                    CLIPBOARD_WATCHER["watcher"].action = value
+
+            def cw_undo() -> None:
+                watcher = CLIPBOARD_WATCHER["watcher"]
+                if watcher is not None and watcher.undo():
+                    ui.notify("The original text is back on the clipboard.", type="positive")
+                else:
+                    ui.notify("Nothing to undo.", type="info")
+
+            with ui.row().classes("items-center gap-4 flex-wrap"):
+                ui.switch("Clean Epic text as soon as it's copied", value=bool(cw_prefs.get("enabled")),
+                          on_change=lambda e: cw_toggle(e.value))
+                ui.select({"auto": "Replace the clipboard with the cleaned text",
+                           "notify": "Only notify me"}, value=cw_prefs.get("action", "auto"),
+                          on_change=lambda e: cw_action(e.value)).classes("min-w-[300px]")
+                ui.button("Undo last clipboard clean", icon="undo", on_click=cw_undo).props("flat")
+            ui.timer(2.0, cw_refresh)
+
         # ---- notes folder (Obsidian or any Markdown folder) ---------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Notes folder").classes("font-semibold")
@@ -3921,8 +3975,38 @@ def _warm_nlp_engines() -> None:
     threading.Thread(target=_work, daemon=True, name="nlp-warmup").start()
 
 
+CLIPBOARD_WATCHER: dict = {"watcher": None}
+
+
+def clipboard_watcher(start: bool | None = None):
+    """The app's clipboard watcher; start=True/False turns it on or off."""
+    watcher = CLIPBOARD_WATCHER["watcher"]
+    if watcher is None:
+        import pyperclip
+        prefs = PREFS.get("clipboard_watcher") or {}
+        watcher = ClipboardWatcher(paste=pyperclip.paste, copy=pyperclip.copy,
+                                   action=prefs.get("action", "auto"))
+        CLIPBOARD_WATCHER["watcher"] = watcher
+    if start is True:
+        watcher.start()
+    elif start is False:
+        watcher.stop()
+    return watcher
+
+
+def _clipboard_startup() -> None:
+    if os.environ.get("NICEGUI_USER_SIMULATION"):
+        return  # tests never watch the real clipboard
+    if (PREFS.get("clipboard_watcher") or {}).get("enabled"):
+        try:
+            clipboard_watcher(start=True)
+        except Exception:
+            pass  # no clipboard on this system: the Settings card says so
+
+
 app.on_startup(_warm_nlp_engines)
 app.on_startup(_update_startup)
+app.on_startup(_clipboard_startup)
 
 
 def main():
