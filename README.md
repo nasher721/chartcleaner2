@@ -141,7 +141,14 @@ Each rewrites a block only when it understands every line of it.
 **Removed** (everything the line/block/learned rules deleted, with *Never
 remove this*), **Abbreviations**, and **Changes over time** for multi-day
 charts (only sentences that are new or changed after the first note — a
-fixed copy-forward view that never drops a new sentence or number). The note
+fixed copy-forward view that never drops a new sentence or number), and
+**Trends** for multi-note charts: each lab's value per note (`Na: 128 → 132 →
+135 ↑`) and medication-list changes between notes (started / stopped / dose
+changed); `clean-chart --trends` and the API/MCP `trends` option put the same
+block above the output. Every clean also runs a **clinical-facts check**: numbers
+with units, lab/vital/score values, medications, allergies and code status are
+counted before and after each stage, and anything that disappeared is listed
+with the stage that removed it (red when a reformatting stage lost it). The note
 type is detected; Settings → *Note types* can clean each type with its own
 preset. Statistics → *Rule health* lists rules that never match or touch too
 much. Settings → *Check my learned rules* confirms highlighted rules still do

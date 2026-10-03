@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from chartcleaner.trends import build as build_trends
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -50,10 +51,18 @@ async def clean_page():
                 except Exception:
                     return None  # the delta view is a bonus; never fail a clean over it
 
+            def trends_work(cleaned: str):
+                try:
+                    return build_trends(cleaned)
+                except Exception:
+                    return None  # same contract as the delta view
+
             result, audit = await run.io_bound(work)
             delta = await run.io_bound(delta_work, result.text) if mode == "clean" else None
+            trends = await run.io_bound(trends_work, result.text) if mode == "clean" else None
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[], result_mode=mode, delta=delta, note=note_info)
+                               summary=None, qa=[], result_mode=mode, delta=delta, note=note_info,
+                               trends=trends)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -180,10 +189,15 @@ async def clean_page():
                 removed = removed_groups(result)
                 t_removed = (ui.tab(f"Removed ({sum(len(g['items']) for g in removed)})")
                              if removed else None)
+                trends = CLEAN_STATE.get("trends")
+                t_trends = (ui.tab("Trends") if trends is not None and not trends.empty else None)
                 delta = CLEAN_STATE.get("delta")
                 t_delta = (ui.tab("Changes over time")
                            if delta is not None and delta.notes_found > 1 else None)
             with ui.tab_panels(tabs, value=t_result).classes("w-full"):
+                if t_trends is not None:
+                    with ui.tab_panel(t_trends):
+                        render_trends(trends)
                 if t_delta is not None:
                     with ui.tab_panel(t_delta):
                         render_delta(delta)
@@ -1057,6 +1071,39 @@ async def clean_page():
             ui.notify(f"Could not build the prompt: {ex}", type="negative")
             return
         copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
+
+    def render_trends(trends) -> None:
+        ui.label(f"Across {len(trends.notes)} notes: each lab's last value per note "
+                 "(— = not in that note) and medication-list changes between notes.") \
+            .classes("text-sm opacity-70")
+        if trends.labs:
+            cols = [{"name": "lab", "label": "Lab", "field": "lab", "align": "left"}] + [
+                {"name": f"n{i}", "label": label, "field": f"n{i}"}
+                for i, label in enumerate(trends.notes)] + [
+                {"name": "dir", "label": "", "field": "dir"}]
+            rows = [{"lab": t.name, "dir": t.direction(),
+                     **{f"n{i}": v or "—" for i, v in enumerate(t.values)}} for t in trends.labs]
+            ui.table(columns=cols, rows=rows, row_key="lab").classes("w-full").props("flat dense") \
+                .mark("trends-table")
+        for change in trends.meds:
+            with ui.column().classes("gap-0 mt-1"):
+                ui.label(f"{change.before} → {change.after}").classes("text-sm font-semibold")
+                for m in change.started:
+                    ui.label(f"+ started {m}").classes("text-xs cc-mono text-green-700")
+                for m in change.stopped:
+                    ui.label(f"− stopped {m}").classes("text-xs cc-mono text-red-700")
+                for a, b in change.changed:
+                    ui.label(f"~ {a} → {b}").classes("text-xs cc-mono text-orange-700")
+        block = trends.to_text()
+
+        def prepend() -> None:
+            copy_to_clipboard(f"{block}\n\n{CLEAN_STATE['result_text']}", "Result with trends copied")
+
+        with ui.row().classes("gap-2"):
+            ui.button("Copy trends", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(block)).props("unelevated")
+            ui.button("Copy result with trends on top", icon="vertical_align_top",
+                      on_click=prepend).props("flat")
 
     def render_delta(delta) -> None:
         ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "

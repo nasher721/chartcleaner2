@@ -15,7 +15,7 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "load_active_config", "format_output", "clean", "abbreviate", "expand", "prompt", "ask"]
+__all__ = ["FORMATS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate", "expand", "prompt", "ask"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -27,25 +27,46 @@ def load_active_config(preset: str | None = None, config_path: str | Path | None
     return load_config(config_path or store.CONFIG_PATH)
 
 
-def format_output(text: str, fmt: str = "text", delta: bool = False) -> tuple[str, Any]:
-    """Apply the optional copy-forward delta and structured format.
+def format_output(text: str, fmt: str = "text", delta: bool = False,
+                  trends: bool = False) -> tuple[str, Any]:
+    """Apply the optional copy-forward delta, trends block and structured format.
 
     Returns ``(text, delta_result)``; ``delta_result`` is None unless ``delta``.
+    ``trends`` puts the lab-trend / medication-change block (see
+    :mod:`chartcleaner.trends`) above the chart when it holds several notes.
     """
     if fmt not in FORMATS:
         raise ValueError(f"Unknown format {fmt!r}; expected one of {', '.join(FORMATS)}")
     delta_res = None
     out = text
+    block = trends_text(text) if trends else ""
     if delta:
         from .delta_engine import extract_note_deltas
         delta_res = extract_note_deltas(out)
         out = delta_res.compact_text
+    if block:
+        out = f"{block}\n\n{out}"
     if fmt != "text":
         from .section_parser import parse_clinical_sections
         parsed = parse_clinical_sections(out)
         out = {"markdown": parsed.to_markdown, "json": parsed.to_json,
                "xml": parsed.to_llm_xml}[fmt]()
     return out, delta_res
+
+
+def trends_text(text: str, config: dict | None = None) -> str:
+    """The trends block for ``text`` ("" for a single note)."""
+    from .trends import build
+    try:
+        return build(_unwrap(text), config).to_text()
+    except Exception:
+        return ""  # trends are a bonus; never fail a clean over them
+
+
+def _unwrap(text: str) -> str:
+    from .delta_engine import _WRAPPER
+    m = _WRAPPER.fullmatch(text.strip())
+    return m.group("body") if m else text
 
 
 def _slim_stages(result: RunResult) -> list[dict]:
@@ -92,6 +113,7 @@ def clean(
     preset: str | None = None,
     fmt: str = "text",
     delta: bool = False,
+    trends: bool = False,
     wrap: bool | None = None,
     audit: bool = False,
     source: str = "api",
@@ -102,9 +124,15 @@ def clean(
     """Full clean, exactly as the Clean page runs it."""
     cfg = config if config is not None else load_active_config(preset)
     result = Pipeline(cfg, custom_dir=custom_dir or store.CUSTOM_RULES_DIR).run(text, wrap=wrap)
-    out, delta_res = format_output(result.text, fmt, delta)
+    out, delta_res = format_output(result.text, fmt, delta, trends)
     _record(result, source, record)
     payload = _payload(result, out)
+    if trends:
+        from .trends import build
+        try:
+            payload["trends"] = build(_unwrap(result.text), cfg).to_dict()
+        except Exception:
+            payload["trends"] = None
     if delta_res is not None:
         payload["delta"] = {"notes_found": delta_res.notes_found,
                             "compression_ratio": delta_res.compression_ratio}
