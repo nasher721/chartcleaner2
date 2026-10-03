@@ -50,7 +50,7 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
         assert CLEAN_STATE['audit'] is None
         assert [s.id for s in CLEAN_STATE['result'].stages] == ['medical_abbreviations']
         await user.should_see('Copy result')
-        await user.should_see('Download .txt')
+        await user.should_see('Text (.txt)')
         await user.should_not_see('Local AI summary')
 
         with user.client:
@@ -117,7 +117,7 @@ async def test_clean_renders_with_available_or_saved_models(
         user.find(marker='run-clean').click()
         await user.should_see('Ask this chart', retries=50)
         await user.should_see('Copy result')
-        await user.should_see('Download .txt')
+        await user.should_see('Text (.txt)')
         await user.should_not_see('Cleaning failed')
         model_select = next(e for e in user.find(ui.select).elements if e.label == 'Model')
         assert model_select.options == expected_options

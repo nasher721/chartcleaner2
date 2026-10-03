@@ -82,7 +82,13 @@ def _print_audit(audit, limit: int = 10) -> None:
 
 
 def _format_output(text: str, delta: bool, fmt: str) -> str:
-    out, delta_res = format_output(text, fmt, delta)
+    if fmt in ("smartphrase", "docx"):
+        out, delta_res = format_output(text, "text", delta)
+        if fmt == "smartphrase":
+            from chartcleaner.exporters import to_smartphrase
+            out = to_smartphrase(out)
+    else:
+        out, delta_res = format_output(text, fmt, delta)
     if delta_res is not None and delta_res.notes_found > 1:
         print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed")
     return out
@@ -117,9 +123,13 @@ def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
         result = cleaner.clean_detailed(ing.text)
         final_text = _format_output(result.text, delta, out_format)
 
-        ext = ".json" if out_format == "json" else (".xml" if out_format == "xml" else ".txt")
+        ext = {"json": ".json", "xml": ".xml", "markdown": ".md", "docx": ".docx"}.get(out_format, ".txt")
         out_path = output_dir / f"{file_path.stem}_cleaned{ext}"
-        out_path.write_text(final_text, encoding="utf-8")
+        if out_format == "docx":
+            from chartcleaner.exporters import to_docx
+            out_path.write_bytes(to_docx(final_text, title=file_path.stem))
+        else:
+            out_path.write_text(final_text, encoding="utf-8")
         _print_summary(result, file_path.name)
         if audit:
             _print_audit(run_audit(result.text, cleaner.config))
@@ -243,8 +253,9 @@ def main():
         help="Extract semantic copy-forward deltas between sequential daily progress notes.",
     )
     parser.add_argument(
-        "--format", choices=["text", "markdown", "json", "xml"], default="text",
-        help="Structured export format for LLMs (text, markdown, json, xml).",
+        "--format", choices=["text", "markdown", "json", "xml", "smartphrase", "docx"], default="text",
+        help="Output format: text, markdown, json or xml (structured for LLMs); smartphrase "
+             "(plain ASCII that pastes cleanly into Epic); docx (Word; files only).",
     )
     parser.add_argument(
         "--mode", choices=["clean", "abbreviations", "expand"], default="clean",
@@ -326,6 +337,9 @@ def main():
                 print("Clipboard is empty.")
                 sys.exit(1)
 
+            if args.format == "docx":
+                print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
+                sys.exit(1)
             print("Processing clipboard text...")
             result = cleaner.clean_detailed(input_text)
             final_text = _format_output(result.text, args.delta, args.format)

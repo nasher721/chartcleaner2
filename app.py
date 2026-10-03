@@ -88,6 +88,7 @@ from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.delta_engine import extract_note_deltas
 from chartcleaner import api as local_api
 from chartcleaner import rule_examples
+from chartcleaner.exporters import save_to_vault, to_docx, to_markdown, to_smartphrase
 from chartcleaner.prompt_templates import render as render_prompt
 from chartcleaner.prompt_templates import templates as prompt_templates
 from chartcleaner.rule_health import report as rule_health_report
@@ -644,7 +645,20 @@ async def clean_page():
                     with ui.row().classes("gap-2"):
                         ui.button("Copy result", icon="content_copy",
                                   on_click=lambda: copy_to_clipboard(result.text)).props("unelevated color=primary")
-                        ui.button("Download .txt", icon="download", on_click=download_result)
+                        with ui.dropdown_button("Download", icon="download", auto_close=True):
+                            ui.item("Text (.txt)", on_click=download_result)
+                            ui.item("Word (.docx)", on_click=lambda: ui.download.content(
+                                to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))
+                            ui.item("Markdown (.md)", on_click=lambda: ui.download.content(
+                                chart_markdown().encode("utf-8"), "cleaned_chart.md"))
+                        ui.button("Copy for Epic", icon="assignment",
+                                  on_click=lambda: copy_to_clipboard(
+                                      to_smartphrase(CLEAN_STATE["result_text"]),
+                                      "Copied as plain text that pastes cleanly into Epic")) \
+                            .props("flat").tooltip("Plain ASCII, no tabs, lines wrapped at 80 characters")
+                        if PREFS.get("notes_folder"):
+                            ui.button("Save to notes folder", icon="note_add",
+                                      on_click=save_to_notes_folder).props("flat")
                         ui.button("Copy result + stats", icon="data_object",
                                   on_click=lambda: copy_to_clipboard(
                                       result.text + "\n\n<!-- " + result.summary() + " -->")).props("flat")
@@ -1429,6 +1443,19 @@ async def clean_page():
         save_config_with_backup(cfg)
         ui.notify("Saved — this text will be kept on future cleans.", type="positive")
         await run_clean()
+
+    def chart_markdown() -> str:
+        note = CLEAN_STATE.get("note") or {}
+        return to_markdown(CLEAN_STATE["result_text"], note_type=note.get("label", "")
+                           if note.get("label") != "Not sure" else "")
+
+    def save_to_notes_folder() -> None:
+        try:
+            path = save_to_vault(chart_markdown(), PREFS["notes_folder"])
+        except Exception as ex:
+            ui.notify(f"Could not save: {ex}", type="negative")
+            return
+        ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
 
     def copy_prompt(name: str) -> None:
         try:
@@ -3567,6 +3594,17 @@ def settings_page():
             ui.label(f'curl -s http://127.0.0.1:{port}/api/v1/clean -H "Authorization: Bearer $TOKEN" '
                      f'-H "Content-Type: application/json" -d \'{{"text": "Pt w/ HTN"}}\'') \
                 .classes("text-xs cc-mono opacity-80 break-all")
+
+        # ---- notes folder (Obsidian or any Markdown folder) ---------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Notes folder").classes("font-semibold")
+            ui.label("Set a folder (for example your Obsidian vault) to get “Save to notes folder” "
+                     "on the Clean page. Each save is a new Markdown note with the date and note "
+                     "type; existing notes are never overwritten.").classes("text-xs opacity-60 -mt-1")
+            ui.input("Folder path", value=str(PREFS.get("notes_folder") or ""),
+                     placeholder="~/Documents/Obsidian/Charts",
+                     on_change=lambda e: (PREFS.update(notes_folder=e.value.strip()), save_prefs())) \
+                .classes("w-full cc-mono")
 
         # ---- prompt templates ---------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
