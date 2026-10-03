@@ -16,6 +16,7 @@ from pathlib import Path
 from chartcleaner.audit import run_audit
 from chartcleaner.engine import Pipeline
 from chartcleaner.ingest import load_file
+from chartcleaner.service import format_output
 
 __all__ = ["BatchResult", "run_batch"]
 
@@ -41,8 +42,14 @@ def run_batch(
     paths: list[Path],
     cfg: dict,
     custom_dir: str | Path | None = None,
+    *,
+    delta: bool = False,
 ) -> list[BatchResult]:
-    """Clean every path in order; failures are isolated per file."""
+    """Clean every path in order; failures are isolated per file.
+
+    With ``delta`` each file's output keeps only what changed between its
+    daily notes (the copy-forward delta view).
+    """
     pipe = Pipeline(cfg, custom_dir=custom_dir)
     out: list[BatchResult] = []
     for path in paths:
@@ -62,7 +69,7 @@ def run_batch(
                 phi_total=sum(result.phi_counts().values()),
                 findings=findings,
                 elapsed_ms=result.duration_ms,
-                cleaned=result.text,
+                cleaned=format_output(result.text, "text", delta)[0] if delta else result.text,
                 stages=[{"label": s.label, "matches": s.matches,
                          "before": s.chars_before, "after": s.chars_after,
                          "skipped": s.skipped}

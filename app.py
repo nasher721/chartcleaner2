@@ -85,6 +85,8 @@ from chartcleaner.evaluate import load_last_evaluation, save_evaluation
 from chartcleaner.local_llm import LocalLlmClient
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
+from chartcleaner.delta_engine import extract_note_deltas
+from chartcleaner import rule_examples
 from chartcleaner.summarizer import (
     LlmUnavailableError,
     NoModelError,
@@ -257,6 +259,14 @@ async def _stage_and_handoff(manifest, status, notify) -> None:
 
 def esc(s: str) -> str:
     return html_mod.escape(s)
+
+
+def remember_rule_example(pair: list[str], text: str, cfg: dict) -> None:
+    """Keep what a new learned rule was taught to do (see Settings → Check my learned rules)."""
+    try:
+        rule_examples.record(pair, text, cfg)
+    except Exception:
+        pass  # an example is a safety net; never block saving the rule itself
 
 
 def save_config_with_backup(cfg: dict) -> None:
@@ -469,9 +479,16 @@ async def clean_page():
                 result = Pipeline(cfg, custom_dir=CUSTOM_DIR).run(text, track_changes=True)
                 return result, run_audit(result.text, cfg)
 
+            def delta_work(cleaned: str):
+                try:
+                    return extract_note_deltas(cleaned)
+                except Exception:
+                    return None  # the delta view is a bonus; never fail a clean over it
+
             result, audit = await run.io_bound(work)
+            delta = await run.io_bound(delta_work, result.text) if mode == "clean" else None
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[], result_mode=mode)
+                               summary=None, qa=[], result_mode=mode, delta=delta)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -587,7 +604,13 @@ async def clean_page():
                 t_diff = ui.tab("Side-by-side diff")
                 t_stages = ui.tab("What each stage did")
                 t_abbr = ui.tab(f"Abbreviations ({len(abbr_changes)})") if abbr_changes else None
+                delta = CLEAN_STATE.get("delta")
+                t_delta = (ui.tab("Changes over time")
+                           if delta is not None and delta.notes_found > 1 else None)
             with ui.tab_panels(tabs, value=t_result).classes("w-full"):
+                if t_delta is not None:
+                    with ui.tab_panel(t_delta):
+                        render_delta(delta)
                 if t_abbr is not None:
                     with ui.tab_panel(t_abbr):
                         render_abbreviation_changes(abbr_changes)
@@ -1045,6 +1068,8 @@ async def clean_page():
             if errors:
                 raise ValueError(errors[0])
             save_config_with_backup(cfg)
+            if added:
+                remember_rule_example(pair, selection["text"], cfg)
             highlight["undo"] = dict(before=before, after=after, pair=pair, added=added,
                                      rules=[list(p) for p in rules], old_enabled=old_enabled)
             input_area.set_value(after)
@@ -1299,6 +1324,7 @@ async def clean_page():
                         ui.notify("Cannot save rule — " + errs[0], type="negative")
                         return
                     save_config_with_backup(cfg)
+                    remember_rule_example(pair, snippet, cfg)
                 except Exception as ex:
                     report_error("Could not save the learned rule", ex)
                     return
@@ -1327,6 +1353,24 @@ async def clean_page():
                       type="info")
             return
         open_learn_dialog(str(sel))
+
+    def render_delta(delta) -> None:
+        ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
+                 "removed. The first note is kept in full; later notes show only sentences that are "
+                 "new or changed.").classes("text-sm opacity-70")
+        box = ui.textarea("", value=delta.compact_text)
+        box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
+
+        def use_for_ai() -> None:
+            CLEAN_STATE["result_text"] = delta.compact_text
+            ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
+                      type="positive")
+
+        with ui.row().classes("gap-2"):
+            ui.button("Copy", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(delta.compact_text)).props("unelevated")
+            ui.button("Use for AI summary & questions", icon="psychology",
+                      on_click=use_for_ai).props("flat")
 
     def render_abbreviation_changes(changes: list[dict]) -> None:
         """Every abbreviation applied in this result, with quick fixes."""
@@ -1638,7 +1682,7 @@ def batch_page():
             files = list(pending)[:500]
 
             def work():
-                return run_batch_files(files, cfg, custom_dir=CUSTOM_DIR)
+                return run_batch_files(files, cfg, custom_dir=CUSTOM_DIR, delta=bool(delta_switch.value))
 
             results = await run.io_bound(work)
             out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -1738,6 +1782,9 @@ def batch_page():
             clear_btn = ui.button("Clear queue", icon="delete_sweep",
                                   on_click=clear_pending).props("flat")
             clear_btn.set_enabled(False)
+            delta_switch = ui.switch("Only what changed between daily notes").tooltip(
+                "Copy-forward delta view: keeps the first note in full, then only new or "
+                "changed paragraphs from each later note.")
             spinner = ui.spinner("dots", size="lg")
             spinner.set_visibility(False)
         results_col = ui.column().classes("w-full gap-3")
@@ -3334,6 +3381,42 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Open backups folder", icon="folder",
                           on_click=lambda: open_folder(store.BACKUPS_DIR)).props("flat")
+
+        # ---- learned-rule examples (regression check) -----------------------------
+        with ui.card().classes("w-full gap-2"):
+            ui.label("Check my learned rules").classes("font-semibold")
+            ui.label("Every rule you teach by highlighting remembers what it was taught to do. "
+                     "This replays those examples through your current rules and lists any whose "
+                     "result changed, for example because a later rule undoes an earlier one.") \
+                .classes("text-xs opacity-60 -mt-1")
+            examples_out = ui.column().classes("w-full gap-1")
+
+            def check_examples() -> None:
+                report = rule_examples.check(load_config(CONFIG_PATH))
+                examples_out.clear()
+                with examples_out:
+                    if report["stage_disabled"]:
+                        ui.label("The Learned rules stage is turned off, so none of these rules run.") \
+                            .classes("text-sm text-orange-600")
+                    if not report["checked"]:
+                        ui.label("No examples yet — teach a rule by highlighting text on the Clean page.") \
+                            .classes("text-sm")
+                    elif not report["failures"]:
+                        ui.label(f"✓ All {report['checked']} learned rule(s) still do what they were "
+                                 "taught.").classes("text-sm text-green-600")
+                    for f in report["failures"][:20]:
+                        ui.label(f"“{f['text']}” used to become “{f['expected']}”, now becomes "
+                                 f"“{f['now']}”.").classes("text-sm cc-mono")
+
+            def clear_examples() -> None:
+                n = rule_examples.clear()
+                examples_out.clear()
+                ui.notify(f"Removed {n} saved example(s).", type="info")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Check my learned rules", icon="fact_check", on_click=check_examples) \
+                    .props("outline")
+                ui.button("Clear saved examples", icon="delete", on_click=clear_examples).props("flat")
 
         # ---- export / import settings bundle ------------------------------------
         with ui.card().classes("w-full gap-2"):
