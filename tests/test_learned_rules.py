@@ -87,8 +87,13 @@ def test_learned_rules_run_in_stage_order_after_literal_replacements():
 
 
 def test_learned_rules_stage_registered():
+    from chartcleaner.engine import STAGE_LABELS
+    from chartcleaner.stages import KIND_TO_RUNNER, RUNNERS
+
     assert "learned_rules" in BUILTIN_STAGE_IDS
-    assert len(BUILTIN_STAGE_IDS) == 19
+    assert len(set(BUILTIN_STAGE_IDS)) == len(BUILTIN_STAGE_IDS)
+    for sid in BUILTIN_STAGE_IDS:  # every stage is fully registered
+        assert sid in STAGE_LABELS and KIND_TO_RUNNER[sid] in RUNNERS
 
 
 def test_missing_or_empty_learned_rules_is_noop():

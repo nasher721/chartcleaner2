@@ -1814,11 +1814,31 @@ STAGE_EDITORS = {
     "tokenize_phi": ("tokenize", "tokenization"),
     "unicode_normalize": ("unicode", "unicode_normalize"),
     "timestamps": ("timestamps", "timestamp_removal"),
+    "hospital_day": ("form", "hospital_day"),
+    "imaging_impression": ("form", "imaging_impression"),
     "sections": ("sections", "section_filter"),
     "whitespace": ("whitespace", "whitespace"),
     "caps_normalize": ("caps", "caps_normalize"),
     "bullets": ("bullets", "bullets"),
     "line_length": ("line_length", "line_length"),
+}
+
+# Declarative option forms for the opt-in condensing stages:
+# (option, label, control, choices) — control is switch | text | select | multi | dates.
+STAGE_FORMS: dict[str, list[tuple]] = {
+    "hospital_day": [
+        ("enabled", "Label dates with hospital day (HD#) and post-op day (POD#)", "switch", None),
+        ("admit_date", 'Admission date ("auto" finds "Admission Date:" in the chart, or YYYY-MM-DD)',
+         "text", None),
+        ("surgery_dates", "Surgery dates for POD# (YYYY-MM-DD, comma-separated)", "dates", None),
+        ("style", "Style", "select", {"append": "Keep the date: 10/02/2026 (HD#3)",
+                                      "replace": "Replace the date: HD#3"}),
+    ],
+    "imaging_impression": [
+        ("enabled", "Keep only the Impression of radiology reports", "switch", None),
+        ("keep", "Also keep", "multi", {"findings": "Findings", "indication": "Indication / history",
+                                        "technique": "Technique", "comparison": "Comparison"}),
+    ],
 }
 
 STAGE_DESCRIPTIONS = {
@@ -1833,6 +1853,8 @@ STAGE_DESCRIPTIONS = {
                              "Matches whole terms, longest phrases first, without cascading replacements.",
     "learned_rules": "Rules you taught the app by highlighting text on the Clean page (remove text, remove whole lines, or replace). Each row is [regex, replacement]; an empty replacement removes the match. New rules can also be added here by hand.",
     "unicode_normalize": "Off by default. Turn any of these on to replace curly quotes, en/em dashes, non-breaking spaces, zero-width characters, ellipses and ligatures with plain equivalents — great before LLM use.",
+    "hospital_day": "Off by default. Adds hospital day (HD#1 = admission day) and post-op day (POD#0 = surgery day) next to each date, so timelines read at a glance. Runs before timestamp removal.",
+    "imaging_impression": "Off by default. In radiology reports (FINDINGS followed by IMPRESSION), removes findings, technique, comparison and indication, keeping the title and the impression. Reports without an impression are left alone.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
     "sections": "Off by default. Drop only the listed sections, or keep only the listed ones. Section boundaries come from your header list unless you supply boundary headers.",
     "whitespace": "Trims trailing spaces and collapses 3+ blank lines by default; seven further switches (CRLF, leading indent, tabs, double spaces, edge trim…).",
@@ -2220,8 +2242,35 @@ def pipeline_page():
                 .props("outlined dense").classes("w-44")
             w_in.on("keydown.enter.prevent", add_allow)
 
+    def render_form(key: str) -> None:
+        o = draft.setdefault(key, {})
+        for opt, label, control, choices in STAGE_FORMS[key]:
+            if control == "switch":
+                ui.switch(label, value=bool(o.get(opt)),
+                          on_change=lambda e, k=opt: o.update({k: e.value}))
+            elif control == "text":
+                ui.input(label, value=str(o.get(opt, "auto") or ""),
+                         on_change=lambda e, k=opt: o.update({k: e.value.strip()})) \
+                    .props("outlined dense").classes("w-full")
+            elif control == "dates":
+                ui.input(label, value=", ".join(o.get(opt) or []),
+                         on_change=lambda e, k=opt: o.update(
+                             {k: [d.strip() for d in e.value.split(",") if d.strip()]})) \
+                    .props("outlined dense").classes("w-full")
+            elif control == "select":
+                ui.select(choices, label=label, value=o.get(opt) or next(iter(choices)),
+                          on_change=lambda e, k=opt: o.update({k: e.value})).classes("w-full")
+            elif control == "multi":
+                ui.select(choices, label=label, multiple=True, value=list(o.get(opt) or []),
+                          on_change=lambda e, k=opt: o.update({k: list(e.value or [])})) \
+                    .props("use-chips").classes("w-full")
+
     def render_stage_editor(sid: str) -> None:
         kind, key = STAGE_EDITORS[sid]
+
+        if kind == "form":
+            render_form(key)
+            return
 
         if kind == "abbreviations":
             ui.label("Your abbreviation dictionary is also used by Abbreviations only on the Clean page. "

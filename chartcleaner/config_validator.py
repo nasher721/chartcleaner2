@@ -43,6 +43,8 @@ KNOWN_CONFIG_KEYS = frozenset(
         "section_filter",
         "caps_normalize",
         "line_length",
+        "imaging_impression",
+        "hospital_day",
         "stage_options",
         "learned_rules",
         "abbreviations",
@@ -249,6 +251,37 @@ class ConfigValidator:
         self._validate_section_options()
         self._validate_caps_options()
         self._validate_line_length_options()
+        self._validate_imaging_options()
+        self._validate_hospital_day_options()
+
+    def _validate_imaging_options(self) -> None:
+        from .compactors.imaging import KEEPABLE
+        im = self._check_option_group(
+            "imaging_impression", self.default_options["imaging_impression"],
+            {"enabled": ((bool,), "true/false"), "keep": ((list,), "a list of section names")})
+        if im is not None and isinstance(im.get("keep"), list):
+            for name in im["keep"]:
+                if name not in KEEPABLE:
+                    self.errors.append(f"imaging_impression.keep: unknown section {name!r} "
+                                       f"(use {', '.join(KEEPABLE)})")
+
+    def _validate_hospital_day_options(self) -> None:
+        from datetime import date
+        hd = self._check_option_group(
+            "hospital_day", self.default_options["hospital_day"],
+            {"enabled": ((bool,), "true/false"), "admit_date": ((str,), '"auto" or YYYY-MM-DD'),
+             "surgery_dates": ((list,), "a list of YYYY-MM-DD dates"), "style": ((str,), "append/replace")})
+        if hd is None:
+            return
+        dates = [hd.get("admit_date")] if hd.get("admit_date") not in (None, "auto") else []
+        dates += hd.get("surgery_dates") if isinstance(hd.get("surgery_dates"), list) else []
+        for value in dates:
+            try:
+                date.fromisoformat(str(value))
+            except ValueError:
+                self.errors.append(f"hospital_day: {value!r} is not a YYYY-MM-DD date")
+        if hd.get("style", "append") not in ("append", "replace"):
+            self.errors.append('hospital_day.style: must be "append" or "replace"')
 
     def _validate_whitespace_options(self) -> None:
         defaults = self.default_options["whitespace"]

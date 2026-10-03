@@ -15,6 +15,8 @@ from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
 from .abbreviations import MAX_TRACKED_CHANGES, abbreviate, expand
+from .compactors import hospital_day as hospital_day_compactor
+from .compactors import imaging as imaging_compactor
 
 if TYPE_CHECKING:
     from .engine import CleanContext
@@ -822,6 +824,8 @@ RUNNERS: dict[str, Callable] = {
     "learned": run_learned,
     "unicode": run_unicode,
     "timestamps": run_timestamps,
+    "hospital_day": hospital_day_compactor.run,
+    "imaging": imaging_compactor.run,
     "sections": run_sections,
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
@@ -844,6 +848,8 @@ KIND_TO_RUNNER = {
     "learned_rules": "learned",
     "unicode_normalize": "unicode",
     "timestamps": "timestamps",
+    "hospital_day": "hospital_day",
+    "imaging_impression": "imaging",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",

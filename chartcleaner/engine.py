@@ -25,6 +25,8 @@ from .custom_rules import (
     list_custom_rules,
     load_custom_module,
 )
+from .compactors import hospital_day as hospital_day_compactor
+from .compactors import imaging as imaging_compactor
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
@@ -85,8 +87,10 @@ BUILTIN_STAGE_IDS = [
     "literal_replacements",
     "learned_rules",
     "unicode_normalize",
+    "hospital_day",
     "timestamps",
     "sections",
+    "imaging_impression",
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
@@ -100,7 +104,10 @@ BUILTIN_STAGE_IDS = [
 # Where a builtin goes when a saved ``stage_order`` predates it: right after
 # its anchor stage instead of the end. Only stages added after this mechanism
 # are listed, so older saved orders keep producing the output they always did.
-STAGE_ANCHORS: dict[str, str] = {}
+STAGE_ANCHORS: dict[str, str] = {
+    "hospital_day": "unicode_normalize",    # must label dates before timestamps can strip them
+    "imaging_impression": "sections",
+}
 
 STAGE_LABELS = {
     "metadata_lines": "EMR line metadata",
@@ -114,6 +121,8 @@ STAGE_LABELS = {
     "learned_rules": "Learned rules (highlight → rule)",
     "unicode_normalize": "Unicode normalization",
     "timestamps": "Timestamp removal",
+    "hospital_day": "Hospital day labels",
+    "imaging_impression": "Imaging: keep impression",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -137,6 +146,8 @@ STAGE_KINDS = {
     "learned_rules": "learned",
     "unicode_normalize": "unicode",
     "timestamps": "timestamps",
+    "hospital_day": "hospital_day",
+    "imaging_impression": "imaging",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -212,6 +223,8 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "section_filter": DEFAULT_SECTIONS,
         "caps_normalize": DEFAULT_CAPS,
         "line_length": DEFAULT_LINE_LENGTH,
+        "imaging_impression": imaging_compactor.DEFAULTS,
+        "hospital_day": hospital_day_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
     return validator.validate()
