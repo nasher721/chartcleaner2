@@ -45,6 +45,8 @@ __all__ = ["DEFAULTS", "FactLoss", "FactReport", "FactTracker", "fact_counts",
            "extract_facts", "stage_category", "check"]
 
 DEFAULTS: dict[str, Any] = {"enabled": True}
+# Above this the per-stage snapshots cost seconds; the check is skipped with a warning.
+MAX_CHARS = 1_000_000
 
 # Stage → category for losses it causes (see the module docstring).
 RULE_STAGES = frozenset({

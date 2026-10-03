@@ -118,6 +118,14 @@ def test_can_be_disabled(cfg):
     assert clean_text("K 3.1", cfg, mode="abbreviations").fact_check is None
 
 
+def test_very_large_input_skips_with_warning(cfg, monkeypatch):
+    from chartcleaner import fact_check
+    monkeypatch.setattr(fact_check, "MAX_CHARS", 10)
+    result = clean_text("Na 141 and K 3.9 today", cfg)
+    assert result.fact_check is None
+    assert any("Clinical-facts check skipped" in w for w in result.warnings)
+
+
 def test_validator_knows_the_group(cfg):
     from chartcleaner.engine import validate_config
     cfg["fact_check"] = {"enabled": "yes"}

@@ -515,9 +515,17 @@ class Pipeline:
         if fact_check is None:
             fact_check = self.mode == "clean" and bool(
                 (self.config.get("fact_check") or fact_check_mod.DEFAULTS).get("enabled", True))
+        if fact_check and len(text) > fact_check_mod.MAX_CHARS:
+            fact_check = False
+            size_note = (f"Clinical-facts check skipped: input over "
+                         f"{fact_check_mod.MAX_CHARS:,} characters")
+        else:
+            size_note = None
         tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
         text, stage_stats, warnings = self._execute_stages(text, ctx, tracker)
+        if size_note:
+            warnings.append(size_note)
         text, wrapped, wrapper_stat = self._apply_wrapper(
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
