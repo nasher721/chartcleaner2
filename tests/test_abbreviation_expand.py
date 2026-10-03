@@ -99,3 +99,9 @@ def test_normalize_settings_keeps_new_keys_and_drops_empty():
     assert group["expand_prefer"] == {"MS": "mental status"}
     assert group["rejected_suggestions"] == ["left side"]
     assert normalize_settings({"scope": {"mode": "all", "sections": ["Plan"]}}) == {"disabled": [], "custom": []}
+
+
+def test_all_caps_lines_are_left_alone_but_dense_abbreviations_expand():
+    assert expand("PATIENT HTN IS STABLE")[0] == "PATIENT HTN IS STABLE"
+    assert expand("Pt w/ HTN, CABG, EVD")[0] == (
+        "Pt with hypertension, coronary artery bypass grafting, external ventricular drain")
