@@ -107,14 +107,15 @@ def _print_audit(audit, limit: int = 10) -> None:
         print(f"    … {len(audit.findings) - limit} more")
 
 
-def _format_output(text: str, delta: bool, fmt: str, trends: bool = False) -> str:
+def _format_output(text: str, delta: bool, fmt: str, trends: bool = False,
+                   insights: bool = False) -> str:
     if fmt in ("smartphrase", "docx"):
-        out, delta_res = format_output(text, "text", delta, trends)
+        out, delta_res = format_output(text, "text", delta, trends, insights)
         if fmt == "smartphrase":
             from chartcleaner.exporters import to_smartphrase
             out = to_smartphrase(out)
     else:
-        out, delta_res = format_output(text, fmt, delta, trends)
+        out, delta_res = format_output(text, fmt, delta, trends, insights)
     if delta_res is not None and delta_res.notes_found > 1:
         print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed", file=sys.stderr)
     return out
@@ -147,7 +148,7 @@ def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
     if args.format == "docx":
         print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
         sys.exit(1)
-    out = _format_output(result.text, args.delta, args.format, args.trends)
+    out = _format_output(result.text, args.delta, args.format, args.trends, args.insights)
     if args.prompt:
         from chartcleaner.prompt_templates import render
         out = render(args.prompt, result.text, cleaner.config)
@@ -178,7 +179,7 @@ def _run_export_abbreviations(args) -> None:
 
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
                  audit: bool = False, delta: bool = False, out_format: str = "text",
-                 trends: bool = False) -> None:
+                 trends: bool = False, insights: bool = False) -> None:
     """Processes a single file (.txt/.md/.docx/.pdf) and saves the output."""
     try:
         from chartcleaner.ingest import IngestError, load_file
@@ -188,7 +189,7 @@ def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
         for w in ing.warnings:
             print(f"  ! {w}", file=sys.stderr)
         result = cleaner.clean_detailed(ing.text)
-        final_text = _format_output(result.text, delta, out_format, trends)
+        final_text = _format_output(result.text, delta, out_format, trends, insights)
 
         ext = {"json": ".json", "xml": ".xml", "markdown": ".md", "docx": ".docx"}.get(out_format, ".txt")
         out_path = output_dir / f"{file_path.stem}_cleaned{ext}"
@@ -347,6 +348,12 @@ def main():
         help="Put lab trends and medication changes across the chart's notes above the output.",
     )
     parser.add_argument(
+        "--insights", action="store_true",
+        help="Put overnight events, lines/drains with day counts, antibiotic days and cultures, "
+             "and a problem-oriented view (chart lines grouped under each A&P problem) above "
+             "the output.",
+    )
+    parser.add_argument(
         "--format", choices=["text", "markdown", "json", "xml", "smartphrase", "docx"], default="text",
         help="Output format: text, markdown, json or xml (structured for LLMs); smartphrase "
              "(plain ASCII that pastes cleanly into Epic); docx (Word; files only).",
@@ -436,7 +443,7 @@ def main():
         print(f"Batch processing {len(files)} files...")
         for file in tqdm(files, desc="Cleaning Charts"):
             process_file(file, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends)
+                         trends=args.trends, insights=args.insights)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     elif args.file:
@@ -446,7 +453,7 @@ def main():
 
         print(f"Processing {file_path.name}...")
         process_file(file_path, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends)
+                         trends=args.trends, insights=args.insights)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     else:
@@ -461,7 +468,8 @@ def main():
                 sys.exit(1)
             print("Processing clipboard text...")
             result = cleaner.clean_detailed(input_text)
-            final_text = _format_output(result.text, args.delta, args.format, args.trends)
+            final_text = _format_output(result.text, args.delta, args.format, args.trends,
+                                        args.insights)
             if args.prompt:
                 from chartcleaner.prompt_templates import render
                 final_text = render(args.prompt, result.text, cleaner.config)

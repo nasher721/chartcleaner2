@@ -6,6 +6,8 @@ Routes (JSON in, JSON out), all backed by :mod:`chartcleaner.service`:
 * ``POST /api/v1/clean`` — ``{"text", "preset"?, "format"?, "delta"?, "trends"?, "wrap"?}``
 * ``POST /api/v1/abbreviate`` / ``/api/v1/expand`` — ``{"text", "preset"?}``
 * ``POST /api/v1/prompt`` — ``{"text", "template", "preset"?}``
+* ``POST /api/v1/insights`` — ``{"text", "which"?: ["problems", "devices", "micro",
+  "overnight", "trends"]}`` (reads the text as given; clean it first)
 
 Guards, in order: the caller must be on this computer (loopback address),
 an ``Origin`` header — if any — must be this app or a browser extension,
@@ -130,6 +132,15 @@ def register(app) -> None:
     @app.post("/api/v1/restore")
     async def api_restore(request: Request):
         return await run(request, ("text",), lambda d: service.restore(str(d["text"])))
+
+    @app.post("/api/v1/insights")
+    async def api_insights(request: Request):
+        def call(d):
+            which = d.get("which")
+            if which is not None and not (isinstance(which, list) and all(isinstance(w, str) for w in which)):
+                raise ValueError("which must be a list of insight names")
+            return service.insights(d["text"], which or None)
+        return await run(request, ("text",), call)
 
     @app.post("/api/v1/prompt")
     async def api_prompt(request: Request):

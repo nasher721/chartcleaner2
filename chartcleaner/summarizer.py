@@ -164,7 +164,7 @@ def summarize(
 
     model = _resolve_model(client, str(opts["model"]))
     prompt = build_prompt(
-        str(opts["prompt_preset"]), str(opts["custom_prompt"]), chart
+        str(opts["prompt_preset"]), str(opts["custom_prompt"]), _with_overnight(opts, chart)
     )
 
     started = time.monotonic()
@@ -188,6 +188,18 @@ def summarize(
         duration_ms=duration_ms,
         facts=_check_facts(chart, text),
     )
+
+
+def _with_overnight(opts: dict, chart: str) -> str:
+    """The handoff preset starts from the night's events, extracted verbatim."""
+    if opts.get("prompt_preset") != "handoff" or str(opts.get("custom_prompt") or "").strip():
+        return chart
+    try:
+        from chartcleaner.overnight import build
+        block = build(chart).to_text()
+    except Exception:
+        return chart
+    return f"{block} (copied from the chart below)\n\n{chart}" if block else chart
 
 
 def _check_facts(chart: str, text: str):

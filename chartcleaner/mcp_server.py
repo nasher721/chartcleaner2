@@ -8,6 +8,8 @@ Runs over stdio only — no network port is opened. Tools wrap
 * ``render_prompt`` — clean, then wrap in a prompt template
 * ``list_presets`` / ``list_prompt_templates``
 * ``ask_chart`` — grounded question via the on-device LLM (Ollama)
+* ``chart_insights`` — problem-oriented view, devices, antibiotics/cultures,
+  overnight events and trends
 
 Start it with ``clean-chart-mcp`` (``clean-chart-mcp.cmd`` on Windows); see
 docs/integrations.md for Claude Desktop / Claude Code setup.
@@ -87,8 +89,17 @@ def ask_chart(text: str, question: str) -> dict[str, Any]:
     return service.ask(question, text)
 
 
+def chart_insights(text: str, which: str = "") -> dict[str, Any]:
+    """Read a (cleaned) chart for: problems (each A&P problem with the chart lines about
+    it), devices (lines/drains/airway with day counts), micro (antibiotic days and
+    culture results), overnight (events since the evening) and trends (labs, scores,
+    medication changes across notes). ``which`` is a comma-separated subset; empty = all."""
+    names = [w.strip() for w in which.split(",") if w.strip()] or None
+    return service.insights(text, names)
+
+
 TOOLS = (clean_chart, abbreviate, expand_abbreviations, render_prompt, list_presets,
-         list_prompt_templates, ask_chart)
+         list_prompt_templates, ask_chart, chart_insights)
 
 
 def build_server():

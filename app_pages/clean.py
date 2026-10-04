@@ -20,6 +20,10 @@ from chartcleaner.summarizer import PRESET_LABELS
 from chartcleaner.timeline import build as build_timeline
 from chartcleaner.trends import REFERENCE_RANGES
 from chartcleaner.trends import build as build_trends
+from chartcleaner.devices import build as build_devices
+from chartcleaner.micro import build as build_micro
+from chartcleaner.overnight import build as build_overnight
+from chartcleaner.problems import build as build_problems
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -82,7 +86,9 @@ async def clean_page():
             def extras_work(cleaned: str):
                 out = {}
                 for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
-                                ("timeline", build_timeline)):
+                                ("timeline", build_timeline), ("problems", build_problems),
+                                ("devices", build_devices), ("micro", build_micro),
+                                ("overnight", build_overnight)):
                     try:
                         out[key] = fn(cleaned)
                     except Exception:
@@ -94,7 +100,9 @@ async def clean_page():
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
-                               timeline=extras.get("timeline"))
+                               timeline=extras.get("timeline"), problems=extras.get("problems"),
+                               devices=extras.get("devices"), micro=extras.get("micro"),
+                               overnight=extras.get("overnight"))
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -628,6 +636,27 @@ async def clean_page():
                         ui.badge(n.day, color="teal").props("outline")
                     ui.label(n.preview or n.title).classes("text-xs opacity-80 truncate flex-grow")
                     ui.label(f"{n.chars:,} chars").classes("text-xs opacity-50")
+        overnight = CLEAN_STATE.get("overnight")
+        if overnight is not None and not overnight.empty:
+            shown = True
+            render_block("Overnight events", "nightlight", overnight.to_text(), "insight-overnight",
+                         lambda: [ui.label((e.when + "  " if e.when else "") + e.text)
+                                  .classes("text-xs cc-mono") for e in overnight.events])
+        devices = CLEAN_STATE.get("devices")
+        if devices is not None and devices.devices:
+            shown = True
+            render_block("Lines, drains & airway", "cable", devices.to_text(), "insight-devices",
+                         lambda: render_devices(devices))
+        micro = CLEAN_STATE.get("micro")
+        if micro is not None and not micro.empty:
+            shown = True
+            render_block("Antibiotics & cultures", "biotech", micro.to_text(), "insight-micro",
+                         lambda: render_micro(micro))
+        problems = CLEAN_STATE.get("problems")
+        if problems is not None and not problems.empty:
+            shown = True
+            render_block(f"By problem ({len(problems.problems)})", "account_tree",
+                         problems.to_text(), "insight-problems", lambda: render_problems(problems))
         if trends is not None and not trends.empty:
             shown = True
             render_trends(trends)
@@ -637,11 +666,66 @@ async def clean_page():
                     .classes("w-full"):
                 render_delta(delta)
         if not shown:
-            ui.label("Trends, a note timeline and changes over time appear here when the chart "
-                     "holds several dated notes.").classes("text-sm opacity-60")
+            ui.label("Problems, devices, antibiotics, overnight events, trends, a note timeline "
+                     "and changes over time appear here when the chart has them.") \
+                .classes("text-sm opacity-60")
+
+    def render_block(title: str, icon: str, text: str, marker: str, body) -> None:
+        with ui.expansion(title, icon=icon, value=True).classes("w-full").mark(marker):
+            body()
+            ui.button("Copy", icon="content_copy",
+                      on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+
+    def render_devices(report) -> None:
+        ui.label(f"Day counts as of {report.reference.strftime('%m/%d/%Y')} (the chart's latest "
+                 "date); insertion day = day 1.").classes("text-xs opacity-60")
+        for d in report.devices:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                color = "grey" if d.removed else "orange" if d.needs_review else "primary"
+                ui.badge(d.name + (f" · {d.site}" if d.site else ""), color=color).props("outline")
+                status = ("removed" if d.removed else f"day {d.day}" if d.day is not None
+                          else "in place (no date)")
+                ui.label(status + (" — still needed?" if d.needs_review else "")) \
+                    .classes("text-xs font-semibold w-40")
+                ui.label(d.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                    .tooltip(d.last_line)
+
+    def render_micro(report) -> None:
+        for a in report.antibiotics:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.badge(a.name, color="grey" if a.stopped else "teal").props("outline")
+                status = ("stopped" if a.stopped else f"day {a.day}" if a.day is not None else "")
+                ui.label(status).classes("text-xs font-semibold w-20")
+                ui.label(a.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                    .tooltip(a.last_line)
+        if report.cultures:
+            ui.label("Cultures").classes("text-xs font-semibold mt-1")
+            for c in report.cultures:
+                positive = (bool(c.organism) or "positive" in c.result.lower()
+                            or "grew" in c.result.lower())
+                ui.label(c.to_text()).classes(
+                    "text-xs cc-mono " + ("text-red-600 font-semibold" if positive else ""))
+
+    def render_problems(report) -> None:
+        ui.label("Each problem from the latest Assessment & Plan with the chart lines that relate "
+                 "to it — copied verbatim, never reworded.").classes("text-xs opacity-60")
+        for p in report.problems:
+            with ui.expansion(p.heading[:120] + (f"  ({p.note})" if p.note else ""),
+                              caption=f"{len(p.evidence)} related line(s)").classes("w-full"):
+                for line in p.plan:
+                    ui.label(line).classes("text-xs cc-mono font-semibold")
+                for e in p.evidence[:15]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap cursor-pointer") \
+                            .on("click", lambda e=e: (show_tab(0), jump_to(e.offset, e.offset + len(e.line)))):
+                        if e.note:
+                            ui.badge(e.note).props("outline")
+                        ui.label(e.line).classes("text-xs cc-mono break-all")
+                ui.button("Copy problem", icon="content_copy",
+                          on_click=lambda p=p: copy_to_clipboard(p.to_text())).props("flat dense")
 
     def render_trends(trends) -> None:
-        ui.label(f"Lab trends across {len(trends.notes)} notes").classes("text-sm font-semibold")
+        ui.label(f"{'Lab trends' if trends.labs else 'Trends'} across {len(trends.notes)} notes") \
+            .classes("text-sm font-semibold")
         ui.label("Shaded band = typical adult reference range; red points are outside it. "
                  "Your lab's ranges may differ.").classes("text-xs opacity-60")
         if trends.labs:
@@ -659,6 +743,19 @@ async def clean_page():
                         ui.echart(sparkline_options(t, trends.notes)).classes("w-full h-16")
             for t in trends.labs[16:]:
                 ui.label(t.to_text()).classes("text-xs cc-mono")
+        if trends.scores:
+            ui.label("Scores").classes("text-sm font-semibold mt-2")
+            with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-2 w-full") \
+                    .mark("trends-scores"):
+                for t in trends.scores:
+                    with ui.card().classes("p-2 gap-0"):
+                        with ui.row().classes("w-full items-center justify-between no-wrap"):
+                            ui.label(t.name).classes("font-semibold")
+                            ui.label(" → ".join(v or "—" for v in t.values)
+                                     + (f"  {t.direction()}" if t.direction() else "")) \
+                                .classes("text-xs cc-mono")
+                        if any(n is not None for n in t.numbers()):
+                            ui.echart(sparkline_options(t, trends.notes)).classes("w-full h-16")
         rows = trends.med_rows()
         if rows:
             ui.label("Medication changes").classes("text-sm font-semibold mt-2")

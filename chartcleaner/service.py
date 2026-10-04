@@ -15,8 +15,8 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate", "expand", "prompt", "ask", "restore",
-           "timeline", "result_cache"]
+__all__ = ["FORMATS", "INSIGHTS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
+           "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -29,18 +29,23 @@ def load_active_config(preset: str | None = None, config_path: str | Path | None
 
 
 def format_output(text: str, fmt: str = "text", delta: bool = False,
-                  trends: bool = False) -> tuple[str, Any]:
+                  trends: bool = False, insights: bool = False) -> tuple[str, Any]:
     """Apply the optional copy-forward delta, trends block and structured format.
 
     Returns ``(text, delta_result)``; ``delta_result`` is None unless ``delta``.
     ``trends`` puts the lab-trend / medication-change block (see
     :mod:`chartcleaner.trends`) above the chart when it holds several notes.
+    ``insights`` puts the problem / device / antibiotic / overnight blocks
+    (see :func:`insights_text`) above it.
     """
     if fmt not in FORMATS:
         raise ValueError(f"Unknown format {fmt!r}; expected one of {', '.join(FORMATS)}")
     delta_res = None
     out = text
     block = trends_text(text) if trends else ""
+    if insights:
+        extra = insights_text(text, ("overnight", "devices", "micro", "problems"))
+        block = f"{block}\n\n{extra}".strip() if extra else block
     if delta:
         from .delta_engine import extract_note_deltas
         delta_res = extract_note_deltas(out)
@@ -62,6 +67,49 @@ def trends_text(text: str, config: dict | None = None) -> str:
         return build(_unwrap(text), config).to_text()
     except Exception:
         return ""  # trends are a bonus; never fail a clean over them
+
+
+# name -> module with build(text) returning a report with to_text()/to_dict()
+INSIGHTS = ("problems", "devices", "micro", "overnight", "trends")
+
+
+def _insight_report(name: str, text: str):
+    import importlib
+    if name not in INSIGHTS:
+        raise ValueError(f"Unknown insight {name!r}; expected one of {', '.join(INSIGHTS)}")
+    module = importlib.import_module(f"chartcleaner.{name}")
+    return module.build(text)
+
+
+def insights(text: str, which: tuple[str, ...] | list[str] | None = None) -> dict:
+    """Problem-oriented view, devices, antibiotics/cultures, overnight events and
+    trends read from ``text`` (each built from the chart's own lines)."""
+    body = _unwrap(text)
+    out: dict[str, Any] = {}
+    for name in which or INSIGHTS:
+        try:
+            out[name] = _insight_report(name, body).to_dict()
+        except ValueError:
+            raise
+        except Exception:
+            out[name] = None  # one extractor failing never hides the others
+    return out
+
+
+def insights_text(text: str, which: tuple[str, ...] | list[str] | None = None) -> str:
+    """The insight blocks as plain text, in order, empty ones left out."""
+    body = _unwrap(text)
+    blocks = []
+    for name in which or INSIGHTS:
+        try:
+            block = _insight_report(name, body).to_text()
+        except ValueError:
+            raise
+        except Exception:
+            block = ""
+        if block:
+            blocks.append(block)
+    return "\n\n".join(blocks)
 
 
 def _unwrap(text: str) -> str:

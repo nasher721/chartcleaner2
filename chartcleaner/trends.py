@@ -34,7 +34,7 @@ from .compactors.meds import _STRENGTH, medication_list
 from .delta_engine import _split_into_notes
 from .fact_check import _is_drug, _mask
 
-__all__ = ["LabTrend", "MedChange", "TrendReport", "build", "REFERENCE_RANGES"]
+__all__ = ["LabTrend", "MedChange", "TrendReport", "build", "REFERENCE_RANGES", "SCORES", "scores_in"]
 
 # Typical adult reference ranges, only to shade out-of-range points in the
 # Trends view (each lab's own range may differ; the values are never changed).
@@ -84,6 +84,36 @@ def _lab_name(before: str) -> str | None:
     return None
 
 
+# Bedside scores followed across notes (name -> pattern with the value in group 1).
+SCORES: dict[str, re.Pattern] = {
+    "GCS": re.compile(r"\bGCS\b[:=\s]*(?:of\s*|score\s*)?(\d{1,2})(?:T)?\b"),
+    "NIHSS": re.compile(r"\bNIHSS\b[:=\s]*(?:of\s*|score\s*)?(\d{1,2})\b"),
+    "RASS": re.compile(r"\bRASS\b[:=\s]*(?:of\s*|score\s*)?([+-]?\d)\b"),
+    "CPOT": re.compile(r"\bCPOT\b[:=\s]*(?:of\s*|score\s*)?(\d)\b"),
+    "Hunt-Hess": re.compile(r"\bHunt[- ]?Hess\b[:=\s]*(?:grade\s*)?(\d)\b", re.IGNORECASE),
+    "mFisher": re.compile(r"\b(?:modified|m)[- ]?Fisher\b[:=\s]*(?:grade\s*)?(\d)\b", re.IGNORECASE),
+    "Fisher": re.compile(r"(?<!modified )(?<!m)(?<!m-)\bFisher\b[:=\s]*(?:grade\s*)?(\d)\b"),
+    "mRS": re.compile(r"\bmRS\b[:=\s]*(?:of\s*)?(\d)\b"),
+    "ICH score": re.compile(r"\bICH score\b[:=\s]*(?:of\s*)?(\d)\b", re.IGNORECASE),
+    "CAM-ICU": re.compile(r"\bCAM[- ]ICU\b[:=\s]*(positive|negative|\+|-)", re.IGNORECASE),
+}
+SCORE_ORDER = list(SCORES)
+
+
+def scores_in(text: str) -> dict[str, str]:
+    """Last value of each bedside score in ``text`` ("GCS 14", "RASS -2", "CAM-ICU negative")."""
+    masked = _mask(text)
+    found: dict[str, str] = {}
+    for name, rx in SCORES.items():
+        hits = rx.findall(masked)
+        if hits:
+            value = hits[-1]
+            if name == "CAM-ICU":
+                value = {"+": "positive", "-": "negative"}.get(value, value.lower())
+            found[name] = value
+    return found
+
+
 def labs_in(text: str) -> dict[str, str]:
     """Last value of each known lab in ``text`` (dates and times masked)."""
     masked = _mask(text)
@@ -117,7 +147,7 @@ class LabTrend:
     values: list[str | None]
 
     def direction(self) -> str:
-        nums = [float(v.lstrip("<>")) for v in self.values if v is not None]
+        nums = [n for n in self.numbers() if n is not None]
         if len(nums) < 2 or not nums[0]:
             return ""
         change = (nums[-1] - nums[0]) / abs(nums[0])
@@ -166,10 +196,11 @@ class TrendReport:
     notes: list[str]
     labs: list[LabTrend]
     meds: list[MedChange]
+    scores: list[LabTrend] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return not self.labs and not self.meds
+        return not self.labs and not self.meds and not self.scores
 
     def to_text(self) -> str:
         if self.empty:
@@ -178,6 +209,11 @@ class TrendReport:
         if self.labs:
             out.append(f"Lab trends ({' → '.join(self.notes)})")
             out.extend(t.to_text() for t in self.labs)
+        if self.scores:
+            if out:
+                out.append("")
+            out.append(f"Scores ({' → '.join(self.notes)})")
+            out.extend(t.to_text() for t in self.scores)
         if self.meds:
             if out:
                 out.append("")
@@ -203,6 +239,8 @@ class TrendReport:
                 "labs": [{"name": t.name, "values": list(t.values), "direction": t.direction(),
                           "flags": t.flags()}
                          for t in self.labs],
+                "scores": [{"name": t.name, "values": list(t.values), "direction": t.direction()}
+                           for t in self.scores],
                 "med_rows": self.med_rows(),
                 "meds": [{"before": c.before, "after": c.after, "started": c.started,
                           "stopped": c.stopped, "changed": [list(p) for p in c.changed]}
@@ -230,6 +268,9 @@ def build(text: str, cfg: dict | None = None) -> TrendReport:
     trends = [LabTrend(name, [labs.get(name) for labs in per_note]) for name in names
               if sum(name in labs for labs in per_note) >= 2]
     trends.sort(key=lambda t: (PANEL_ORDER.index(LABS[t.name][0]), _ORDER[t.name]))
+    per_note_scores = [scores_in(n.raw_text) for n in notes]
+    score_trends = [LabTrend(name, [sc.get(name) for sc in per_note_scores]) for name in SCORE_ORDER
+                    if sum(name in sc for sc in per_note_scores) >= 2]
 
     changes: list[MedChange] = []
     previous: dict[str, str] = {}
@@ -249,4 +290,4 @@ def build(text: str, cfg: dict | None = None) -> TrendReport:
                 changes.append(change)
         if meds:
             previous, label_before = meds, label
-    return TrendReport(labels, trends, changes)
+    return TrendReport(labels, trends, changes, score_trends)
