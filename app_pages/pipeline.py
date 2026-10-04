@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from chartcleaner.service import result_cache as service_result_cache
 from chartcleaner.compactors import neuro as neuro_compactor
 
 
@@ -341,25 +342,105 @@ def pipeline_page():
         with stages_container:
             render_stages()
 
+    drag = {"sid": None}
+
+    def last_run_stats() -> dict[str, dict]:
+        """Per-stage numbers from the newest full clean in history (no chart text)."""
+        try:
+            runs = [r for r in store.load_runs() if r.get("stages")
+                    and not str(r.get("source", "")).endswith((":abbreviations", ":expand"))]
+        except Exception:
+            return {}
+        if not runs:
+            return {}
+        return {st.get("id"): st for st in runs[-1].get("stages") or []}
+
+    def drop_on(target: str) -> None:
+        sid = drag.get("sid")
+        drag["sid"] = None
+        lst = draft["stage_order"]
+        if not sid or sid == target or sid not in lst or target not in lst:
+            return
+        lst.remove(sid)
+        lst.insert(lst.index(target), sid)
+        save_btn.set_text("Save changes •")
+        refresh_stages()
+
+    def preview_stage(sid: str) -> None:
+        text = PIPE_TEST["text"] or ""
+        if not text.strip():
+            ui.notify("Add some test text first (Test text, above).", type="warning")
+            return
+        try:
+            before, after, st = Pipeline(draft, custom_dir=common.CUSTOM_DIR).stage_io(
+                text, sid, cache=service_result_cache())
+        except Exception as ex:
+            ui.notify(f"Could not run the preview: {ex}", type="negative")
+            return
+        label = STAGE_LABELS.get(sid) or sid
+        with ui.dialog() as dlg, ui.card().classes("w-[1000px] max-w-[95vw] gap-2"):
+            ui.label(f"What “{label}” does to the test text").classes("text-lg font-semibold")
+            if st.skipped:
+                ui.label("This stage is switched off, so it changes nothing.").classes("text-sm")
+            elif st.error:
+                ui.label(f"This stage failed: {st.error}").classes("text-sm text-red-600")
+            elif before == after:
+                ui.label("No change on this text.").classes("text-sm")
+            else:
+                ui.label(f"{st.matches} change(s) · {len(before) - len(after):+,} characters removed. "
+                         "Left: the text this stage receives (after every earlier stage); "
+                         "right: what it hands on.").classes("text-xs opacity-70")
+                with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
+                    ui.html(diff_html(before, after))
+            ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
+
     def render_stages() -> None:
         total = len(draft["stage_order"])
+        last = last_run_stats()
+        ui.label("Drag a stage by its handle (or use the arrows) to change the order. Numbers show "
+                 "what each stage did in your last clean.").classes("text-xs opacity-60")
         for idx, sid in enumerate(draft["stage_order"]):
             is_custom = sid.startswith("custom:")
             label = STAGE_LABELS.get(sid) or (sid.split(":", 1)[1] if sid.startswith("custom:") else sid)
-            with ui.expansion(f"{idx + 1}. {label}", icon="code" if is_custom else "rule").classes("w-full"):
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    ui.switch("Enabled", value=stage_enabled(sid),
-                              on_change=lambda e, s=sid: set_stage_enabled(s, e.value))
-                    ui.button(icon="arrow_upward", on_click=lambda s=sid: move_stage(s, -1)) \
-                        .props("flat dense round").set_enabled(idx > 0)
-                    ui.button(icon="arrow_downward", on_click=lambda s=sid: move_stage(s, +1)) \
-                        .props("flat dense round").set_enabled(idx < total - 1)
+            enabled = stage_enabled(sid)
+            card = ui.card().classes("w-full p-0 gap-0" + ("" if enabled else " opacity-60")) \
+                .props("flat bordered draggable=true")
+            card.on("dragstart", lambda s=sid: drag.update(sid=s))
+            card.on("dragover.prevent", lambda: None)
+            card.on("drop", lambda s=sid: drop_on(s))
+            card.mark(f"stage-{sid}")
+            with card:
+                exp = ui.expansion().classes("w-full").props("dense expand-icon-toggle")
+                with exp.add_slot("header"):
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        ui.icon("drag_indicator").classes("cursor-move opacity-50") \
+                            .tooltip("Drag to reorder")
+                        ui.switch(value=enabled, on_change=lambda e, s=sid: set_stage_enabled(s, e.value)) \
+                            .props("dense").tooltip("Enabled")
+                        ui.icon("code" if is_custom else "rule").classes("opacity-60")
+                        ui.label(f"{idx + 1}. {label}").classes("font-medium")
+                        stat = last.get(sid)
+                        if stat and not stat.get("skipped") and enabled:
+                            delta = int(stat.get("chars_before", 0)) - int(stat.get("chars_after", 0))
+                            ui.badge(f"{stat.get('matches', 0)} hits · {delta:+,} chars",
+                                     color="teal" if stat.get("matches") or delta else "grey") \
+                                .props("outline").tooltip("In your last clean")
+                        ui.space()
+                        if not is_custom:
+                            ui.button(icon="visibility", on_click=lambda s=sid: preview_stage(s)) \
+                                .props("flat dense round").tooltip("Show what this stage does to the test text")
+                        ui.button(icon="arrow_upward", on_click=lambda s=sid: move_stage(s, -1)) \
+                            .props("flat dense round").set_enabled(idx > 0)
+                        ui.button(icon="arrow_downward", on_click=lambda s=sid: move_stage(s, +1)) \
+                            .props("flat dense round").set_enabled(idx < total - 1)
+                with exp:
                     if is_custom:
                         ui.button("Edit script", icon="edit", on_click=lambda: ui.navigate.to("/scripts")).props("flat")
                     else:
-                        ui.label(STAGE_DESCRIPTIONS.get(sid, "")).classes("text-xs opacity-60 flex-grow")
-                if stage_enabled(sid) and not is_custom:
-                    render_stage_editor(sid)
+                        ui.label(STAGE_DESCRIPTIONS.get(sid, "")).classes("text-xs opacity-60")
+                    if enabled and not is_custom:
+                        render_stage_editor(sid)
 
     def list_set(lst: list, pos: int, value) -> None:
         if 0 <= pos < len(lst):
@@ -805,6 +886,39 @@ def pipeline_page():
         ui.notify(msg, type="positive")
         ui.navigate.to("/pipeline")
 
+    async def save_checked() -> None:
+        """Save, but first re-clean your known-good charts and show what would change."""
+        from chartcleaner import regression_set
+        errs, _ = validate_config(draft)
+        if errs or not regression_set.list_ids():
+            save_all()
+            return
+        save_btn.set_enabled(False)
+        try:
+            results = await run.io_bound(regression_set.check, dict(draft), common.CUSTOM_DIR)
+        except Exception:
+            results = []
+        finally:
+            save_btn.set_enabled(True)
+        changed = [r for r in results if r.changed]
+        if not changed:
+            save_all()
+            return
+        with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2").mark("regression-dialog"):
+            ui.label(f"{len(changed)} of your {len(results)} known-good chart(s) would come out "
+                     "differently").classes("text-lg font-semibold text-orange-700")
+            for r in changed[:6]:
+                with ui.expansion(r.label, icon="difference").classes("w-full"):
+                    if r.error:
+                        ui.label(r.error).classes("text-xs text-red-600")
+                    ui.html("<pre style='white-space:pre-wrap;font-size:11px'>"
+                            + esc("\n".join(r.diff[:80])) + "</pre>")
+            with ui.row():
+                ui.button("Save anyway", icon="save", on_click=lambda: (dlg.close(), save_all())) \
+                    .props("unelevated color=orange")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
     def restore_defaults() -> None:
         try:
             save_config_with_backup(load_default_config())
@@ -956,7 +1070,7 @@ def pipeline_page():
             render_suggestions()
 
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-            save_btn = ui.button("Save changes", icon="save", on_click=save_all)
+            save_btn = ui.button("Save changes", icon="save", on_click=save_checked)
             save_btn.props("unelevated color=primary")
             ui.button("Revert", icon="undo", on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
             ui.button("Test patterns on sample text", icon="science", on_click=run_tests).props("outline")

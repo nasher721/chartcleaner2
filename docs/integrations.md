@@ -85,6 +85,7 @@ Routes:
 - `/api/v1/health`
 - `/api/v1/clean`, with optional `format`, `delta`, `trends` and `wrap` (the response also carries `fact_check`)
 - `/api/v1/abbreviate`, `/api/v1/expand`
+- `/api/v1/restore` — puts real values back into text with `[[Tn]]` tokens, using the newest saved token map (REST only: the MCP server deliberately has no restore tool, so an AI client can't read the PHI back)
 - `/api/v1/prompt`, with `template`
 
 The API only answers this computer, rejects requests from web pages, needs the

@@ -6,16 +6,36 @@ from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 
 
-def render_rule_health(runs: list[dict]) -> None:
-    """Statistics → Rule health: rules that never match or touch too much."""
+def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
+    """Statistics → Rule health: rules that never match, touch too much, or cost facts."""
     try:
         rows = rule_health_report(load_config(common.CONFIG_PATH), runs)
     except Exception:
         return
+    summary = summary or store.summarize(runs)
+    never = sum(r["status"] == "never matched" for r in rows)
+    broad = sum(r["status"] == "very broad" for r in rows)
+    losses = summary.get("fact_losses_by_stage") or {}
+    with ui.card().classes("w-full gap-2").mark("rule-health"):
+        with ui.row().classes("w-full items-center gap-2"):
+            ui.icon("health_and_safety").classes("text-2xl text-primary")
+            ui.label("Rule health").classes("text-lg font-semibold")
+        tiles = ui.row().classes("gap-3 flex-wrap")
+        stat_chip(tiles, "rules that never fire", str(never), "grey" if not never else "orange")
+        stat_chip(tiles, "very broad rules", str(broad), "green" if not broad else "orange")
+        stat_chip(tiles, "charts with clinical values flagged",
+                  f"{summary.get('fact_flagged', 0)} / {summary.get('fact_runs', 0)}",
+                  "green" if not summary.get("fact_flagged") else "red")
+        if losses:
+            ui.label("Stages behind removed clinical values (across your history):") \
+                .classes("text-sm font-semibold")
+            with ui.row().classes("gap-2 flex-wrap"):
+                for sid, n in list(losses.items())[:8]:
+                    ui.badge(f"{STAGE_LABELS.get(sid, sid)} · {n}", color="red").props("outline")
     flagged = [r for r in rows if r["status"] in ("never matched", "very broad")]
-    title = (f"Rule health — {len(flagged)} rule(s) to review" if flagged
-             else "Rule health — no problems found")
-    with ui.expansion(title, icon="health_and_safety").classes("w-full"):
+    title = (f"Rule details — {len(flagged)} rule(s) to review" if flagged
+             else "Rule details — no problems found")
+    with ui.expansion(title, icon="rule", value=bool(flagged)).classes("w-full"):
         ui.label("From your recent runs: rules that never match are probably dead weight; rules "
                  "that touch over 30% of a chart's lines may be removing real content.") \
             .classes("text-xs opacity-70")
@@ -68,8 +88,6 @@ def stats_page():
                          "including per-stage detail.").classes("opacity-60 text-sm")
             return
 
-        render_rule_health(runs)
-
         cards = ui.row().classes("gap-3 flex-wrap")
         stat_chip(cards, "total runs", f"{s['runs']:,}")
         stat_chip(cards, "characters removed", f"{s['chars_removed']:,}", "green")
@@ -78,17 +96,21 @@ def stats_page():
         stat_chip(cards, "words removed", f"{max(0, s['words_before'] - s['words_after']):,}", "indigo")
         stat_chip(cards, "avg time / run", f"{s['avg_duration_ms']:.0f} ms", "blue-grey")
 
+        render_rule_health(runs, s)
+
         if s["days"]:
             days = s["days"]
             ui.echart({
                 "backgroundColor": "transparent",
                 "tooltip": {"trigger": "axis"},
-                "legend": {"data": ["Runs", "Characters removed"]},
-                "grid": {"left": 64, "right": 28, "top": 44, "bottom": 32},
+                "legend": {"data": ["Runs", "Characters removed", "% removed"]},
+                "grid": {"left": 64, "right": 96, "top": 44, "bottom": 32},
                 "xAxis": {"type": "category", "data": days},
                 "yAxis": [
                     {"type": "value", "name": "Runs", "minInterval": 1},
                     {"type": "value", "name": "Chars", "splitLine": {"show": False}},
+                    {"type": "value", "name": "%", "position": "right", "offset": 56,
+                     "min": 0, "max": 100, "splitLine": {"show": False}},
                 ],
                 "series": [
                     {"name": "Runs", "type": "bar", "data": [s["by_day"][d]["runs"] for d in days],
@@ -96,6 +118,9 @@ def stats_page():
                     {"name": "Characters removed", "type": "line", "yAxisIndex": 1, "smooth": True,
                      "data": [s["by_day"][d]["chars_removed"] for d in days],
                      "areaStyle": {"opacity": 0.15}, "itemStyle": {"color": "#66bb6a"}},
+                    {"name": "% removed", "type": "line", "yAxisIndex": 2, "smooth": True,
+                     "data": [s["by_day"][d].get("reduction", 0) for d in days],
+                     "itemStyle": {"color": "#f59e0b"}, "lineStyle": {"type": "dashed"}},
                 ],
             }).classes("w-full h-72")
 

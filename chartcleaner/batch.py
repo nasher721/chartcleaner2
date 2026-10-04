@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from chartcleaner.audit import run_audit
 from chartcleaner.engine import Pipeline
@@ -23,6 +24,8 @@ __all__ = ["BatchResult", "run_batch"]
 
 @dataclass
 class BatchResult:
+    """One file's outcome. ``needs_review`` is true when its clinical-facts check
+    flagged something or the audit found possible PHI left behind."""
     name: str
     path: str
     status: str                 # "ok" | "error"
@@ -40,6 +43,10 @@ class BatchResult:
     # slim per-stage summaries so batch runs still feed the Statistics dashboard
     stages: list[dict] = field(default_factory=list)
 
+    @property
+    def needs_review(self) -> bool:
+        return self.status == "ok" and (self.facts_status not in ("", "ok") or self.findings > 0)
+
 
 def run_batch(
     paths: list[Path],
@@ -47,11 +54,13 @@ def run_batch(
     custom_dir: str | Path | None = None,
     *,
     delta: bool = False,
+    on_progress: Callable[[int, int, BatchResult], None] | None = None,
 ) -> list[BatchResult]:
     """Clean every path in order; failures are isolated per file.
 
     With ``delta`` each file's output keeps only what changed between its
-    daily notes (the copy-forward delta view).
+    daily notes (the copy-forward delta view). ``on_progress(done, total,
+    result)`` is called after each file (from the worker thread).
     """
     pipe = Pipeline(cfg, custom_dir=custom_dir)
     out: list[BatchResult] = []
@@ -88,4 +97,9 @@ def run_batch(
                 error=str(exc),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
             ))
+        if on_progress is not None:
+            try:
+                on_progress(len(out), len(paths), out[-1])
+            except Exception:
+                pass  # progress reporting must never break the batch
     return out

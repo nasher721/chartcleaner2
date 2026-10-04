@@ -15,7 +15,8 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate", "expand", "prompt", "ask"]
+__all__ = ["FORMATS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate", "expand", "prompt", "ask", "restore",
+           "timeline", "result_cache"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -195,3 +196,44 @@ def ask(question: str, chart: str, *, preset: str | None = None,
         "ungrounded_entities": list(res.grounding.ungrounded_entities),
         "duration_ms": res.duration_ms,
     }
+
+
+def restore(text: str, mapping: dict[str, str] | None = None) -> dict:
+    """Put the real values back into text that carries ``[[Tn]]`` tokens.
+
+    The PHI round-trip: clean with *Reversible tokenization* on, send the
+    tokenized chart to an external AI, paste its reply here. ``mapping``
+    defaults to the newest saved token map (data/tokens/, encrypted).
+    """
+    from .tokens import newest_token_map, untokenize
+
+    source = "given"
+    if mapping is None:
+        found = newest_token_map()
+        if found is None:
+            return {"text": text, "restored": 0, "map": None,
+                    "error": "No saved token map — clean a chart with Reversible tokenization on first."}
+        path, mapping = found
+        source = Path(path).name
+    restored, n = untokenize(text, mapping)
+    return {"text": restored, "restored": n, "map": source}
+
+
+def timeline(text: str) -> list[dict]:
+    """The notes in a cleaned chart with their offsets (see chartcleaner.timeline)."""
+    from .timeline import build
+    try:
+        return [n.to_dict() for n in build(_unwrap(text))]
+    except Exception:
+        return []
+
+
+_RESULT_CACHE: dict = {"cache": None}
+
+
+def result_cache():
+    """The process-wide :class:`~chartcleaner.stage_cache.StageCache` the app shares."""
+    from .stage_cache import StageCache
+    if _RESULT_CACHE["cache"] is None:
+        _RESULT_CACHE["cache"] = StageCache()
+    return _RESULT_CACHE["cache"]

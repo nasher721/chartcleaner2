@@ -109,7 +109,7 @@ async def test_clean_page_trends_tab(user, monkeypatch, tmp_path):
     try:
         await user.open("/")
         user.find(marker="run-clean").click()
-        await user.should_see("Trends", retries=50)
+        await user.should_see("Lab trends across", retries=50)
         await user.should_see("Copy trends")
         assert CLEAN_STATE["trends"].labs
     finally:

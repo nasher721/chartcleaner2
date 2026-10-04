@@ -46,6 +46,9 @@ EXPORTS_DIR = DATA_DIR / "exports"
 AUDIT_HITS_FILE = DATA_DIR / "audit_hits.jsonl"
 SUGGESTIONS_STATE_FILE = DATA_DIR / "suggestions_state.json"
 BACKUPS_DIR = DATA_DIR / "backups"
+RECENT_DIR = DATA_DIR / "recent"            # encrypted recent inputs (recent_charts.py)
+KNOWN_GOOD_DIR = DATA_DIR / "known_good"    # encrypted regression charts (regression_set.py)
+INBOX_STATE_FILE = DATA_DIR / "inbox_state.json"  # dismissed rule-inbox ids (no chart text)
 _MIGRATION_CHECKED = False
 
 
@@ -70,6 +73,12 @@ DEFAULT_PREFS = {
     "note_auto_apply": False,
     # Delete token maps and batch/watcher output older than this (0 = keep).
     "retention_days": 14,
+    # Encrypted copies of recent inputs for the rule inbox (recent_charts.py).
+    "recent_charts": {"enabled": True, "keep": 20},
+    # Clean page: layout and the main "Copy as…" format.
+    "copy_default": "text",
+    "ai_drawer": False,
+    "onboarded": False,
 }
 
 
@@ -241,7 +250,10 @@ def summarize(runs: list[dict]) -> dict:
         "words_after": 0,
         "phi": 0,
         "duration_ms": 0.0,
+        "fact_runs": 0,
+        "fact_flagged": 0,
     }
+    fact_losses: dict[str, int] = {}
     phi_by_type: dict[str, int] = {}
     stage_totals: dict[str, int] = {}
     by_day: dict[str, dict[str, float]] = {}
@@ -266,9 +278,17 @@ def summarize(runs: list[dict]) -> dict:
 
         day = (r.get("ts") or "")[:10]
         if day:
-            bucket = by_day.setdefault(day, {"runs": 0, "chars_removed": 0})
+            bucket = by_day.setdefault(day, {"runs": 0, "chars_removed": 0, "chars_before": 0})
             bucket["runs"] += 1
+            bucket["chars_before"] += r.get("chars_before", 0) or 0
             bucket["chars_removed"] += max(0, (r.get("chars_before", 0) or 0) - (r.get("chars_after", 0) or 0))
+        fc = r.get("fact_check") or {}
+        for sid, n in (fc.get("lost_by_stage") or {}).items():
+            fact_losses[sid] = fact_losses.get(sid, 0) + int(n)
+        if fc:
+            totals["fact_runs"] += 1
+            if fc.get("status") != "ok":
+                totals["fact_flagged"] += 1
 
     totals["chars_removed"] = max(0, totals["chars_before"] - totals["chars_after"])
     totals["avg_reduction"] = (
@@ -285,7 +305,10 @@ def summarize(runs: list[dict]) -> dict:
         "phi_by_type": dict(sorted(phi_by_type.items(), key=lambda kv: kv[1], reverse=True)),
         "top_stages": top_stages,
         "days": days,
-        "by_day": {d: by_day[d] for d in days},
+        "by_day": {d: {**by_day[d], "reduction": round(100.0 * by_day[d]["chars_removed"]
+                                                       / by_day[d]["chars_before"], 1)
+                       if by_day[d]["chars_before"] else 0.0} for d in days},
+        "fact_losses_by_stage": dict(sorted(fact_losses.items(), key=lambda kv: -kv[1])),
     }
 
 
@@ -538,6 +561,8 @@ WATCHED_OUT_DIR = DATA_DIR / "watched_out"
 def _chart_data_paths() -> list[Path]:
     """Files and folders under data/ that hold chart text or PHI."""
     paths: list[Path] = _token_map_files()
+    if RECENT_DIR.exists():
+        paths += list(RECENT_DIR.glob("chart-*.enc"))
     if EXPORTS_DIR.exists():
         paths += [p for p in EXPORTS_DIR.iterdir() if p.name != ".gitkeep"]
     if WATCHED_OUT_DIR.exists():
@@ -599,8 +624,10 @@ def maybe_purge_old_data(every_seconds: float = 3600.0) -> None:
 
 
 def delete_all_chart_data() -> int:
-    """"Delete stored chart data now": token maps, exports and watcher output."""
-    return sum(_remove(p) for p in _chart_data_paths())
+    """"Delete stored chart data now": token maps, recent charts, known-good
+    charts, exports and watcher output."""
+    known_good = list(KNOWN_GOOD_DIR.glob("*.enc")) if KNOWN_GOOD_DIR.exists() else []
+    return sum(_remove(p) for p in _chart_data_paths() + known_good)
 
 
 # ---------------------------------------------------------------------------

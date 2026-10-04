@@ -127,6 +127,10 @@ def register(app) -> None:
         return await run(request, ("text",), lambda d: service.expand(
             d["text"], preset=d.get("preset") or None, source="api:rest"))
 
+    @app.post("/api/v1/restore")
+    async def api_restore(request: Request):
+        return await run(request, ("text",), lambda d: service.restore(str(d["text"])))
+
     @app.post("/api/v1/prompt")
     async def api_prompt(request: Request):
         return await run(request, ("text", "template"), lambda d: service.prompt(

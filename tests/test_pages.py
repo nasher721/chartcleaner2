@@ -50,9 +50,9 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
         assert CLEAN_STATE['result_text'] == '  MRN: 1234567\n• ACA  \n'
         assert CLEAN_STATE['audit'] is None
         assert [s.id for s in CLEAN_STATE['result'].stages] == ['medical_abbreviations']
-        await user.should_see('Copy result')
+        await user.should_see(marker='copy-as')
         await user.should_see('Text (.txt)')
-        await user.should_not_see('Local AI summary')
+        await user.should_not_see('Summarize')
 
         with user.client:
             next(iter(user.find(ui.toggle).elements)).set_value('clean')
@@ -60,7 +60,7 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
         assert AUTO_LAST['text'] is None
         assert CLEAN_STATE['input'] == raw
         user.find(marker='run-clean').click()
-        await user.should_see('Local AI summary', retries=50)
+        await user.should_see('Summarize', retries=50)
         assert 'ACA' in CLEAN_STATE['result_text']
         assert '1234567' not in CLEAN_STATE['result_text']
         assert CLEAN_STATE['result'].wrapped
@@ -72,9 +72,9 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
 
 
 async def test_summary_panel_hidden_before_first_clean(user: User):
-    # The Local AI summary expansion only appears once a clean run exists.
+    # The AI panel's Summarize button only appears once a clean run exists.
     await user.open('/')
-    await user.should_not_see('Local AI summary')
+    await user.should_not_see('Summarize')
 
 
 @pytest.mark.nicegui_main_file('')
@@ -117,7 +117,7 @@ async def test_clean_renders_with_available_or_saved_models(
         await user.open('/')
         user.find(marker='run-clean').click()
         await user.should_see('Ask this chart', retries=50)
-        await user.should_see('Copy result')
+        await user.should_see(marker='copy-as')
         await user.should_see('Text (.txt)')
         await user.should_not_see('Cleaning failed')
         model_select = next(e for e in user.find(ui.select).elements if e.label == 'Model')
@@ -240,7 +240,7 @@ async def test_ai_panels_render_after_clean_run(user: User):
                        ])
     try:
         await user.open('/')
-        await user.should_see('Local AI summary')
+        await user.should_see('Summarize')
         await user.should_see('Ask this chart')
         await user.should_see('Q: Active meds?')
         await user.should_see('No checkable facts')

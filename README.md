@@ -4,16 +4,17 @@ Project repository: [nasher721/chartcleaner2](https://github.com/nasher721/chart
 
 Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation — now as a **local desktop app** for macOS and Windows, with the original CLI still included.
 
-- **Clean page** — paste or drop a chart, clean it, and inspect a **side-by-side diff**, per-run stats (characters/words/PHI/duration), and a table showing exactly what each cleaning stage did. **Drop .docx or .pdf files** — they're converted automatically (Word via the built-in reader or markitdown; PDFs via PyMuPDF with OCR fallback and page header/footer removal).
+- **Clean page** — the chart on the left, the result on the right. A trust strip says at a glance whether every clinical value survived and whether any PHI pattern is left. The result has three tabs: **Output** (one **Copy as…** button: plain, Epic-safe, Markdown, with stats, with trends, tokenized for an external AI, or any prompt template; a timeline to jump between notes), **Review** (a diff where every struck-out or abbreviated piece is clickable — see the rule, *Never remove this*, delete the rule) and **Insights** (lab sparklines against reference ranges, a medication-change table, changes over time). Select text in the chart for a toolbar: Remove, Replace, Abbreviate, Never remove. **Ctrl/⌘+K** opens a command palette; **Ctrl/⌘+/** lists the shortcuts. **Drop .docx or .pdf files** — they're converted automatically (Word via the built-in reader or markitdown; PDFs via PyMuPDF with OCR fallback and page header/footer removal).
 - **Batch page** — queue many charts in one run: multi-file upload (.txt/.md/.docx/.pdf) or a folder path. A per-file table shows characters before → after, reduction, PHI redactions and audit findings; download any file or all of them as one **.zip**.
 - **Post-run review** — after every clean, an audit scans the *surviving* text for leftovers (long digit runs, DOB-style lines, phones/emails, identity labels, Epic chrome) and lists them as review chips, with flagged lines highlighted in the diff and a one-click **Build rule** for any finding.
 - **Local AI summary** — after a clean, a "Local AI summary" panel summarizes the chart on-device via [Ollama](https://ollama.com) (pick clinical sections / brief paragraph / key findings / your own prompt). Every number, dose, and date in the summary is checked against the source chart, and ungrounded items are flagged — hallucinated facts can't hide. Needs Ollama running locally; nothing ever leaves your machine (the endpoint is locked to loopback).
 - **Ask this chart** — after a clean, ask questions about the chart in plain language ("what are the active antibiotics?"). A local model answers on-device and every number, dose, and date in each answer is verified against the chart — ungrounded claims are flagged, and answers use only facts in the chart. Same Ollama setup as the summary panel; short conversation context is kept in the browser, never on disk.
-- **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever.
-- **Learn rules by highlighting** — select any text in the chart on the Clean page and click **Learn rule from selection**: remove that text everywhere, remove the whole line(s), or replace it with your own text. The rule is remembered (Pipeline → *Learned rules*) and applied to every future clean, with a live preview of how many times it would match.
+- **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever. The Clean page's **Suggestions** inbox goes further: from your recent charts (kept encrypted) it offers lines that keep coming back ("appeared in 9 of your last 10 charts — remove it?") and phrases worth abbreviating. Lines holding clinical values or section headings are never suggested.
+- **Known-good charts** — mark a result as known good (⋯ → *Mark as known good*). Saving rule changes on the Pipeline page re-cleans those charts first and shows any that would come out differently.
+- **Learn rules by highlighting** — select any text in the chart on the Clean page and use the selection toolbar (**More…** for the full dialog): remove that text everywhere, remove the whole line(s), or replace it with your own text. The rule is remembered (Pipeline → *Learned rules*) and applied to every future clean, with a live preview of how many times it would match — and *Check my recent charts* shows what else it would change.
 - **Settings export / import** — one `.zip` carries all your customization (rules, learned rules, options, presets, custom scripts, watcher config) to a clean install: Settings → *Export & import settings*.
 - **Rule packs** — curated rule sets shipped with the app: *HIPAA Safe Harbor (strict)* and *Philter core PHI* (ported from the published UCSF pipeline). Install as a preset or apply directly from the Pipeline page.
-- **Reversible tokenization** — optionally swap PHI for stable `[[T1]]`-style codes instead of deleting it. Value→token maps are saved locally and can restore the original text later (Settings → Token maps, or `clean-chart --untoken`).
+- **Reversible tokenization** — optionally swap PHI for stable `[[T1]]`-style codes instead of deleting it. Value→token maps are saved locally and can restore the original text later (Settings → Token maps, or `clean-chart --untoken`). Round trip with an external AI: *Copy as → Tokenized, for an external AI*, then ⋯ → *Restore names in an AI reply* puts the real values back into what the AI wrote.
 - **Pipeline & Rules page** — every cleaning rule is editable in the app: enable/disable, reorder, add/edit regex patterns (with live match counts against a sample), tune NLP redaction entities and thresholds, tune the review checks, and save any rule set as a named **preset** (import/export as JSON).
 - **Evaluation report card** — generate synthetic charts with known PHI and measure how much your current rules actually catch (per-type recall), right on the Statistics page or with `clean-chart --evaluate`.
 - **Folder watcher** — point it at a folder; every chart file dropped in is cleaned automatically to an output folder (Settings page, or `clean-chart --watch DIR`).
@@ -100,8 +101,8 @@ anyway** re-enables one after an explicit "I understand" confirmation, and
 **Safety report** lists every flagged rule. The lists live in
 `chartcleaner/abbreviation_do_not_use.json`.
 
-**Adding abbreviations.** On the Clean page tick **Abbreviate mode** and highlight
-a term: the dialog suggests a short form (the dictionary's, else initials), shows
+**Adding abbreviations.** On the Clean page highlight a term and press
+**Abbreviate…** in the selection toolbar: the dialog suggests a short form (the dictionary's, else initials), shows
 how many places it would change, and warns about Do Not Use or shared
 abbreviations. The Abbreviations tab shows the same live preview while you type.
 
@@ -142,7 +143,7 @@ AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 - *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
 Each rewrites a block only when it understands every line of it.
 
-**Reviewing a clean.** Besides Result, Diff and stages, the Clean page shows
+**Reviewing a clean.** The Review tab holds the clickable diff, the stage table,
 **Removed** (everything the line/block/learned rules deleted, with *Never
 remove this*), **Abbreviations**, and **Changes over time** for multi-day
 charts (only sentences that are new or changed after the first note — a
@@ -242,6 +243,8 @@ def clean(text: str, ctx) -> str:
 | `data/stats.jsonl` | One line per cleaning run — the statistics history |
 | `data/audit_hits.jsonl` | One line per run — which leftover patterns the audit saw |
 | `data/backups/` | Timestamped config backups (newest 5, restorable in Settings) |
+| `data/recent/` | Your last 20 inputs, **encrypted**, for rule suggestions (Settings → Recent charts; deleted by retention) |
+| `data/known_good/` | Charts you marked known good, **encrypted** (kept until you remove them) |
 | `data/tokens/` | Reversible-tokenization maps (newest 10), **encrypted** — the key is in the macOS Keychain, protected by Windows DPAPI, or in `data/.datakey` elsewhere. **These undo your cleaning.** |
 | `data/evaluation.json` | The last recall report card from the evaluation harness |
 | `data/watch.json` | Folder-watcher configuration |
@@ -251,7 +254,7 @@ def clean(text: str, ctx) -> str:
 
 Everything stays on this machine. Delete `data/` to reset all history.
 
-**Retention:** token maps, batch output and folder-watcher output in `data/` are deleted
+**Retention:** token maps, recent charts, batch output and folder-watcher output in `data/` are deleted
 after 14 days by default (Settings → Stored chart data; 0 keeps them). The same card has
 **Delete stored chart data now**. Run history, backups and rules hold no chart text and
 are kept. Encrypted token maps can't be read on another machine — copying the folder
