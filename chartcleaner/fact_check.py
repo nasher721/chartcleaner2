@@ -415,20 +415,40 @@ def _negations(line: str) -> int:
     return n
 
 
+_MAX_PAIR_WORK = 4000  # fuzzy pairing budget per replaced block (old lines × new lines)
+
+
 def _pairs(before: list[str], after: list[str]) -> list[tuple[str, str]]:
+    """(old, new) line pairs for lines a stage rewrote.
+
+    Lines present verbatim on both sides can't have changed meaning, so only
+    the changed lines are aligned — this keeps a 4,000-line chart full of
+    copy-forward repeats fast (aligning everything is quadratic there).
+    """
     import difflib
+    before_set, after_set = set(before), set(after)
+    olds = [ln for ln in before if ln not in after_set and ln.strip()]
+    news = [ln for ln in after if ln not in before_set and ln.strip()]
+    if not olds or not news:
+        return []
+    if not any(_negations(ln) or _sides(ln) for ln in olds):
+        return []  # nothing a rewrite could have flipped
     out: list[tuple[str, str]] = []
-    sm = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    sm = difflib.SequenceMatcher(a=olds, b=news, autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag != "replace":
             continue
-        olds, news = before[i1:i2], after[j1:j2]
-        if len(olds) == len(news):
-            out.extend(zip(olds, news))
+        block_old, block_new = olds[i1:i2], news[j1:j2]
+        if len(block_old) == len(block_new):
+            out.extend(zip(block_old, block_new))
             continue
-        for old in olds:
+        if len(block_old) * len(block_new) > _MAX_PAIR_WORK:
+            continue
+        for old in block_old:
+            if not (_negations(old) or _sides(old)):
+                continue
             best, score = None, 0.5
-            for new in news:
+            for new in block_new:
                 r = difflib.SequenceMatcher(a=old, b=new, autojunk=False).ratio()
                 if r > score:
                     best, score = new, r

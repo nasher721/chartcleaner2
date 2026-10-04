@@ -181,3 +181,13 @@ def test_cli_check_known_good(monkeypatch, capsys, tmp_path):
     out = capsys.readouterr().out
     assert done.value.code == 1
     assert "✓ stable" in out and "✕ drifted" in out and "1 of 2" in out
+
+
+def test_meaning_guard_stays_fast_on_long_repetitive_charts():
+    import time
+    before = "\n".join(["Denies chest pain.", "Stable overnight.", "Plan unchanged."] * 1300)
+    after = before.replace("Denies chest pain.", "chest pain.", 1)
+    started = time.perf_counter()
+    found = meaning_changes(before, after)
+    assert [m.kind for m in found] == ["negation"]
+    assert time.perf_counter() - started < 2.0
