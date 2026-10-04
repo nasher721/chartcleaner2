@@ -70,7 +70,7 @@ Tools:
 - `render_prompt` (clean, then wrap in a prompt template)
 - `list_presets`, `list_prompt_templates`
 - `ask_chart` (on-device Ollama; returns a value-by-value check and citations)
-- `chart_insights` (problems, devices, antibiotics/cultures, overnight events, trends)
+- `chart_insights` (problems, devices, antibiotics/cultures, overnight events, trends, to-do list, ICU bundle check)
 - `fill_note_template`, `list_note_templates` (the note itself, filled with the chart's own lines)
 - `clean_patient_list` (split a sign-out or census paste per patient and clean each)
 
@@ -90,7 +90,7 @@ Routes:
 - `/api/v1/abbreviate`, `/api/v1/expand`
 - `/api/v1/restore` — puts real values back into text with `[[Tn]]` tokens, using the newest saved token map (REST only: the MCP server deliberately has no restore tool, so an AI client can't read the PHI back)
 - `/api/v1/prompt`, with `template`
-- `/api/v1/insights`, with optional `which` (`["problems", "devices", "micro", "overnight", "trends"]`)
+- `/api/v1/insights`, with optional `which` (`["problems", "devices", "micro", "overnight", "trends", "pending", "bundle"]`)
 - `/api/v1/note`, with `template` (a note template: `Systems note ([N] [CV] [R] …)`, `Interval note`, …)
 - `/api/v1/patients` — splits a patient list and cleans each patient
 - `/api/v1/daily-note`, with `previous` (yesterday's chart) or `tag` (the bed tag of a stored chart)

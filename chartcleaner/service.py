@@ -41,7 +41,8 @@ def format_output(text: str, fmt: str = "text", delta: bool = False,
     Returns ``(text, delta_result)``; ``delta_result`` is None unless ``delta``.
     ``trends`` puts the lab-trend / medication-change block (see
     :mod:`chartcleaner.trends`) above the chart when it holds several notes.
-    ``insights`` puts the problem / device / antibiotic / overnight blocks
+    ``insights`` puts the overnight / to-do / device / antibiotic / bundle /
+    problem blocks
     (see :func:`insights_text`) above it.
     """
     _check_format(fmt)
@@ -57,7 +58,7 @@ def _check_format(fmt: str) -> None:
 def _compose(text: str, fmt: str, delta: bool, block: str, insights: bool) -> tuple[str, Any]:
     """format_output's body once the trends block is known."""
     if insights:
-        extra = insights_text(text, ("overnight", "devices", "micro", "problems"))
+        extra = insights_text(text, ("overnight", "pending", "devices", "micro", "bundle", "problems"))
         block = f"{block}\n\n{extra}".strip() if extra else block
     delta_res = None
     out = text
@@ -91,7 +92,7 @@ def trends_text(text: str, config: dict | None = None) -> str:
 
 
 # name -> module with build(text) returning a report with to_text()/to_dict()
-INSIGHTS = ("problems", "devices", "micro", "overnight", "trends")
+INSIGHTS = ("problems", "devices", "micro", "overnight", "trends", "pending", "bundle")
 
 
 def _insight_report(name: str, text: str):
@@ -118,8 +119,9 @@ def _each_insight(text: str, which, render: str):
 
 
 def insights(text: str, which: tuple[str, ...] | list[str] | None = None) -> dict:
-    """Problem-oriented view, devices, antibiotics/cultures, overnight events and
-    trends read from ``text`` (each built from the chart's own lines)."""
+    """Problem-oriented view, devices, antibiotics/cultures, overnight events,
+    trends, the to-do list and the ICU bundle check read from ``text`` (each
+    built from the chart's own lines)."""
     return dict(_each_insight(text, which, "to_dict"))
 
 

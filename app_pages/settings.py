@@ -5,7 +5,8 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages import updates
-from chartcleaner import recent_charts, regression_set
+from chartcleaner import model_compare, recent_charts, regression_set
+from chartcleaner.summarizer import PRESET_LABELS
 
 
 def settings_page():
@@ -421,6 +422,81 @@ def settings_page():
             if not os.environ.get("NICEGUI_USER_SIMULATION"):
                 ui.timer(0.2, check_ai, once=True)
 
+            # ---- compare models on your own charts ----
+            ui.separator()
+            ui.label("Compare models").classes("text-sm font-semibold")
+            ui.label("Summarizes up to three of your known-good charts (or the sample chart) with "
+                     "every installed model and ranks them: values the chart never states first, "
+                     "then grounding, cited lines and speed. Nothing is stored.") \
+                .classes("text-xs opacity-60 -mt-1")
+            cmp_state = {"running": False, "status": "", "fraction": None, "result": None}
+            cmp_results = ui.column().classes("w-full gap-1")
+
+            def draw_comparison(res) -> None:
+                cmp_results.clear()
+                with cmp_results:
+                    ui.label(f"Preset “{PRESET_LABELS.get(res.preset, res.preset)}” on "
+                             f"{len(res.charts)} chart(s): {', '.join(res.charts)}") \
+                        .classes("text-xs opacity-60")
+                    with ui.row().classes("w-full gap-2 no-wrap text-xs font-semibold opacity-70"):
+                        for title, width in (("Model", "w-48"), ("Not in chart / summary", "w-36"),
+                                             ("Grounding", "w-20"), ("Cited lines", "w-20"),
+                                             ("Seconds", "w-16")):
+                            ui.label(title).classes(width)
+                    for i, s in enumerate(res.scores):
+                        with ui.row().classes("w-full items-center gap-2 no-wrap").mark(f"compare-row-{i}"):
+                            ui.label(s.model).classes("text-sm cc-mono w-48 truncate")
+                            if not s.ok_trials:
+                                err = s.trials[0].error if s.trials else ""
+                                ui.label(f"failed: {err}").classes("text-xs text-red-600 truncate flex-grow")
+                                continue
+                            bad = s.unsupported_per_summary
+                            ui.label(str(bad)).classes(
+                                "text-sm w-36 " + ("text-green-600" if bad == 0 else "text-orange-600")) \
+                                .tooltip(", ".join(s.examples()) or "none")
+                            ui.label(f"{s.grounding}%").classes("text-sm w-20")
+                            ui.label(f"{s.citation_coverage}%").classes("text-sm w-20")
+                            ui.label(f"{s.median_seconds}").classes("text-sm w-16")
+                            if i == 0:
+                                ui.badge("best", color="green").props("outline")
+                            ui.button("Use", on_click=lambda n=s.model: use_model(n)).props("flat dense")
+
+            async def run_comparison() -> None:
+                if cmp_state["running"]:
+                    return
+                cmp_state.update(running=True, status="starting…", fraction=0.0)
+                cfg = load_config(common.CONFIG_PATH)
+                preset = cmp_preset.value or "clinical"
+
+                def progress(done: int, total: int, model: str) -> None:
+                    cmp_state.update(status=f"{model} ({done + 1}/{total})" if model else "done",
+                                     fraction=done / total if total else None)
+                try:
+                    res = await run.io_bound(model_compare.compare, cfg, None, None,
+                                             preset=preset, on_progress=progress)
+                    draw_comparison(res)
+                except Exception as ex:
+                    ui.notify(f"Could not compare models: {ex}", type="warning")
+                finally:
+                    cmp_state.update(running=False, status="")
+                    tick_compare()
+
+            def tick_compare() -> None:
+                cmp_label.set_text(cmp_state["status"])
+                cmp_bar.set_visibility(cmp_state["running"])
+                if cmp_state["fraction"] is not None:
+                    cmp_bar.set_value(cmp_state["fraction"])
+
+            with ui.row().classes("w-full items-center gap-2"):
+                cmp_preset = ui.select({k: v for k, v in PRESET_LABELS.items() if k != "custom"},
+                                       value="clinical", label="Summary preset").classes("w-48")
+                ui.button("Compare installed models", icon="leaderboard",
+                          on_click=run_comparison).props("outline").mark("compare-models")
+                cmp_bar = ui.linear_progress(value=0, show_value=False).classes("w-40")
+                cmp_label = ui.label("").classes("text-xs opacity-70")
+            cmp_bar.set_visibility(False)
+            ui.timer(0.5, tick_compare)
+
         # ---- prompt templates ---------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Prompt templates").classes("font-semibold")
@@ -473,7 +549,7 @@ def settings_page():
                      "command line): the note itself, filled with the chart's own lines. "
                      "Placeholders: {{chart}}, {{date}}, {{systems}} ([N] [CV] [R] [R/GU] [GI] [E] "
                      "[H] [ID] …), {{system:N}}, {{section:Assessment & Plan}}, {{problems}}, "
-                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}. A template with a "
+                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}, {{pending}}, {{bundle}}. A template with a "
                      "built-in's name replaces it.").classes("text-xs opacity-60 -mt-1")
             ui.label("Built-in: " + ", ".join(t["name"] for t in note_templates_mod.DEFAULT_TEMPLATES)) \
                 .classes("text-xs opacity-60")
