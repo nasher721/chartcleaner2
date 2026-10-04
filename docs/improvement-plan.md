@@ -640,3 +640,87 @@ Branch `claude/magical-edison-yk146v`.
   after typing stops.
 - [x] **Known-good charts** — `regression_set.py` (encrypted `data/known_good/`, not
   age-purged, removed by *Delete stored chart data now*).
+
+
+# Phase 7 (2026-10-04) — trust checks, clinical extractors, workflow, learning, local AI, Doctor
+
+Branch `claude/zen-cray-24xuah`. All seven groups from the brainstorm.
+
+**1. Loose ends**
+- [x] **F4 validator coverage** — `tests/test_phase7_loose_ends.py` sets every
+  `KNOWN_CONFIG_KEYS` group to a number and expects an error naming it (a new group can't
+  ship without a validator). `clinical_identifiers` got one; `note_templates` added.
+- [x] **Batch note types** — `run_batch(note_presets=, preset_loader=)`; Batch page switch +
+  "Note type" column. Built on a shared `_Runner` that `run_texts` also uses.
+- [x] **Slow rules** — regex stages record rules ≥ `stages.SLOW_RULE_MS` (25 ms) in
+  `details["slow_rules"]`; rule health has a `slow` status. `regex_risk.py` flags nested
+  repeats, overlapping alternation and 3+ unanchored wildcards (parsed, not matched) in the
+  validator, rule preview headline and Statistics. Shipped configs raise no warning (tested).
+- [x] **Per-entry abbreviation sections** — `abbreviations.custom[].sections`; outside those
+  sections the term is left as written. Edit dialog has a section picker.
+- [x] **Quick Action self-test** — `make_quick_actions.py --self-test` (also run by
+  `install.sh --services`). Still needs one real-Mac run (see integrations manual checks).
+
+**2. Trust**
+- [x] **AI output check** — `fact_check.verify_output(source, generated)` → `OutputCheck`
+  (spans of values/drugs/code-status words the chart never states). On `SummaryResult.facts`,
+  `QaResult.facts`, `service.ask()["facts"]`; drawer marks them red.
+- [x] **Meaning guard** — `fact_check.meaning_changes`: on lines a stage *rewrote*, a dropped
+  negation or a new/switched side is a `MeaningChange` (category from the stage). Negation
+  abbreviations (NAD, DNR, NGTD, WO…) are read from the CSV; for abbreviation stages only a
+  vanished negation counts. `FactReport.meaning`; summary key `meaning_flags` (history must
+  never contain the word "changes" — provenance test).
+- [x] **Introduced / impossible values** — `FactReport.introduced` (numbers new to the chart,
+  attributed to a stage) and `plausibility.py` (impossible labs/vitals/scores, very high
+  doses). Impossible values the input already had don't alert (`implausible_in_source`).
+- [x] **CLI `--check-known-good`** — exit 1 when a known-good chart's output changed.
+
+**3. Clinical extractors** (all verbatim, `build(text)` → report with `to_text()/to_dict()`)
+- [x] `problems.py` (A&P problems + related chart lines via `RELATED`; wrapped lines joined by
+  `logical_lines`), `devices.py` (lines/drains/airway, day counts against
+  `chart_dates.reference_date`, `REVIEW_DAYS`), `micro.py` (antibiotic days, brand names,
+  cultures/organisms), `overnight.py` (event sections + overnight-timed lines; prepended to the
+  handoff summary preset), score trends in `trends.py` (`SCORES`, `TrendReport.scores`).
+- [x] `service.insights()/insights_text()`, `format_output(insights=)`, `/api/v1/insights`,
+  MCP `chart_insights`, CLI `--insights`, Clean page Insights blocks.
+
+**4. Workflow**
+- [x] **Bed tags** — inside the encrypted recent-chart record (`recent_charts.set_tag/tags/latest_for`).
+- [x] **Daily note** — `daily_note.build(today, previous)`; Clean page "Daily note" dialog,
+  `service.daily_note`, `/api/v1/daily-note`, CLI `--daily-note FILE` / `--tag BED` (stores today).
+- [x] **Patient lists** — `patients.split()` (bed labels, Patient: lines, numbers, separators),
+  `batch.run_texts(summarize=)`, Batch page paste box with optional AI one-liners,
+  `service.clean_patients`, `/api/v1/patients`, MCP `clean_patient_list`, CLI `--split-patients`.
+- [x] **Note templates** — `note_templates.py` (`{{systems}}`, `{{system:N}}`,
+  `{{section:…}}`, insight blocks), config `note_templates`, Copy as → Note, Settings editor,
+  `/api/v1/note`, MCP `fill_note_template`, CLI `--template`.
+
+**5. Learning**
+- [x] **Inbox from edits** — the result is editable (pencil); `edit_log.py` counts deleted
+  line shapes (never lines with clinical facts), encrypted `data/edit_log.enc`, retention-purged;
+  3 deletions → inbox suggestion.
+- [x] **Signed rule files** — `rule_signing.py` (Ed25519 via `cryptography`; key encrypted in
+  `data/signing_key.enc`, trusted keys in `data/trusted_keys.json`). Imports show the signer,
+  refuse tampered files, ask to confirm unsigned/untrusted ones and preview known-good impact.
+- [x] **Noise per stage** — `store.summarize()["stage_by_day"/"stage_share"]` (batch-style
+  `before/after` keys count too); Statistics card.
+
+**6. Local AI**
+- [x] `LocalLlmClient.version/model_details/pull/generate_stream`, `local_llm.health()`;
+  Settings → Local AI card (status, models, Use, pull llama3.1 with progress).
+- [x] Streaming: `summarize/ask_chart(on_token=)` via `summarizer.run_model`; drawer polls the
+  partial text (worker threads never touch the UI).
+- [x] Citations: `citations.cite(summary, chart)` on `SummaryResult/QaResult.citations` and
+  `service.ask()`; `[n]` chips jump to the chart line.
+
+**7. Distribution**
+- [x] **Update signing** — already enforced (manifest hash + native signature at staging and
+  again before the swap; an empty publisher refuses). Now pinned by a test and shown in Doctor.
+- [x] **Startup** — Presidio/spaCy were already lazy + warmed; the abbreviation matcher and
+  note-template regexes are now built on first use (warmed with NLP), validator no longer
+  imports urllib. Test: importing the engine loads none of them.
+- [x] **Doctor** — `doctor.py` (`run_checks(deep=, ai=)`, `apply_fix`), `/doctor` page,
+  CLI `--doctor`.
+
+Not done / follow-ups: a real-Mac run of the Quick Action self-test; streaming for the
+Batch page one-liners; per-entry sections in the abbreviation CSV import.

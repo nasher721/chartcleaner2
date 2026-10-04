@@ -63,6 +63,11 @@ clean-chart.cmd               # Windows
 ./clean-chart --stdin --stdout --mode abbreviations   # pipe text through (scripts, Quick Actions)
 ./clean-chart --prompt "Progress note"   # clean, then wrap in a prompt template
 ./clean-chart --watch-clipboard          # clean Epic text as soon as it is copied
+./clean-chart --tag G20-1                # daily update vs. the last chart for this bed
+./clean-chart --split-patients           # clean a sign-out list patient by patient
+./clean-chart --template "Interval note" # fill a note template from the chart
+./clean-chart --insights                 # problems, devices, antibiotics, overnight events on top
+./clean-chart --doctor                   # check the installation, with fixes in the app's Doctor page
 ./clean-chart-mcp                        # MCP server for Claude Desktop / Claude Code
 ```
 
