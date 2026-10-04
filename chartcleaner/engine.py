@@ -416,18 +416,20 @@ class Pipeline:
 
     # -- construction -------------------------------------------------------
 
+    # stages switched on/off by their own config group: sid -> (group, default)
+    _GROUP_ENABLED = {
+        "nlp_redaction": ("nlp_redaction", True),
+        "tokenize_phi": ("tokenization", False),
+        "clinical_identifiers": ("clinical_identifiers", False),
+        "duplicate_notes": ("duplicate_note_detection", True),
+        "fuzzy_dedup": ("fuzzy_dedup", True),
+    }
+
     def _builtin_enabled(self, sid: str) -> bool:
         cfg = self.config
-        if sid == "nlp_redaction":
-            return bool((cfg.get("nlp_redaction") or {}).get("enabled", True))
-        if sid == "tokenize_phi":
-            return bool((cfg.get("tokenization") or {}).get("enabled", False))
-        if sid == "clinical_identifiers":
-            return bool((cfg.get("clinical_identifiers") or {}).get("enabled", False))
-        if sid == "duplicate_notes":
-            return bool((cfg.get("duplicate_note_detection") or {}).get("enabled", True))
-        if sid == "fuzzy_dedup":
-            return bool((cfg.get("fuzzy_dedup") or {}).get("enabled", True))
+        if sid in self._GROUP_ENABLED:
+            group, default = self._GROUP_ENABLED[sid]
+            return bool((cfg.get(group) or {}).get("enabled", default))
         so = get_stage_options(cfg, sid)
         if "enabled" in so:
             return bool(so["enabled"])
@@ -512,7 +514,6 @@ class Pipeline:
         """
         started = time.perf_counter()
         ctx = CleanContext(self.config, track_changes=track_changes)
-        self._cache = cache
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
@@ -527,7 +528,7 @@ class Pipeline:
             size_note = None
         tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
-        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker)
+        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache)
         if size_note:
             warnings.append(size_note)
         text, wrapped, wrapper_stat = self._apply_wrapper(
@@ -559,41 +560,41 @@ class Pipeline:
         Powers the Pipeline page's "show what this stage does" preview. Stages
         after ``sid`` don't run; ``cache`` makes repeated previews cheap.
         """
+        if sid not in {spec.id for spec in self.stages}:
+            raise KeyError(f"Stage {sid!r} is not in this pipeline")
         ctx = CleanContext(self.config, track_changes=True)
-        self._cache = cache
+        for spec, before, text, st, _warning in self._iter_stages(text, ctx, cache):
+            if spec.id == sid:
+                return before, text, st
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _iter_stages(self, text: str, ctx: CleanContext, cache: Any = None):
+        """Run the stages lazily: yield ``(spec, text_before, text_after, stat, warning)``."""
         for spec in self.stages:
             st = StageStat(id=spec.id, label=spec.label, kind=spec.kind, enabled=spec.enabled)
             st.chars_before = len(text)
             before = text
-            text, st, _warning = self._execute_single_stage(spec, text, ctx, st)
+            text, warning = self._execute_single_stage(spec, text, ctx, st, cache)
             st.chars_after = len(text)
-            if spec.id == sid:
-                return before, text, st
-        raise KeyError(f"Stage {sid!r} is not in this pipeline")
+            yield spec, before, text, st, warning
 
     def _execute_stages(
-        self, text: str, ctx: CleanContext, tracker: Any = None
+        self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
-
-        for spec in self.stages:
-            st = StageStat(id=spec.id, label=spec.label, kind=spec.kind, enabled=spec.enabled)
-            st.chars_before = len(text)
-            before = text
-            text, st, warning = self._execute_single_stage(spec, text, ctx, st)
+        for spec, before, text, st, warning in self._iter_stages(text, ctx, cache):
             if warning:
                 warnings.append(warning)
-            st.chars_after = len(text)
             stats.append(st)
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
-
         return text, stats, warnings
 
     def _execute_single_stage(
-        self, spec: StageSpec, text: str, ctx: CleanContext, st: StageStat
-    ) -> tuple[str, StageStat, str | None]:
+        self, spec: StageSpec, text: str, ctx: CleanContext, st: StageStat, cache: Any = None
+    ) -> tuple[str, str | None]:
+        """Run one stage, filling ``st`` in place; returns ``(text, warning)``."""
         warning = None
         try:
             if not spec.enabled:
@@ -606,7 +607,6 @@ class Pipeline:
                 else:
                     st.matches, st.details = n, details
             else:
-                cache = getattr(self, "_cache", None)
                 use = cache is not None
                 key = cache.key(spec.id, text, self.config, ctx.track_changes) if use else None
                 hit = cache.get(key) if use else None
@@ -626,7 +626,7 @@ class Pipeline:
             st.error = f"{type(e).__name__}: {e}"
             warning = f"Stage '{spec.label}' failed: {st.error}"
 
-        return text, st, warning
+        return text, warning
 
     def _apply_wrapper(
         self, text: str, wrap: bool | None

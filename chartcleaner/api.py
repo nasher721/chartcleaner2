@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__, service, store
 
@@ -81,7 +82,11 @@ async def _payload(request, required: tuple[str, ...]) -> tuple[dict | None, Any
     origin = request.headers.get("origin")
     if origin and not _ALLOWED_ORIGIN.match(origin):
         return None, _deny(403, "Requests from web pages are not allowed.")
-    if int(request.headers.get("content-length") or 0) > MAX_BODY_BYTES:
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        return None, _deny(400, "Bad Content-Length header.")
+    if declared > MAX_BODY_BYTES:
         return None, _deny(413, "Body over 5 MB; split the chart.")
     auth = request.headers.get("authorization", "")
     if not hmac.compare_digest(auth.encode(), f"Bearer {get_token()}".encode()):
@@ -98,6 +103,17 @@ async def _payload(request, required: tuple[str, ...]) -> tuple[dict | None, Any
     return data, None
 
 
+def _str(data: dict, key: str) -> str | None:
+    """``data[key]`` if it is a non-empty string, else None (wrong types are ignored)."""
+    value = data.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _bool(data: dict, key: str) -> bool | None:
+    value = data.get(key)
+    return value if isinstance(value, bool) else None
+
+
 def register(app) -> None:
     """Add the API routes to a FastAPI (or NiceGUI) app."""
     @app.get("/api/v1/health")
@@ -109,7 +125,8 @@ def register(app) -> None:
         if denied is not None:
             return denied
         try:
-            return call(data)
+            # Cleans can take seconds (NLP redaction); keep the app's event loop free.
+            return await run_in_threadpool(call, data)
         except KeyError as ex:
             return _deny(404, str(ex).strip("'\""))
         except (ValueError, FileNotFoundError) as ex:
@@ -118,23 +135,23 @@ def register(app) -> None:
     @app.post("/api/v1/clean")
     async def api_clean(request: Request):
         return await run(request, ("text",), lambda d: service.clean(
-            d["text"], preset=d.get("preset") or None, fmt=d.get("format") or "text",
-            delta=bool(d.get("delta")), trends=bool(d.get("trends")), wrap=d["wrap"] if isinstance(d.get("wrap"), bool) else None,
+            d["text"], preset=_str(d, "preset"), fmt=_str(d, "format") or "text",
+            delta=bool(d.get("delta")), trends=bool(d.get("trends")), wrap=_bool(d, "wrap"),
             source="api:rest"))
 
     @app.post("/api/v1/abbreviate")
     async def api_abbreviate(request: Request):
         return await run(request, ("text",), lambda d: service.abbreviate(
-            d["text"], preset=d.get("preset") or None, source="api:rest"))
+            d["text"], preset=_str(d, "preset"), source="api:rest"))
 
     @app.post("/api/v1/expand")
     async def api_expand(request: Request):
         return await run(request, ("text",), lambda d: service.expand(
-            d["text"], preset=d.get("preset") or None, source="api:rest"))
+            d["text"], preset=_str(d, "preset"), source="api:rest"))
 
     @app.post("/api/v1/restore")
     async def api_restore(request: Request):
-        return await run(request, ("text",), lambda d: service.restore(str(d["text"])))
+        return await run(request, ("text",), lambda d: service.restore(d["text"]))
 
     @app.post("/api/v1/insights")
     async def api_insights(request: Request):
@@ -148,21 +165,20 @@ def register(app) -> None:
     @app.post("/api/v1/note")
     async def api_note(request: Request):
         return await run(request, ("text", "template"), lambda d: service.note(
-            d["text"], d["template"], preset=d.get("preset") or None, source="api:rest"))
+            d["text"], d["template"], preset=_str(d, "preset"), source="api:rest"))
 
     @app.post("/api/v1/patients")
     async def api_patients(request: Request):
         return await run(request, ("text",), lambda d: {"patients": service.clean_patients(
-            d["text"], preset=d.get("preset") or None)})
+            d["text"], preset=_str(d, "preset"))})
 
     @app.post("/api/v1/daily-note")
     async def api_daily_note(request: Request):
         return await run(request, ("text",), lambda d: service.daily_note(
-            d["text"], d["previous"] if isinstance(d.get("previous"), str) else None,
-            tag=d.get("tag") if isinstance(d.get("tag"), str) else None,
-            preset=d.get("preset") or None, source="api:rest"))
+            d["text"], _str(d, "previous"), tag=_str(d, "tag"),
+            preset=_str(d, "preset"), source="api:rest"))
 
     @app.post("/api/v1/prompt")
     async def api_prompt(request: Request):
         return await run(request, ("text", "template"), lambda d: service.prompt(
-            d["text"], d["template"], preset=d.get("preset") or None, source="api:rest"))
+            d["text"], d["template"], preset=_str(d, "preset"), source="api:rest"))

@@ -252,3 +252,38 @@ def test_expand_mode_cache_sees_abbreviation_changes():
     second = Pipeline(c2, mode="expand").run(text, cache=cache).text
     assert second == Pipeline(c2, mode="expand").run(text).text
     assert "multiple sclerosis" in second and first != second
+
+
+def test_stage_cache_is_safe_across_threads():
+    import threading
+
+    cache = StageCache(max_entries=8)
+    errors = []
+
+    def hammer(n):
+        try:
+            for i in range(400):
+                key = f"k{(n + i) % 20}"
+                cache.put(key, "x" * (i % 7), i, {"i": i})
+                cache.get(f"k{i % 20}")
+        except Exception as e:  # pragma: no cover - only on a race
+            errors.append(e)
+
+    threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(cache) <= 8
+    assert cache._chars == sum(len(out) for out, _n, _d in cache._items.values())
+
+
+def test_a_cached_run_does_not_leave_the_cache_on_the_pipeline():
+    c = cfg()
+    pipe = Pipeline(c)
+    cache = StageCache()
+    pipe.run(SAMPLE, fact_check=False, cache=cache)
+    stored = len(cache)
+    pipe.run(SAMPLE, fact_check=False)
+    assert len(cache) == stored and cache.hits == 0

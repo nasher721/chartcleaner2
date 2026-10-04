@@ -20,6 +20,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
 from collections import OrderedDict
 from typing import Any
 
@@ -91,6 +92,9 @@ class StageCache:
         self._chars = 0
         self.hits = 0
         self.misses = 0
+        # One cache is shared process-wide (service.result_cache()) and cleans run
+        # in worker threads, so every read-modify of _items happens under this lock.
+        self._lock = threading.Lock()
 
     @staticmethod
     def key(sid: str, text: str, cfg: dict, track_changes: bool) -> str:
@@ -98,29 +102,33 @@ class StageCache:
         return f"{sid}|{int(track_changes)}|{h}|{fingerprint(cfg, sid)}"
 
     def get(self, key: str) -> tuple[str, int, dict] | None:
-        item = self._items.get(key)
-        if item is None:
-            self.misses += 1
-            return None
-        self._items.move_to_end(key)
-        self.hits += 1
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                self.misses += 1
+                return None
+            self._items.move_to_end(key)
+            self.hits += 1
         out, n, details = item
         return out, n, copy.deepcopy(details)
 
     def put(self, key: str, out: str, matches: int, details: dict) -> None:
         if len(out) > self.max_chars:
             return
-        if key in self._items:
-            self._chars -= len(self._items.pop(key)[0])
-        self._items[key] = (out, matches, copy.deepcopy(details))
-        self._chars += len(out)
-        while self._items and (len(self._items) > self.max_entries or self._chars > self.max_chars):
-            _k, (old, _n, _d) = self._items.popitem(last=False)
-            self._chars -= len(old)
+        item = (out, matches, copy.deepcopy(details))
+        with self._lock:
+            if key in self._items:
+                self._chars -= len(self._items.pop(key)[0])
+            self._items[key] = item
+            self._chars += len(out)
+            while self._items and (len(self._items) > self.max_entries or self._chars > self.max_chars):
+                _k, (old, _n, _d) = self._items.popitem(last=False)
+                self._chars -= len(old)
 
     def clear(self) -> None:
-        self._items.clear()
-        self._chars = 0
+        with self._lock:
+            self._items.clear()
+            self._chars = 0
 
     def __len__(self) -> int:
         return len(self._items)

@@ -201,6 +201,18 @@ def test_service_insights():
         service.insights(CHART, ["nope"])
 
 
+def test_one_failing_extractor_never_hides_the_others(monkeypatch):
+    from chartcleaner import devices
+
+    def boom(_text):
+        raise RuntimeError("extractor bug")
+
+    monkeypatch.setattr(devices, "build", boom)
+    out = service.insights(CHART, ["devices", "overnight"])
+    assert out["devices"] is None and out["overnight"] is not None
+    assert service.insights_text(CHART, ["devices", "overnight"]).startswith("Overnight events")
+
+
 def test_format_output_puts_insights_on_top():
     out, _ = service.format_output(CHART, insights=True)
     assert out.startswith("Overnight events") and out.endswith(CHART)

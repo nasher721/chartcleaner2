@@ -90,3 +90,15 @@ def test_clean_can_skip_the_wrapper(client):
     wrapped = client.post("/api/v1/clean", json={"text": TEXT}).json()["text"]
     bare = client.post("/api/v1/clean", json={"text": TEXT, "wrap": False}).json()["text"]
     assert wrapped.startswith("<patient_chart>") and not bare.startswith("<")
+
+
+def test_bad_content_length_is_rejected_not_a_crash(client):
+    out = client.post("/api/v1/clean", content=b'{"text": "x"}',
+                      headers={"Content-Length": "abc", "Content-Type": "application/json"})
+    assert out.status_code == 400
+
+
+def test_wrong_typed_optional_fields_are_ignored(client):
+    out = client.post("/api/v1/clean", json={"text": TEXT, "preset": 7, "format": ["x"], "wrap": "no"})
+    assert out.status_code == 200
+    assert out.json()["text"] == service.clean(TEXT, record=False)["text"]
