@@ -356,6 +356,26 @@ def _run_doctor() -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
+def _run_compare_models(models: list[str], summary_preset: str, preset: str | None) -> int:
+    """Summarize known-good charts with each local model and rank them; 2 when none ran."""
+    from chartcleaner import model_compare
+    from chartcleaner.service import load_active_config
+
+    def progress(done: int, total: int, model: str) -> None:
+        if model:
+            print(f"  [{done + 1}/{total}] {model}…", file=sys.stderr)
+
+    try:
+        cfg = load_active_config(preset)
+        result = model_compare.compare(cfg, models or None, preset=summary_preset,
+                                       on_progress=progress)
+    except Exception as e:
+        print(f"Could not compare models: {e}", file=sys.stderr)
+        return 2
+    print(result.to_text())
+    return 0 if result.best else 2
+
+
 def _run_check_known_good(preset: str | None) -> int:
     """Re-clean every known-good chart; exit status 1 when any output changed."""
     from chartcleaner import regression_set, store
@@ -417,8 +437,8 @@ def main():
     )
     parser.add_argument(
         "--insights", action="store_true",
-        help="Put overnight events, lines/drains with day counts, antibiotic days and cultures, "
-             "and a problem-oriented view (chart lines grouped under each A&P problem) above "
+        help="Put overnight events, a to-do list, lines/drains with day counts, antibiotic days "
+             "and cultures, an ICU bundle check and a problem-oriented view (chart lines grouped under each A&P problem) above "
              "the output.",
     )
     parser.add_argument(
@@ -475,8 +495,17 @@ def main():
     parser.add_argument("--check-known-good", action="store_true",
                         help="Re-clean your known-good charts with config.json (or --preset) and "
                              "show any whose output changed; exits 1 when one did.")
+    parser.add_argument("--compare-models", nargs="*", metavar="MODEL",
+                        help="Summarize your known-good charts (or the sample chart) with each local "
+                             "Ollama model — all installed ones if none are named — and rank them by "
+                             "values not in the chart, grounding, cited lines and speed.")
+    parser.add_argument("--summary-preset", default="clinical",
+                        help="Summary preset for --compare-models (clinical, brief, findings, "
+                             "one_liner, problem_list, handoff). Default: clinical.")
     args = parser.parse_args()
 
+    if args.compare_models is not None:
+        sys.exit(_run_compare_models(args.compare_models, args.summary_preset, args.preset))
     if args.check_known_good:
         sys.exit(_run_check_known_good(args.preset))
     if args.doctor:

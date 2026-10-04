@@ -66,8 +66,11 @@ def zip_tree(source: Path, destination: Path):
 
 
 def asset_metadata(path: Path, version: str):
+    sha = hashlib.sha256()  # chunked: hashlib.file_digest needs Python 3.11+
     with path.open('rb') as stream:
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            sha.update(chunk)
+    digest = sha.hexdigest()
     return {'url': f'https://github.com/{REPO}/releases/download/v{version}/{path.name}',
             'size': path.stat().st_size, 'sha256': digest}
 

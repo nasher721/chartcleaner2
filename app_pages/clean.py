@@ -24,6 +24,9 @@ from chartcleaner.devices import build as build_devices
 from chartcleaner.micro import build as build_micro
 from chartcleaner.overnight import build as build_overnight
 from chartcleaner.problems import build as build_problems
+from chartcleaner.pending import build as build_pending
+from chartcleaner.bundle import ADDRESSED, MISSING, NOT_APPLICABLE, REVIEW
+from chartcleaner.bundle import build as build_bundle
 from chartcleaner.daily_note import build as build_daily_note
 
 
@@ -89,7 +92,8 @@ async def clean_page():
                 for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
                                 ("timeline", build_timeline), ("problems", build_problems),
                                 ("devices", build_devices), ("micro", build_micro),
-                                ("overnight", build_overnight)):
+                                ("overnight", build_overnight), ("pending", build_pending),
+                                ("bundle", build_bundle)):
                     try:
                         out[key] = fn(cleaned)
                     except Exception:
@@ -103,7 +107,8 @@ async def clean_page():
                                note=note_info, trends=extras.get("trends"),
                                timeline=extras.get("timeline"), problems=extras.get("problems"),
                                devices=extras.get("devices"), micro=extras.get("micro"),
-                               overnight=extras.get("overnight"))
+                               overnight=extras.get("overnight"), pending=extras.get("pending"),
+                               bundle=extras.get("bundle"))
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -687,6 +692,17 @@ async def clean_page():
             render_block("Overnight events", "nightlight", overnight.to_text(), "insight-overnight",
                          lambda: [ui.label((e.when + "  " if e.when else "") + e.text)
                                   .classes("text-xs cc-mono") for e in overnight.events])
+        pending = CLEAN_STATE.get("pending")
+        if pending is not None and not pending.empty:
+            shown = True
+            render_block(f"To do / pending ({len(pending.items)})", "checklist", pending.to_text(),
+                         "insight-pending", lambda: render_pending(pending))
+        bundle = CLEAN_STATE.get("bundle")
+        if bundle is not None and not bundle.empty:
+            shown = True
+            gaps = len(bundle.gaps)
+            render_block(f"ICU bundle check ({gaps} to look at)" if gaps else "ICU bundle check",
+                         "fact_check", bundle.to_text(), "insight-bundle", lambda: render_bundle(bundle))
         devices = CLEAN_STATE.get("devices")
         if devices is not None and devices.devices:
             shown = True
@@ -711,8 +727,9 @@ async def clean_page():
                     .classes("w-full"):
                 render_delta(delta)
         if not shown:
-            ui.label("Problems, devices, antibiotics, overnight events, trends, a note timeline "
-                     "and changes over time appear here when the chart has them.") \
+            ui.label("Problems, a to-do list, an ICU bundle check, devices, antibiotics, overnight "
+                     "events, trends, a note timeline and changes over time appear here when the "
+                     "chart has them.") \
                 .classes("text-sm opacity-60")
 
     def render_block(title: str, icon: str, text: str, marker: str, body) -> None:
@@ -720,6 +737,30 @@ async def clean_page():
             body()
             ui.button("Copy", icon="content_copy",
                       on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+
+    def render_pending(report) -> None:
+        ui.label("Lines from the latest note that say something is still outstanding — copied "
+                 "verbatim. Tick them off as you go (ticks aren't saved).").classes("text-xs opacity-60")
+        for group, items in report.grouped().items():
+            ui.label(group).classes("text-xs font-semibold mt-1")
+            for item in items:
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.checkbox().props("dense")
+                    ui.label(item.text).classes("text-xs cc-mono flex-grow").tooltip(item.text)
+                    if item.when:
+                        ui.badge(item.when, color="teal").props("outline")
+
+    def render_bundle(report) -> None:
+        ui.label("Daily-care items checked against the latest note. \"Not mentioned\" means only "
+                 "that the note doesn't say — not that it wasn't done.").classes("text-xs opacity-60")
+        colors = {MISSING: "orange", REVIEW: "red", ADDRESSED: "green", NOT_APPLICABLE: "grey"}
+        order = (REVIEW, MISSING, ADDRESSED, NOT_APPLICABLE)
+        for item in sorted(report.items, key=lambda i: order.index(i.status)):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.badge(item.status, color=colors[item.status]).props("outline").classes("w-28")
+                ui.label(item.name).classes("text-xs font-semibold w-48")
+                detail = "; ".join(item.details) if item.details else item.line
+                ui.label(detail).classes("text-xs cc-mono opacity-70 truncate flex-grow").tooltip(detail)
 
     def render_devices(report) -> None:
         ui.label(f"Day counts as of {report.reference.strftime('%m/%d/%Y')} (the chart's latest "

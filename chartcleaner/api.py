@@ -7,7 +7,7 @@ Routes (JSON in, JSON out), all backed by :mod:`chartcleaner.service`:
 * ``POST /api/v1/abbreviate`` / ``/api/v1/expand`` — ``{"text", "preset"?}``
 * ``POST /api/v1/prompt`` — ``{"text", "template", "preset"?}``
 * ``POST /api/v1/insights`` — ``{"text", "which"?: ["problems", "devices", "micro",
-  "overnight", "trends"]}`` (reads the text as given; clean it first)
+  "overnight", "trends", "pending", "bundle"]}`` (reads the text as given; clean it first)
 * ``POST /api/v1/note`` — ``{"text", "template", "preset"?}`` (fill a note template)
 * ``POST /api/v1/patients`` — ``{"text", "preset"?}`` (split a patient list, clean each)
 * ``POST /api/v1/daily-note`` — ``{"text", "previous"?, "tag"?, "preset"?}``

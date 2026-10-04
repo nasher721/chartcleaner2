@@ -724,3 +724,33 @@ Branch `claude/zen-cray-24xuah`. All seven groups from the brainstorm.
 
 Not done / follow-ups: a real-Mac run of the Quick Action self-test; streaming for the
 Batch page one-liners; per-entry sections in the abbreviation CSV import.
+
+
+# Phase 8 (2026-10-04) — CI, ICU bundle gaps, to-do list, local model comparison
+
+Branch `claude/compassionate-tesla-wgy7hl`.
+
+- [x] **Tests on every pull request** — `.github/workflows/tests.yml`: pytest on Ubuntu
+  (Python 3.10 and 3.12), macOS 15 and Windows 2022, a compile gate, a check that the run left
+  tracked files untouched, and the browser-extension `node --test`. `release.yml` is unchanged.
+- [x] **ICU bundle check** — `chartcleaner/bundle.py` (insight `bundle`). Reads the latest note
+  for FAST HUGS BID items: VTE/GI prophylaxis, nutrition, glucose, bowel regimen,
+  analgesia/sedation goal, SAT and SBT (only when ventilated or on a sedative drip), head of bed,
+  code status, mobility. Status `addressed` (with the line) / `not mentioned` / `n/a`; plus
+  `review` for devices past `devices.REVIEW_DAYS` and antibiotics on day 3+ with no stated
+  duration (read from that drug's own words on the line). Short abbreviations that are also other
+  findings (SAT vs "O2 sat", PT vs the PT/INR lab, BG, BM, TF) match only in capitals.
+- [x] **To-do / pending list** — `chartcleaner/pending.py` (insight `pending`). Latest-note lines
+  grouped as Pending results / Consults / If-then / Follow up / Planned / Consider, verbatim,
+  deduplicated, with a time hint ("in AM", "q6h"); "follows commands" and "nothing pending" are
+  not to-dos. Rendered as a `- [ ]` checklist.
+- Both are in `service.INSIGHTS`, `format_output(insights=True)` (order: overnight, pending,
+  devices, micro, bundle, problems), note-template placeholders `{{pending}}` / `{{bundle}}`,
+  `/api/v1/insights`, MCP `chart_insights`, CLI `--insights`, and the Clean page Insights tab
+  (`insight-pending`, `insight-bundle`).
+- [x] **Compare local models** — `chartcleaner/model_compare.py`: `compare(cfg, models, charts,
+  preset=, client=, on_progress=)` summarizes up to 3 known-good charts (falling back to the sample
+  chart) with each model and ranks by values not in the chart per summary
+  (`fact_check.verify_output`), then grounding, cited lines, median seconds. In memory only.
+  Settings → Local AI → *Compare models* (`compare-models`, rows `compare-row-<n>` with *Use*);
+  CLI `--compare-models [MODEL …] [--summary-preset P]` (exit 2 when no model ran).

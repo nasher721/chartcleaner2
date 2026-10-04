@@ -1,0 +1,61 @@
+name: Tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.10 is the oldest Python install.sh / install.bat accept
+          - os: ubuntu-24.04
+            python: '3.10'
+          - os: ubuntu-24.04
+            python: '3.12'
+          - os: macos-15
+            python: '3.12'
+          - os: windows-2022
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Syntax gate
+        run: python -m compileall -q chartcleaner app_pages scripts tests integrations
+      - name: Tests left tracked files untouched
+        run: git diff --exit-code
+
+  browser-extension:
+    name: browser extension (node --test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run extension tests
+        working-directory: integrations/browser-extension
+        run: node --test request.test.mjs
