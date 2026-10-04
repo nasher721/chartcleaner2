@@ -416,7 +416,7 @@ def test_windows_payload_transaction_and_shortcut(installation, monkeypatch):
     monkeypatch.setattr(updater.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
     updater._start_menu_shortcut(state.install)
     assert calls[0][1]["env"]["CC_EXECUTABLE"] == str(state.install / "Chart Cleaner.exe")
-    assert calls[0][1]["env"]["CC_SHORTCUT"].endswith("Start Menu/Programs/Chart Cleaner.lnk")
+    assert calls[0][1]["env"]["CC_SHORTCUT"].replace("\\", "/").endswith("Start Menu/Programs/Chart Cleaner.lnk")
 
 
 def test_embedded_signed_installer_installs_without_network(installation, monkeypatch):

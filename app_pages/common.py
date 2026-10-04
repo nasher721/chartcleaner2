@@ -648,7 +648,11 @@ def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] |
             ui.switch("Dark", value=dark.value,
                       on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
 
-    with ui.left_drawer(fixed=True, value=None).classes("cc-panel") as drawer:
+    # value=None opens the menu by screen width, which NiceGUI asks the browser for;
+    # the test harness answers "open", but on slow runners its answer can miss the
+    # 1 s timeout, so tests start it open instead.
+    menu_open = True if os.environ.get("NICEGUI_USER_SIMULATION") else None
+    with ui.left_drawer(fixed=True, value=menu_open).classes("cc-panel") as drawer:
         ui.label("Menu").classes("text-xs uppercase opacity-60 ml-2")
         for path, icon, label in NAV:
             btn = ui.button(label, icon=icon, on_click=lambda p=path: ui.navigate.to(p))

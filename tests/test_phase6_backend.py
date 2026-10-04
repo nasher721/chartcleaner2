@@ -90,6 +90,17 @@ def test_recent_charts_are_encrypted_capped_and_purgeable():
     assert recent_charts.count() == 0
 
 
+def test_recent_charts_keep_order_when_the_clock_does_not_move(monkeypatch):
+    # Windows' clock can return the same time for back-to-back saves
+    import time
+    monkeypatch.setattr(time, "time_ns", lambda: 1_700_000_000_000_000_000)
+    prefs = dict(store.DEFAULT_PREFS, recent_charts={"enabled": True, "keep": 3})
+    for i in range(5):
+        recent_charts.remember(f"chart number {i}\nsecret MRN 12345{i}", prefs=prefs)
+    assert [t.split("\n")[0] for t in recent_charts.texts()] == [
+        "chart number 4", "chart number 3", "chart number 2"]
+
+
 def test_recent_charts_disabled_keeps_nothing():
     prefs = dict(store.DEFAULT_PREFS, recent_charts={"enabled": False})
     assert recent_charts.remember("text", prefs=prefs) is None

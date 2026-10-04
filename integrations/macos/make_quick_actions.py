@@ -20,6 +20,7 @@ Keyboard Shortcuts → Services → Text).
 from __future__ import annotations
 
 import argparse
+import os
 import plistlib
 import shlex
 import shutil
@@ -79,7 +80,7 @@ def _info(name: str) -> dict:
 
 
 def install(target: Path = SERVICES, root: Path = ROOT) -> list[Path]:
-    cli = shlex.quote(str(root / "clean-chart"))
+    cli = shlex.quote((root / "clean-chart").as_posix())  # a bash command, so POSIX separators
     made = []
     for name, flags in ACTIONS.items():
         bundle = target / f"{name}.workflow" / "Contents"
@@ -139,7 +140,7 @@ def self_test(target: Path = SERVICES, run=subprocess.run, timeout: float = 120)
         if not cli.is_file():
             row["detail"] = f"{cli} is missing — re-run the installer from the moved folder"
             continue
-        if not cli.stat().st_mode & 0o111:
+        if not os.access(cli, os.X_OK):
             row["detail"] = f"{cli} is not executable (chmod +x it)"
             continue
         try:
