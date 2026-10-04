@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from .audit import AUDIT_CHECK_IDS
+from .regex_risk import risks as regex_risks
 from .summarizer import DEFAULT_LLM
 
 REQUIRED_CONFIG_KEYS = (
@@ -144,6 +145,9 @@ class ConfigValidator:
                 self.errors.append(f"{label}.acknowledged: must be true/false")
             if "pack" in entry and not isinstance(entry["pack"], str):
                 self.errors.append(f"{label}.pack: must be text")
+            if "sections" in entry and not (isinstance(entry["sections"], list) and all(
+                    isinstance(x, str) and x.strip() for x in entry["sections"])):
+                self.errors.append(f"{label}.sections: must be a list of section names")
             term = entry.get("term")
             if isinstance(term, str):
                 key = term.strip().casefold()
@@ -160,6 +164,9 @@ class ConfigValidator:
             re.compile(pattern, flags=flags)
         except re.error as e:
             self.errors.append(f"{context}: invalid regex ({e})")
+            return
+        for risk in regex_risks(pattern, flags):
+            self.warnings.append(f"{context}: {risk}")
 
     def _check_option_group(
         self, key: str, defaults: dict, types: dict[str, tuple[tuple[type, ...], str]]
@@ -265,6 +272,13 @@ class ConfigValidator:
         self._validate_prompt_templates()
         self._check_option_group("fact_check", {"enabled": True},
                                  {"enabled": ((bool,), "true/false")})
+        self._check_option_group(
+            "clinical_identifiers",
+            {"enabled": False, "replacement": None, "redact_npi": True, "redact_dea": True,
+             "redact_udi": True},
+            {"enabled": ((bool,), "true/false"), "replacement": ((str, type(None)), "text or null"),
+             "redact_npi": ((bool,), "true/false"), "redact_dea": ((bool,), "true/false"),
+             "redact_udi": ((bool,), "true/false")})
 
     def _validate_prompt_templates(self) -> None:
         templates = self.cfg.get("prompt_templates")

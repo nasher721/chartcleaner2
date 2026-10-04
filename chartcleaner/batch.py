@@ -17,6 +17,7 @@ from typing import Callable
 from chartcleaner.audit import run_audit
 from chartcleaner.engine import Pipeline
 from chartcleaner.ingest import load_file
+from chartcleaner.note_type import detect as detect_note_type
 from chartcleaner.service import format_output
 
 __all__ = ["BatchResult", "run_batch"]
@@ -40,6 +41,9 @@ class BatchResult:
     facts: str = ""
     facts_status: str = ""
     cleaned: str = ""
+    # detected note type label ("" when detection is off) and the preset used for it
+    note_type: str = ""
+    preset: str = ""
     # slim per-stage summaries so batch runs still feed the Statistics dashboard
     stages: list[dict] = field(default_factory=list)
 
@@ -55,21 +59,43 @@ def run_batch(
     *,
     delta: bool = False,
     on_progress: Callable[[int, int, BatchResult], None] | None = None,
+    note_presets: dict[str, str] | None = None,
+    preset_loader: Callable[[str], dict] | None = None,
 ) -> list[BatchResult]:
     """Clean every path in order; failures are isolated per file.
 
     With ``delta`` each file's output keeps only what changed between its
     daily notes (the copy-forward delta view). ``on_progress(done, total,
     result)`` is called after each file (from the worker thread).
+
+    ``note_presets`` (note type → preset name, the app's ``prefs.note_presets``)
+    turns on per-file note-type detection: a file whose type maps to a preset
+    is cleaned with ``preset_loader(name)`` instead of ``cfg`` — the same rule
+    the Clean page applies when "auto-apply" is on. A preset that fails to load
+    falls back to ``cfg``.
     """
-    pipe = Pipeline(cfg, custom_dir=custom_dir)
+    pipes: dict[str, Pipeline] = {"": Pipeline(cfg, custom_dir=custom_dir)}
+    configs: dict[str, dict] = {"": cfg}
     out: list[BatchResult] = []
     for path in paths:
         started = time.monotonic()
         try:
             ing = load_file(path, cfg)
-            result = pipe.run(ing.text)
-            audit = run_audit(result.text, cfg)
+            note_label, preset = "", ""
+            if note_presets is not None:
+                found = detect_note_type(ing.text, cfg)
+                note_label = found.label
+                wanted = note_presets.get(found.note_type or "") or ""
+                if wanted and preset_loader is not None and wanted not in pipes:
+                    try:
+                        configs[wanted] = preset_loader(wanted)
+                        pipes[wanted] = Pipeline(configs[wanted], custom_dir=custom_dir)
+                    except Exception:
+                        wanted = ""
+                preset = wanted if wanted in pipes else ""
+            run_cfg = configs[preset]
+            result = pipes[preset].run(ing.text)
+            audit = run_audit(result.text, run_cfg)
             findings = 0 if audit.skipped else sum(audit.counts.values())
             out.append(BatchResult(
                 name=path.name,
@@ -84,6 +110,8 @@ def run_batch(
                 facts=result.fact_check.headline() if result.fact_check else "",
                 facts_status=result.fact_check.status if result.fact_check else "",
                 cleaned=format_output(result.text, "text", delta)[0] if delta else result.text,
+                note_type=note_label,
+                preset=preset,
                 stages=[{"label": s.label, "matches": s.matches,
                          "before": s.chars_before, "after": s.chars_after,
                          "skipped": s.skipped}

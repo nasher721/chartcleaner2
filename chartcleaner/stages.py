@@ -11,6 +11,7 @@ import hashlib
 import re
 import textwrap
 import threading
+import time
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -184,9 +185,26 @@ def _exceptions(cfg: dict, sid: str | None) -> list[str]:
     return [v for v in values if isinstance(v, str) and v.strip()] if isinstance(values, list) else []
 
 
-def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | None) -> dict:
+# A rule taking at least this long on one chart lands in details["slow_rules"]
+# (rule id -> ms); the Statistics page's rule health reads it.
+SLOW_RULE_MS = 25.0
+
+
+def _timed_subn(regex, replacement, text, changes, pattern, keep, slow: dict[str, float]):
+    started = time.perf_counter()
+    out, n = _subn_tracked(regex, replacement, text, changes, pattern, keep)
+    ms = (time.perf_counter() - started) * 1000
+    if ms >= SLOW_RULE_MS:
+        slow[rule_id(pattern)] = round(ms, 1)
+    return out, n
+
+
+def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | None,
+                   slow: dict[str, float] | None = None) -> dict:
     if hits:
         details["rule_hits"] = hits
+    if slow:
+        details["slow_rules"] = slow
     if changes is not None:
         details["changes"] = changes
     return details
@@ -201,14 +219,15 @@ def run_regex_list(
     changes: list[dict] | None = [] if _tracking(ctx) else None
     keep = _exceptions(cfg, sid)
     hits: dict[str, int] = {}
+    slow: dict[str, float] = {}
     total = 0
     for pattern in cfg[key]:
         r = re.compile(pattern, flags=flags)
-        text, n = _subn_tracked(r, "", text, changes, pattern, keep)
+        text, n = _timed_subn(r, "", text, changes, pattern, keep, slow)
         if n:
             hits[rule_id(pattern)] = n
         total += n
-    return text, total, _with_tracking({}, hits, changes)
+    return text, total, _with_tracking({}, hits, changes, slow)
 
 
 def run_regex_pairs(
@@ -221,15 +240,16 @@ def run_regex_pairs(
     changes: list[dict] | None = [] if _tracking(ctx) else None
     keep = _exceptions(cfg, sid)
     hits: dict[str, int] = {}
+    slow: dict[str, float] = {}
     total = 0
     for pattern, replacement in (cfg.get(key) or []):
         r = re.compile(pattern, flags=flags)
-        text, n = _subn_tracked(r, replacement, text, changes, pattern, keep)
+        text, n = _timed_subn(r, replacement, text, changes, pattern, keep, slow)
         if n:
             hits[rule_id(pattern)] = n
         total += n
     details = {"phi": {"pattern_redactions": total}} if phi else {}
-    return text, total, _with_tracking(details, hits, changes)
+    return text, total, _with_tracking(details, hits, changes, slow)
 
 
 def run_learned(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:

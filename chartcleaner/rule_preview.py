@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import copy
 import difflib
+import time
 from dataclasses import dataclass, field
 
-from .stages import run_regex_list, run_regex_pairs
+from .regex_risk import risks as regex_risks
+from .stages import SLOW_RULE_MS, run_regex_list, run_regex_pairs
 
 __all__ = ["RuleImpact", "preview", "trial_config"]
 
@@ -38,20 +40,34 @@ class RuleImpact:
     lines_changed: int = 0
     samples: list[dict] = field(default_factory=list)  # {"before", "after"}
     example_failures: list[dict] = field(default_factory=list)
+    # slowest extra time the rule added on one chart, and backtracking shapes
+    max_ms: float = 0.0
+    risks: list[str] = field(default_factory=list)
+
+    @property
+    def slow(self) -> bool:
+        return self.max_ms >= SLOW_RULE_MS
 
     @property
     def headline(self) -> str:
         if not self.charts_checked:
-            return "No recent charts to compare against yet."
-        if not self.lines_changed:
-            return f"Changes nothing else in your {self.charts_checked} recent chart(s)."
-        return (f"Would also change {self.lines_changed} line(s) in {self.charts_changed} "
-                f"of your {self.charts_checked} recent chart(s).")
+            text = "No recent charts to compare against yet."
+        elif not self.lines_changed:
+            text = f"Changes nothing else in your {self.charts_checked} recent chart(s)."
+        else:
+            text = (f"Would also change {self.lines_changed} line(s) in {self.charts_changed} "
+                    f"of your {self.charts_checked} recent chart(s).")
+        if self.slow:
+            text += f" ⚠ Slow: adds up to {self.max_ms:.0f} ms per chart."
+        if self.risks:
+            text += f" ⚠ Could hang: {self.risks[0]}."
+        return text
 
     def to_dict(self) -> dict:
         return {"charts_checked": self.charts_checked, "charts_changed": self.charts_changed,
                 "lines_changed": self.lines_changed, "samples": list(self.samples),
-                "example_failures": list(self.example_failures), "headline": self.headline}
+                "example_failures": list(self.example_failures), "headline": self.headline,
+                "max_ms": self.max_ms, "slow": self.slow, "risks": list(self.risks)}
 
 
 def _run_stage(sid: str, text: str, cfg: dict) -> str:
@@ -106,12 +122,20 @@ def preview(cfg: dict, sid: str, entry, texts: list[str], *,
     base = copy.deepcopy(cfg)
     base.setdefault(_STAGES[sid][0], [])
     impact = RuleImpact()
+    pattern = entry[0] if isinstance(entry, (list, tuple)) else entry
+    if isinstance(pattern, str):
+        impact.risks = regex_risks(pattern)
     for text in texts:
         if not text or (skip_text is not None and text == skip_text):
             continue
         impact.charts_checked += 1
         try:
-            before, after = _run_stage(sid, text, base), _run_stage(sid, text, trial)
+            t0 = time.perf_counter()
+            before = _run_stage(sid, text, base)
+            t1 = time.perf_counter()
+            after = _run_stage(sid, text, trial)
+            extra = ((time.perf_counter() - t1) - (t1 - t0)) * 1000
+            impact.max_ms = max(impact.max_ms, round(extra, 1))
         except Exception:
             continue  # an invalid trial pattern is reported by the validator, not here
         if before == after:

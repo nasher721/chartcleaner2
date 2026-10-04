@@ -123,6 +123,7 @@ def batch_page():
                 {"name": "phi", "label": "PHI redacted", "field": "phi"},
                 {"name": "findings", "label": "Audit findings", "field": "findings"},
                 {"name": "facts", "label": "Clinical facts", "field": "facts", "align": "left"},
+                {"name": "note", "label": "Note type", "field": "note", "align": "left"},
                 {"name": "ms", "label": "Elapsed", "field": "ms", "align": "left"},
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
             ]
@@ -136,10 +137,11 @@ def batch_page():
                                  "facts": ("✓ kept" if r.facts_status == "ok" else
                                            ("⚠ " if r.facts_status == "review" else "✕ ")
                                            + r.facts) if r.facts_status else "—",
+                                 "note": (r.note_type + (f" → {r.preset}" if r.preset else "")) or "—",
                                  "ms": f"{r.elapsed_ms:,} ms", "status": "ok"})
                 else:
                     rows.append({"file": r.name, "chars": "—", "reduction": "—",
-                                 "phi": "—", "findings": "—", "facts": "—",
+                                 "phi": "—", "findings": "—", "facts": "—", "note": "—",
                                  "ms": f"{r.elapsed_ms:,} ms",
                                  "status": f"error: {r.error}"})
             ui.table(columns=cols, rows=rows, row_key="file",
@@ -181,7 +183,10 @@ def batch_page():
 
             def work():
                 return run_batch_files(files, cfg, custom_dir=common.CUSTOM_DIR,
-                                       delta=bool(delta_switch.value), on_progress=report)
+                                       delta=bool(delta_switch.value), on_progress=report,
+                                       note_presets=(dict(common.PREFS.get("note_presets") or {})
+                                                     if note_switch.value else None),
+                                       preset_loader=store.load_preset)
 
             results = await run.io_bound(work)
             out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -238,6 +243,10 @@ def batch_page():
             delta_switch = ui.switch("Only what changed between daily notes").tooltip(
                 "Copy-forward delta view: keeps the first note in full, then only new or "
                 "changed paragraphs from each later note.")
+            note_switch = ui.switch("Use note-type presets",
+                                    value=bool(common.PREFS.get("note_auto_apply"))).tooltip(
+                "Detect each file's note type and clean it with the preset mapped to that "
+                "type in Settings → Note types.").mark("batch-note-types")
             spinner = ui.spinner("dots", size="lg")
             spinner.set_visibility(False)
         with ui.column().classes("w-full gap-1").mark("batch-progress") as progress_row:
