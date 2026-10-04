@@ -13,7 +13,7 @@ import time
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
-from chartcleaner import recent_charts, regression_set, rule_inbox
+from chartcleaner import edit_log, recent_charts, regression_set, rule_inbox
 from chartcleaner import service as service_mod
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
@@ -344,6 +344,34 @@ async def clean_page():
         if got:
             copy_to_clipboard(*got)
 
+    def toggle_edit() -> None:
+        out = refs.get("output")
+        if out is None:
+            return
+        refs["editing"] = not refs.get("editing")
+        if refs["editing"]:
+            out.props(remove="readonly")
+            ui.notify("Editing the result — copies use your edits.", type="info")
+        else:
+            commit_edit()
+            out.props(add="readonly")
+
+    def commit_edit() -> None:
+        """Keep an edited result for copying and learn which lines were deleted."""
+        out = refs.get("output")
+        if out is None or not refs.get("editing"):
+            return
+        value = out.value or ""
+        previous = CLEAN_STATE.get("result_text") or ""
+        if value == previous:
+            return
+        CLEAN_STATE["result_text"] = value
+        try:
+            if edit_log.record(previous, value):
+                asyncio.get_running_loop().create_task(refresh_inbox())
+        except Exception:
+            pass  # learning from edits is a bonus; never break editing
+
     def open_copy_default_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
             ui.label("The Copy button copies…").classes("text-lg font-semibold")
@@ -372,9 +400,13 @@ async def clean_page():
                         label += f" · {n.day}"
                     ui.chip(label, on_click=lambda n=n: jump_to(n.start, n.end)) \
                         .props("dense outline clickable").tooltip(n.title)
-        out = ui.textarea("", value=result.text)
+        shown_text = CLEAN_STATE.get("result_text") or result.text
+        out = ui.textarea("", value=shown_text)
         out.props("outlined readonly input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
+        out.mark("result-output")
+        out.on("blur", lambda _: commit_edit())
         refs["output"] = out
+        refs["editing"] = False
         default = common.PREFS.get("copy_default") or "text"
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             with ui.dropdown_button(f"Copy · {COPY_FORMATS.get(default, COPY_FORMATS['text'])[0]}",
@@ -412,6 +444,9 @@ async def clean_page():
                     chart_markdown().encode("utf-8"), "cleaned_chart.md"))
                 if common.PREFS.get("notes_folder"):
                     ui.item("To my notes folder", on_click=save_to_notes_folder)
+            ui.button(icon="edit", on_click=toggle_edit).props("flat round").mark("edit-result") \
+                .tooltip("Edit the result before copying — copies use your edits, and lines you "
+                         "keep deleting become rule suggestions")
             with ui.button(icon="more_horiz").props("flat round").tooltip("More"):
                 with ui.menu():
                     ui.menu_item("Restore names in an AI reply…", on_click=open_restore_dialog) \

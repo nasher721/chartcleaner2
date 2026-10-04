@@ -87,6 +87,43 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
         draw()
 
 
+def render_stage_noise(s: dict) -> None:
+    """Which stages earn their keep: characters each removed, per day and overall."""
+    share = s.get("stage_share") or []
+    days = s.get("days") or []
+    if not share:
+        return
+    with ui.card().classes("w-full gap-2").mark("stage-noise"):
+        ui.label("Noise removed by each stage over time").classes("text-lg font-semibold")
+        ui.label("Characters each stage took out, per day (top six stages; the rest are "
+                 "grouped). A stage that never removes anything is a candidate to switch off.") \
+            .classes("text-xs opacity-70")
+        top = [row["label"] for row in share[:6]]
+        by_day = s.get("stage_by_day") or {}
+        if len(days) > 1:
+            series = [{"name": label, "type": "bar", "stack": "removed",
+                       "data": [by_day.get(d, {}).get(label, 0) for d in days]} for label in top]
+            other = [sum(n for lbl, n in by_day.get(d, {}).items() if lbl not in top) for d in days]
+            if any(other):
+                series.append({"name": "Other stages", "type": "bar", "stack": "removed", "data": other})
+            ui.echart({
+                "backgroundColor": "transparent", "tooltip": {"trigger": "axis"},
+                "legend": {"type": "scroll", "data": [x["name"] for x in series]},
+                "grid": {"left": 64, "right": 24, "top": 44, "bottom": 32},
+                "xAxis": {"type": "category", "data": days},
+                "yAxis": {"type": "value", "name": "Chars"},
+                "series": series,
+            }).classes("w-full h-72")
+        cols = [{"name": "label", "label": "Stage", "field": "label", "align": "left"},
+                {"name": "removed", "label": "Characters removed", "field": "removed", "sortable": True},
+                {"name": "share", "label": "% of all removed", "field": "share", "sortable": True},
+                {"name": "runs", "label": "Runs where it removed text", "field": "runs", "sortable": True},
+                {"name": "avg", "label": "Avg per such run", "field": "avg_per_run"}]
+        ui.table(columns=cols, rows=[{**r, "removed": f"{r['removed']:,}", "share": f"{r['share']}%"}
+                                     for r in share], row_key="label", pagination=10) \
+            .classes("w-full").props("flat dense")
+
+
 def stats_page():
     runs = store.load_runs()
     s = store.summarize(runs)
@@ -159,6 +196,8 @@ def stats_page():
                     "series": [{"type": "pie", "radius": ["35%", "70%"], "center": ["40%", "55%"],
                                 "data": [{"name": k, "value": v} for k, v in s["phi_by_type"].items()]}],
                 }).classes("flex-grow min-w-[380px] h-72")
+
+        render_stage_noise(s)
 
         cols = [
             {"name": "ts", "label": "When", "field": "ts", "align": "left", "sortable": True},

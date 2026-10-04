@@ -2,6 +2,10 @@
 
 The format intentionally contains only user rules and abbreviation overrides;
 it never serializes chart text, history, paths, scripts, or application prefs.
+
+JSON exports can be signed (:mod:`rule_signing`); an import shows who signed
+it, refuses a file whose signature no longer matches, and previews the
+effect on your known-good charts (:func:`known_good_impact`) before applying.
 """
 
 from __future__ import annotations
@@ -221,14 +225,43 @@ def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
     return out
 
 
-def export_json(config: dict, destination: str | Path) -> Path:
+def export_json(config: dict, destination: str | Path, *, sign: bool = False, signer: str = "") -> Path:
     path = Path(destination)
-    path.write_text(json.dumps(payload_from_config(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    payload = payload_from_config(config)
+    if sign:
+        from .rule_signing import sign as sign_payload
+        payload = sign_payload(payload, signer)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
 
 def import_json(source: str | Path) -> dict:
     return validate_payload(json.loads(Path(source).read_text(encoding="utf-8")))
+
+
+def read_signed(raw: Any):
+    """``(validated payload, Verification)`` for a parsed JSON rules file.
+
+    Raises ValueError for a malformed file or a signature that doesn't match.
+    """
+    from .rule_signing import verify
+    check = verify(raw) if isinstance(raw, dict) else None
+    if check is not None and check.status == "invalid":
+        raise ValueError(check.message)
+    payload = validate_payload(raw)
+    return payload, check
+
+
+def known_good_impact(config: dict, payload: dict, mode: str = "merge",
+                      custom_dir: str | Path | None = None) -> dict:
+    """How the import would change your known-good charts' outputs.
+
+    ``{"checked": n, "changed": [labels]}`` — nothing is saved.
+    """
+    from . import regression_set
+    updated = apply_import(config, payload, mode)
+    results = regression_set.check(updated, custom_dir=custom_dir)
+    return {"checked": len(results), "changed": [r.label for r in results if r.changed]}
 
 
 def export_csv(config: dict, destination: str | Path) -> Path:
@@ -297,6 +330,52 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
         ui.label("Share learned rules").classes("text-lg font-semibold")
         ui.label("JSON includes saved text rules and abbreviation settings. CSV includes text rules only. "
                  "Review saved rule text before sharing; charts and run history are excluded.").classes("text-sm opacity-70")
+        from . import rule_signing
+        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("rule-signing"):
+            sign_box = ui.checkbox("Sign JSON exports", value=True).tooltip(
+                "Adds your signature so colleagues can see the file came from you, unchanged")
+            signer_input = ui.input("Your name on the signature").classes("w-56")
+            try:
+                my_key = rule_signing.public_key()
+                ui.label(f"Your key: {rule_signing.fingerprint(my_key)}").classes("text-xs cc-mono")
+
+                async def copy_key() -> None:
+                    await ui.run_javascript(f"navigator.clipboard.writeText({json.dumps(my_key)})")
+                    ui.notify("Public key copied — send it to colleagues so they can trust your files.",
+                              type="positive")
+                ui.button("Copy my public key", icon="key", on_click=copy_key).props("flat dense")
+            except Exception as exc:  # no cryptography / key store
+                sign_box.set_value(False)
+                sign_box.set_enabled(False)
+                ui.label(f"Signing unavailable: {exc}").classes("text-xs text-orange-700")
+        with ui.expansion("Trusted colleagues' keys", icon="verified_user").classes("w-full"):
+            trusted_box = ui.column().classes("w-full gap-1")
+
+            def draw_trusted() -> None:
+                trusted_box.clear()
+                with trusted_box:
+                    for entry in rule_signing.trusted_keys():
+                        with ui.row().classes("items-center gap-2"):
+                            ui.label(f"{entry['name']} · {rule_signing.fingerprint(entry['key'])}") \
+                                .classes("text-sm cc-mono")
+                            ui.button(icon="delete", on_click=lambda k=entry["key"]: (
+                                rule_signing.untrust_key(k), draw_trusted())).props("flat dense round")
+                    with ui.row().classes("items-center gap-2 w-full"):
+                        name_in = ui.input("Name").classes("w-40")
+                        key_in = ui.input("Their public key").classes("flex-grow cc-mono")
+
+                        def add() -> None:
+                            try:
+                                fp = rule_signing.trust_key(name_in.value or "", key_in.value or "")
+                            except ValueError as exc:
+                                ui.notify(str(exc), type="negative")
+                                return
+                            ui.notify(f"Trusted key {fp}. Check this matches what they read out.",
+                                      type="positive")
+                            draw_trusted()
+                        ui.button("Trust", on_click=add).props("outline")
+
+            draw_trusted()
         with ui.row().classes("gap-2 flex-wrap"):
             def download(fmt: str) -> None:
                 import time
@@ -305,7 +384,11 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                 try:
                     store.ensure_dirs()
                     path = store.EXPORTS_DIR / f"chart-cleaner-rules-{time.time_ns()}{suffix}"
-                    (export_csv if fmt == "csv" else export_json)(load_current(), path)
+                    if fmt == "csv":
+                        export_csv(load_current(), path)
+                    else:
+                        export_json(load_current(), path, sign=bool(sign_box.value),
+                                    signer=signer_input.value or "")
                     ui.download(path, filename=f"chart-cleaner-rules{suffix}")
                     ui.notify("Rules saved in the exports folder; download started.", type="positive")
                 except Exception as exc:
@@ -329,6 +412,8 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
         with import_box:
             status = ui.label("Choose a JSON or CSV file to preview it.").classes("text-sm opacity-70")
             preview_box = ui.column().classes("w-full gap-1")
+            confirm_box = ui.checkbox("I know where this file came from and want its rules")
+            confirm_box.set_visibility(False)
             actions = ui.row().classes("justify-end gap-2")
             actions.set_visibility(False)
 
@@ -338,6 +423,8 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
             pending.clear()
             preview_box.clear()
             actions.set_visibility(False)
+            confirm_box.set_visibility(False)
+            confirm_box.set_value(False)
             status.set_text("Choose a JSON or CSV file to preview it.")
 
         def render_pending() -> None:
@@ -345,7 +432,19 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                 return
             summary = panel.preview(pending["payload"], mode.value)
             preview_box.clear()
+            check = pending.get("check")
             with preview_box:
+                if check is not None:
+                    color = {"trusted": "green", "untrusted": "orange", "unsigned": "grey"}.get(check.status, "red")
+                    ui.badge(check.message, color=color).classes("whitespace-normal").mark("rule-signature")
+                try:
+                    impact = known_good_impact(load_current(), pending["payload"], mode.value)
+                    if impact["checked"]:
+                        ui.label(f"Known-good charts: {len(impact['changed'])} of {impact['checked']} would "
+                                 "change" + (": " + ", ".join(impact["changed"][:5]) if impact["changed"] else "")) \
+                            .classes("text-sm " + ("text-orange-700" if impact["changed"] else "text-green-700"))
+                except Exception:
+                    pass  # the preview never blocks an import
                 ui.label(f"{pending['name']}: {summary['incoming']} rules; {summary['added']} new; {summary['duplicates']} duplicate(s); result {summary['result']}.").classes("text-sm")
                 ui.label(f"Abbreviation custom rows: {summary['abbreviations']}; conflicts: {summary['abbreviation_conflicts']}; conflicting text rules skipped: {summary['rule_conflicts']}").classes("text-xs opacity-70")
                 if summary["enables_learned_rules"]:
@@ -375,10 +474,14 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                     with tempfile.NamedTemporaryFile(suffix=".csv") as f:
                         f.write(content); f.flush()
                         payload = import_csv(f.name)
+                    check = None
                 else:
-                    payload = validate_payload(json.loads(content.decode("utf-8-sig")))
+                    payload, check = read_signed(json.loads(content.decode("utf-8-sig")))
                 pending["payload"] = payload
+                pending["check"] = check
                 pending["name"] = name
+                confirm_box.set_value(False)
+                confirm_box.set_visibility(check is None or check.status != "trusted")
                 render_pending()
                 status.set_text("Review the counts, then apply or cancel.")
                 actions.set_visibility(True)
@@ -387,6 +490,10 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                 status.set_text(f"Import rejected: {exc}")
 
         def apply_pending() -> None:
+            if confirm_box.visible and not confirm_box.value:
+                ui.notify("This file isn't signed by a trusted key — tick the box to confirm.",
+                          type="warning")
+                return
             try:
                 panel.apply(pending["payload"], mode.value)
                 ui.notify("Rules imported.", type="positive")

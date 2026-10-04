@@ -12,6 +12,8 @@ Safety filters:
   drug names, allergy/code-status words — see :mod:`fact_check`) is never
   suggested for removal;
 * lines your current rules already remove are skipped;
+* lines you deleted from results three or more times (:mod:`edit_log`) are
+  suggested too, through the same filters;
 * dismissed suggestions never come back (ids in ``data/inbox_state.json`` —
   hashes only, no chart text; dismissed abbreviation phrases also go to
   ``abbreviations.rejected_suggestions`` so the abbreviation editor agrees).
@@ -112,16 +114,16 @@ def suggestions(cfg: dict, texts: list[str], *, limit: int = 8,
                 hidden: set[str] | None = None) -> list[InboxItem]:
     """Ranked suggestions for ``texts`` (newest first) under the current ``cfg``."""
     texts = [t for t in texts if t and t.strip()]
-    if len(texts) < MIN_CHARTS:
-        return []
     hidden = dismissed() if hidden is None else hidden
-    items: list[InboxItem] = []
+    items: list[InboxItem] = _from_edits(cfg, hidden)
+    if len(texts) < MIN_CHARTS:
+        return items[:limit]
 
     from .rule_miner import mine_chrome_rules
     need = max(MIN_CHARTS, int(len(texts) * MIN_SHARE + 0.999))
     for cand in mine_chrome_rules(texts, min_occurrence=need):
         iid = _item_id("remove_line", cand.pattern)
-        if iid in hidden or not cand.sample_matches:
+        if iid in hidden or not cand.sample_matches or any(i.id == iid for i in items):
             continue
         if any(_has_clinical_fact(s) or _is_heading_line(s, cfg) for s in cand.sample_matches):
             continue
@@ -150,6 +152,31 @@ def suggestions(cfg: dict, texts: list[str], *, limit: int = 8,
 
     items.sort(key=lambda i: (-(i.charts / max(1, i.of)), i.kind != "remove_line"))
     return items[:limit]
+
+
+def _from_edits(cfg: dict, hidden: set[str]) -> list[InboxItem]:
+    """Line shapes you deleted from results again and again (see edit_log)."""
+    from . import edit_log
+    out: list[InboxItem] = []
+    try:
+        found = edit_log.candidates()
+    except Exception:
+        return out
+    for cand in found:
+        iid = _item_id("remove_line", cand["pattern"])
+        sample = cand["sample"]
+        if iid in hidden or not sample:
+            continue
+        if _has_clinical_fact(sample) or _is_heading_line(sample, cfg) or _already_removed(sample, cfg):
+            continue
+        if not _pattern_ok(cand["pattern"], [sample]):
+            continue
+        out.append(InboxItem(
+            id=iid, kind="remove_line",
+            title=f"You deleted “{sample[:80]}” from {cand['count']} results",
+            detail="Remove lines like this on every clean?",
+            pattern=cand["pattern"], samples=[sample], charts=cand["count"], of=cand["count"]))
+    return out
 
 
 def accept(cfg: dict, item: InboxItem, *, replacement: str | None = None,
