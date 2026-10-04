@@ -418,6 +418,22 @@ def _negations(line: str) -> int:
 _MAX_PAIR_WORK = 4000  # fuzzy pairing budget per replaced block (old lines × new lines)
 
 
+def _surplus(lines: list[str], other: list[str]) -> list[str]:
+    """Lines of ``lines`` that ``other`` has fewer copies of (counted, in order).
+
+    Counting copies (not just presence) catches a rewrite of one instance of a
+    line that copy-forward repeated elsewhere.
+    """
+    remaining = Counter(other)
+    out = []
+    for ln in lines:
+        if remaining.get(ln, 0) > 0:
+            remaining[ln] -= 1
+        elif ln.strip():
+            out.append(ln)
+    return out
+
+
 def _pairs(before: list[str], after: list[str]) -> list[tuple[str, str]]:
     """(old, new) line pairs for lines a stage rewrote.
 
@@ -426,9 +442,8 @@ def _pairs(before: list[str], after: list[str]) -> list[tuple[str, str]]:
     copy-forward repeats fast (aligning everything is quadratic there).
     """
     import difflib
-    before_set, after_set = set(before), set(after)
-    olds = [ln for ln in before if ln not in after_set and ln.strip()]
-    news = [ln for ln in after if ln not in before_set and ln.strip()]
+    olds = _surplus(before, after)
+    news = _surplus(after, before)
     if not olds or not news:
         return []
     if not any(_negations(ln) or _sides(ln) for ln in olds):
