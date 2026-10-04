@@ -147,6 +147,7 @@ NAV = [
     ("/stats", "insights", "Statistics"),
     ("/scripts", "code", "Custom Scripts"),
     ("/settings", "settings", "Settings"),
+    ("/doctor", "medical_services", "Doctor"),
 ]
 
 CSS = """

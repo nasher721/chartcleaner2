@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from datetime import date as _date
+from functools import lru_cache
 
 __all__ = ["SYSTEMS", "DEFAULT_TEMPLATES", "templates", "get", "render", "systems"]
 
@@ -99,7 +100,9 @@ def _term_regex(terms: tuple[str, ...]) -> re.Pattern:
     return re.compile("|".join(parts), re.IGNORECASE)
 
 
-_SYSTEM_RX = {code: _term_regex(terms) for code, terms in SYSTEMS.items()}
+@lru_cache(maxsize=1)
+def _system_rx() -> dict[str, re.Pattern]:
+    return {code: _term_regex(terms) for code, terms in SYSTEMS.items()}
 _SKIP = re.compile(r"^\s*(?:#{1,6}\s|[A-Z][A-Za-z /&]{1,40}:\s*$)")
 
 
@@ -118,7 +121,7 @@ def systems(text: str) -> dict[str, list[str]]:
         if not stripped or _SKIP.match(line) or len(stripped) < 3:
             continue
         for code in SYSTEM_ORDER:
-            if _SYSTEM_RX[code].search(stripped):
+            if _system_rx()[code].search(stripped):
                 if stripped not in groups[code]:
                     groups[code].append(stripped)
                 break

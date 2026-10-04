@@ -152,6 +152,22 @@ def _walk(sub, found: list[str]) -> None:
                 _walk(ch, found)
 
 
+def _anchored(sub) -> bool:
+    """True when every match must start at a line/string start (``^``, ``\\A``),
+    possibly inside a leading group or lookahead (``(?=^…)``)."""
+    for op, av in sub:
+        if op == _c.AT:
+            return av in (_c.AT_BEGINNING, _c.AT_BEGINNING_STRING)
+        if op == _c.SUBPATTERN:
+            return _anchored(list(av[-1]))
+        if op == _c.ASSERT:
+            return _anchored(list(av[1]))
+        if op == _c.BRANCH:
+            return all(_anchored(list(alt)) for alt in av[1])
+        return False
+    return False
+
+
 def _wildcards(sub) -> int:
     n = 0
     for op, av in sub:
@@ -177,7 +193,7 @@ def risks(pattern: str, flags: int = 0) -> list[str]:
         return []  # invalid regexes are reported by the validator
     found: list[str] = []
     _walk(list(parsed), found)
-    if _wildcards(list(parsed)) >= 3 and not pattern.lstrip().startswith(("^", "\\A")):
+    if _wildcards(list(parsed)) >= 3 and not _anchored(list(parsed)):
         found.append("many wildcards")
     seen: list[str] = []
     for kind in found:

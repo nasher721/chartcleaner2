@@ -345,6 +345,17 @@ def _run_untoken(source: str | None, tokens_file: str | None) -> None:
         print(f"Restored {n} token(s) — text copied back to clipboard.")
 
 
+def _run_doctor() -> int:
+    from chartcleaner import doctor
+    checks = doctor.run_checks()
+    marks = {"ok": "✓", "warn": "!", "fail": "✕", "info": "·"}
+    for c in checks:
+        print(f"{marks.get(c.status, '?')} {c.label}: {c.detail}"
+              + (f"  [fix in the app: Doctor → {c.fix_label}]" if c.fix else ""))
+    print(doctor.summary(checks))
+    return 1 if any(c.status == "fail" for c in checks) else 0
+
+
 def _run_check_known_good(preset: str | None) -> int:
     """Re-clean every known-good chart; exit status 1 when any output changed."""
     from chartcleaner import regression_set, store
@@ -458,6 +469,9 @@ def main():
     parser.add_argument("--split-patients", action="store_true",
                         help="Split a pasted patient list (bed labels, Patient: lines, separators) "
                              "and clean each patient on its own.")
+    parser.add_argument("--doctor", action="store_true",
+                        help="Check Python, packages, the spaCy model, local AI, encryption, rules, "
+                             "launchers and the data folder; exits 1 when something is broken.")
     parser.add_argument("--check-known-good", action="store_true",
                         help="Re-clean your known-good charts with config.json (or --preset) and "
                              "show any whose output changed; exits 1 when one did.")
@@ -465,6 +479,8 @@ def main():
 
     if args.check_known_good:
         sys.exit(_run_check_known_good(args.preset))
+    if args.doctor:
+        sys.exit(_run_doctor())
 
     if args.export_abbreviations:
         _run_export_abbreviations(args)

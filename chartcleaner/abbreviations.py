@@ -239,7 +239,12 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
     return pattern, by_term, len(rows), custom_groups, group_terms
 
 
-SOURCE_ROW_COUNT = _matcher()[2]
+def __getattr__(name: str):
+    # Built on first use: compiling the ~1,000-term matcher costs ~50 ms, which
+    # the CLI, hotkeys and app start shouldn't pay before anything is abbreviated.
+    if name == "SOURCE_ROW_COUNT":
+        return _matcher()[2]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
@@ -332,7 +337,7 @@ def abbreviate(text: str, cfg: dict | None = None,
             details["note"] = "No section headers found."
         parts: list[str] = []
         counts = {}
-        row_count = SOURCE_ROW_COUNT
+        row_count = _matcher()[2]
         pos = 0
         for start, end in spans:
             parts.append(text[pos:start])

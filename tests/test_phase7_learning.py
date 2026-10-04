@@ -84,13 +84,14 @@ def test_tampering_is_detected_and_refused():
         rule_sharing.read_signed(signed)
 
 
-def test_colleague_key_untrusted_then_trusted(monkeypatch, tmp_path):
+def test_colleague_key_untrusted_then_trusted():
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     other = Ed25519PrivateKey.generate()
-    monkeypatch.setattr(rule_signing, "_private_key", lambda: other)
-    signed = rule_signing.sign(_payload(), "Colleague")
+    # a scoped patch: monkeypatch.undo() would also undo conftest's data/ redirects
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rule_signing, "_private_key", lambda: other)
+        signed = rule_signing.sign(_payload(), "Colleague")
     key = signed["signature"]["key"]
-    monkeypatch.undo()
     check = rule_signing.verify(signed)
     assert check.status == "untrusted" and "haven't trusted" in check.message
     fp = rule_signing.trust_key("Dr. Lee", key)

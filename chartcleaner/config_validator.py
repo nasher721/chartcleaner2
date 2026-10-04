@@ -11,7 +11,6 @@ from typing import Any
 
 from .audit import AUDIT_CHECK_IDS
 from .regex_risk import risks as regex_risks
-from .summarizer import DEFAULT_LLM
 
 REQUIRED_CONFIG_KEYS = (
     "emr_line_metadata",
@@ -659,6 +658,7 @@ class ConfigValidator:
             self.errors.append("custom_rules: must map script name -> {enabled: bool}")
 
     def _validate_local_llm(self) -> None:
+        from .summarizer import DEFAULT_LLM  # lazy: keeps urllib out of every engine import
         self._check_option_group(
             "local_llm",
             DEFAULT_LLM,

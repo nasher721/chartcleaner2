@@ -275,7 +275,7 @@ def test_every_page_route_points_at_its_page_function():
     assert {path: fn.__name__ for path, fn in cc_app.ROUTES.items()} == {
         "/": "clean_page", "/batch": "batch_page", "/rules": "text_rules_page",
         "/pipeline": "pipeline_page", "/stats": "stats_page", "/scripts": "scripts_page",
-        "/settings": "settings_page",
+        "/settings": "settings_page", "/doctor": "doctor_page",
     }
 
 
