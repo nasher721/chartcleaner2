@@ -15,6 +15,8 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
     summary = summary or store.summarize(runs)
     never = sum(r["status"] == "never matched" for r in rows)
     broad = sum(r["status"] == "very broad" for r in rows)
+    slow = sum(r["status"] == "slow" for r in rows)
+    risky = sum(bool(r.get("risks")) for r in rows)
     losses = summary.get("fact_losses_by_stage") or {}
     with ui.card().classes("w-full gap-2").mark("rule-health"):
         with ui.row().classes("w-full items-center gap-2"):
@@ -23,6 +25,8 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
         tiles = ui.row().classes("gap-3 flex-wrap")
         stat_chip(tiles, "rules that never fire", str(never), "grey" if not never else "orange")
         stat_chip(tiles, "very broad rules", str(broad), "green" if not broad else "orange")
+        stat_chip(tiles, "slow rules", str(slow), "green" if not slow else "orange")
+        stat_chip(tiles, "rules that could hang", str(risky), "green" if not risky else "red")
         stat_chip(tiles, "charts with clinical values flagged",
                   f"{summary.get('fact_flagged', 0)} / {summary.get('fact_runs', 0)}",
                   "green" if not summary.get("fact_flagged") else "red")
@@ -32,12 +36,15 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
             with ui.row().classes("gap-2 flex-wrap"):
                 for sid, n in list(losses.items())[:8]:
                     ui.badge(f"{STAGE_LABELS.get(sid, sid)} · {n}", color="red").props("outline")
-    flagged = [r for r in rows if r["status"] in ("never matched", "very broad")]
+    flagged = [r for r in rows if r["status"] in ("never matched", "very broad", "slow")
+               or r.get("risks")]
     title = (f"Rule details — {len(flagged)} rule(s) to review" if flagged
              else "Rule details — no problems found")
     with ui.expansion(title, icon="rule", value=bool(flagged)).classes("w-full"):
         ui.label("From your recent runs: rules that never match are probably dead weight; rules "
-                 "that touch over 30% of a chart's lines may be removing real content.") \
+                 "that touch over 30% of a chart's lines may be removing real content; slow "
+                 "rules cost time on every clean; ⚠ marks a pattern shape that can backtrack "
+                 "for minutes on a long line.") \
             .classes("text-xs opacity-70")
         holder = ui.column().classes("w-full gap-1")
 
@@ -57,10 +64,15 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
             holder.clear()
             current = rule_health_report(load_config(common.CONFIG_PATH), runs)
             with holder:
-                for row in [r for r in current if r["status"] != "not enough runs yet"][:60]:
+                for row in [r for r in current
+                            if r["status"] != "not enough runs yet" or r.get("risks")][:60]:
                     with ui.row().classes("w-full items-center gap-2 no-wrap border-b pb-1"):
-                        color = {"very broad": "orange", "never matched": "grey"}.get(row["status"], "green")
-                        ui.badge(row["status"], color=color)
+                        color = {"very broad": "orange", "never matched": "grey",
+                                 "slow": "orange"}.get(row["status"], "green")
+                        ui.badge(row["status"] + (f" · {row['max_ms']:.0f} ms" if row.get("max_ms") else ""),
+                                 color=color)
+                        if row.get("risks"):
+                            ui.icon("warning", color="red").tooltip("; ".join(row["risks"]))
                         ui.label(STAGE_LABELS.get(row["stage"], row["stage"])).classes("text-xs w-40")
                         ui.label(row["pattern"][:90]).classes("text-xs cc-mono flex-grow break-all")
                         ui.label(f"{row['hits']} hits / {row['runs']} runs").classes("text-xs w-32")
@@ -73,6 +85,43 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
                     ui.label("Not enough runs yet — clean a few more charts.").classes("text-sm")
 
         draw()
+
+
+def render_stage_noise(s: dict) -> None:
+    """Which stages earn their keep: characters each removed, per day and overall."""
+    share = s.get("stage_share") or []
+    days = s.get("days") or []
+    if not share:
+        return
+    with ui.card().classes("w-full gap-2").mark("stage-noise"):
+        ui.label("Noise removed by each stage over time").classes("text-lg font-semibold")
+        ui.label("Characters each stage took out, per day (top six stages; the rest are "
+                 "grouped). A stage that never removes anything is a candidate to switch off.") \
+            .classes("text-xs opacity-70")
+        top = [row["label"] for row in share[:6]]
+        by_day = s.get("stage_by_day") or {}
+        if len(days) > 1:
+            series = [{"name": label, "type": "bar", "stack": "removed",
+                       "data": [by_day.get(d, {}).get(label, 0) for d in days]} for label in top]
+            other = [sum(n for lbl, n in by_day.get(d, {}).items() if lbl not in top) for d in days]
+            if any(other):
+                series.append({"name": "Other stages", "type": "bar", "stack": "removed", "data": other})
+            ui.echart({
+                "backgroundColor": "transparent", "tooltip": {"trigger": "axis"},
+                "legend": {"type": "scroll", "data": [x["name"] for x in series]},
+                "grid": {"left": 64, "right": 24, "top": 44, "bottom": 32},
+                "xAxis": {"type": "category", "data": days},
+                "yAxis": {"type": "value", "name": "Chars"},
+                "series": series,
+            }).classes("w-full h-72")
+        cols = [{"name": "label", "label": "Stage", "field": "label", "align": "left"},
+                {"name": "removed", "label": "Characters removed", "field": "removed", "sortable": True},
+                {"name": "share", "label": "% of all removed", "field": "share", "sortable": True},
+                {"name": "runs", "label": "Runs where it removed text", "field": "runs", "sortable": True},
+                {"name": "avg", "label": "Avg per such run", "field": "avg_per_run"}]
+        ui.table(columns=cols, rows=[{**r, "removed": f"{r['removed']:,}", "share": f"{r['share']}%"}
+                                     for r in share], row_key="label", pagination=10) \
+            .classes("w-full").props("flat dense")
 
 
 def stats_page():
@@ -147,6 +196,8 @@ def stats_page():
                     "series": [{"type": "pie", "radius": ["35%", "70%"], "center": ["40%", "55%"],
                                 "data": [{"name": k, "value": v} for k, v in s["phi_by_type"].items()]}],
                 }).classes("flex-grow min-w-[380px] h-72")
+
+        render_stage_noise(s)
 
         cols = [
             {"name": "ts", "label": "When", "field": "ts", "align": "left", "sortable": True},

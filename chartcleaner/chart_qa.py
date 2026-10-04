@@ -15,11 +15,12 @@ embedded in each prompt.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from chartcleaner.local_llm import GroundingResult, LocalLlmClient, verify_clinical_grounding
-from chartcleaner.summarizer import LlmUnavailableError, NoModelError, merge_llm_config
+from chartcleaner.summarizer import (LlmUnavailableError, NoModelError, _check_facts, _cite,
+                                     merge_llm_config, run_model)
 
 __all__ = [
     "MAX_HISTORY_TURNS",
@@ -59,6 +60,10 @@ class QaResult:
     grounding: GroundingResult
     model: str
     duration_ms: int
+    # clinical facts in the answer checked one by one (fact_check.OutputCheck)
+    facts: Any = None
+    # where each answer line comes from in the chart (citations.Citation)
+    citations: list = field(default_factory=list)
 
 
 def build_qa_prompt(
@@ -98,8 +103,12 @@ def ask_chart(
     cfg: dict,
     client: QaClient | None = None,
     history: list[QaTurn] | None = None,
+    on_token: Any = None,
 ) -> QaResult:
-    """Answer ``question`` about ``chart`` on-device and verify clinical grounding."""
+    """Answer ``question`` about ``chart`` on-device and verify clinical grounding.
+
+    ``on_token(text_so_far)`` is called as the answer streams in.
+    """
     opts: dict[str, Any] = merge_llm_config(cfg)
     base_url: str = opts["base_url"]
     threshold = min(max(float(opts["grounding_threshold"]), 0.0), 100.0)
@@ -120,7 +129,7 @@ def ask_chart(
 
     started = time.monotonic()
     try:
-        answer = client.generate(prompt, model=model)
+        answer = run_model(client, prompt, model, on_token)
     except ValueError:
         raise
     except Exception as exc:
@@ -137,4 +146,6 @@ def ask_chart(
         grounding=grounding,
         model=model,
         duration_ms=duration_ms,
+        facts=_check_facts(chart, answer),
+        citations=_cite(answer, chart),
     )

@@ -13,13 +13,18 @@ import time
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
-from chartcleaner import recent_charts, regression_set, rule_inbox
+from chartcleaner import edit_log, recent_charts, regression_set, rule_inbox
 from chartcleaner import service as service_mod
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
 from chartcleaner.timeline import build as build_timeline
 from chartcleaner.trends import REFERENCE_RANGES
 from chartcleaner.trends import build as build_trends
+from chartcleaner.devices import build as build_devices
+from chartcleaner.micro import build as build_micro
+from chartcleaner.overnight import build as build_overnight
+from chartcleaner.problems import build as build_problems
+from chartcleaner.daily_note import build as build_daily_note
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -82,7 +87,9 @@ async def clean_page():
             def extras_work(cleaned: str):
                 out = {}
                 for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
-                                ("timeline", build_timeline)):
+                                ("timeline", build_timeline), ("problems", build_problems),
+                                ("devices", build_devices), ("micro", build_micro),
+                                ("overnight", build_overnight)):
                     try:
                         out[key] = fn(cleaned)
                     except Exception:
@@ -94,7 +101,9 @@ async def clean_page():
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
-                               timeline=extras.get("timeline"))
+                               timeline=extras.get("timeline"), problems=extras.get("problems"),
+                               devices=extras.get("devices"), micro=extras.get("micro"),
+                               overnight=extras.get("overnight"))
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -108,7 +117,7 @@ async def clean_page():
                 pass  # map saving must never break a run
             if mode == "clean":
                 try:
-                    recent_charts.remember(text, source, common.PREFS)
+                    recent_charts.remember(text, source, common.PREFS, tag=CLEAN_STATE.get("tag") or "")
                 except Exception:
                     pass  # suggestions are a bonus; never break a run
             store.maybe_purge_old_data()
@@ -335,6 +344,34 @@ async def clean_page():
         if got:
             copy_to_clipboard(*got)
 
+    def toggle_edit() -> None:
+        out = refs.get("output")
+        if out is None:
+            return
+        refs["editing"] = not refs.get("editing")
+        if refs["editing"]:
+            out.props(remove="readonly")
+            ui.notify("Editing the result — copies use your edits.", type="info")
+        else:
+            commit_edit()
+            out.props(add="readonly")
+
+    def commit_edit() -> None:
+        """Keep an edited result for copying and learn which lines were deleted."""
+        out = refs.get("output")
+        if out is None or not refs.get("editing"):
+            return
+        value = out.value or ""
+        previous = CLEAN_STATE.get("result_text") or ""
+        if value == previous:
+            return
+        CLEAN_STATE["result_text"] = value
+        try:
+            if edit_log.record(previous, value):
+                asyncio.get_running_loop().create_task(refresh_inbox())
+        except Exception:
+            pass  # learning from edits is a bonus; never break editing
+
     def open_copy_default_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
             ui.label("The Copy button copies…").classes("text-lg font-semibold")
@@ -363,9 +400,13 @@ async def clean_page():
                         label += f" · {n.day}"
                     ui.chip(label, on_click=lambda n=n: jump_to(n.start, n.end)) \
                         .props("dense outline clickable").tooltip(n.title)
-        out = ui.textarea("", value=result.text)
+        shown_text = CLEAN_STATE.get("result_text") or result.text
+        out = ui.textarea("", value=shown_text)
         out.props("outlined readonly input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
+        out.mark("result-output")
+        out.on("blur", lambda _: commit_edit())
         refs["output"] = out
+        refs["editing"] = False
         default = common.PREFS.get("copy_default") or "text"
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             with ui.dropdown_button(f"Copy · {COPY_FORMATS.get(default, COPY_FORMATS['text'])[0]}",
@@ -386,6 +427,13 @@ async def clean_page():
                                 ui.icon("smart_toy")
                             with ui.item_section():
                                 ui.item_label(f"Prompt: {tmpl['name']}")
+                    ui.separator()
+                    for i, tmpl in enumerate(note_templates_mod.templates(load_config(common.CONFIG_PATH))):
+                        with ui.item(on_click=lambda n=tmpl["name"]: copy_note(n)).mark(f"copy-note-{i}"):
+                            with ui.item_section().props("avatar"):
+                                ui.icon("article")
+                            with ui.item_section():
+                                ui.item_label(f"Note: {tmpl['name']}")
                 ui.separator()
                 ui.item("Change what the main button copies…", on_click=open_copy_default_dialog)
             with ui.dropdown_button("Save", icon="download", auto_close=True).props("flat no-caps"):
@@ -396,12 +444,17 @@ async def clean_page():
                     chart_markdown().encode("utf-8"), "cleaned_chart.md"))
                 if common.PREFS.get("notes_folder"):
                     ui.item("To my notes folder", on_click=save_to_notes_folder)
+            ui.button(icon="edit", on_click=toggle_edit).props("flat round").mark("edit-result") \
+                .tooltip("Edit the result before copying — copies use your edits, and lines you "
+                         "keep deleting become rule suggestions")
             with ui.button(icon="more_horiz").props("flat round").tooltip("More"):
                 with ui.menu():
                     ui.menu_item("Restore names in an AI reply…", on_click=open_restore_dialog) \
                         .mark("restore-reply")
                     ui.menu_item("Mark as known good (re-check after rule changes)…",
                                  on_click=open_known_good_dialog).mark("known-good")
+                    ui.menu_item("Daily note — compare with a previous chart…",
+                                 on_click=open_daily_note_dialog).mark("daily-note")
                     ui.menu_item("Clean again", on_click=run_clean)
         if CLEAN_STATE.get("result_mode") == "expand":
             ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
@@ -628,6 +681,27 @@ async def clean_page():
                         ui.badge(n.day, color="teal").props("outline")
                     ui.label(n.preview or n.title).classes("text-xs opacity-80 truncate flex-grow")
                     ui.label(f"{n.chars:,} chars").classes("text-xs opacity-50")
+        overnight = CLEAN_STATE.get("overnight")
+        if overnight is not None and not overnight.empty:
+            shown = True
+            render_block("Overnight events", "nightlight", overnight.to_text(), "insight-overnight",
+                         lambda: [ui.label((e.when + "  " if e.when else "") + e.text)
+                                  .classes("text-xs cc-mono") for e in overnight.events])
+        devices = CLEAN_STATE.get("devices")
+        if devices is not None and devices.devices:
+            shown = True
+            render_block("Lines, drains & airway", "cable", devices.to_text(), "insight-devices",
+                         lambda: render_devices(devices))
+        micro = CLEAN_STATE.get("micro")
+        if micro is not None and not micro.empty:
+            shown = True
+            render_block("Antibiotics & cultures", "biotech", micro.to_text(), "insight-micro",
+                         lambda: render_micro(micro))
+        problems = CLEAN_STATE.get("problems")
+        if problems is not None and not problems.empty:
+            shown = True
+            render_block(f"By problem ({len(problems.problems)})", "account_tree",
+                         problems.to_text(), "insight-problems", lambda: render_problems(problems))
         if trends is not None and not trends.empty:
             shown = True
             render_trends(trends)
@@ -637,11 +711,66 @@ async def clean_page():
                     .classes("w-full"):
                 render_delta(delta)
         if not shown:
-            ui.label("Trends, a note timeline and changes over time appear here when the chart "
-                     "holds several dated notes.").classes("text-sm opacity-60")
+            ui.label("Problems, devices, antibiotics, overnight events, trends, a note timeline "
+                     "and changes over time appear here when the chart has them.") \
+                .classes("text-sm opacity-60")
+
+    def render_block(title: str, icon: str, text: str, marker: str, body) -> None:
+        with ui.expansion(title, icon=icon, value=True).classes("w-full").mark(marker):
+            body()
+            ui.button("Copy", icon="content_copy",
+                      on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+
+    def render_devices(report) -> None:
+        ui.label(f"Day counts as of {report.reference.strftime('%m/%d/%Y')} (the chart's latest "
+                 "date); insertion day = day 1.").classes("text-xs opacity-60")
+        for d in report.devices:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                color = "grey" if d.removed else "orange" if d.needs_review else "primary"
+                ui.badge(d.name + (f" · {d.site}" if d.site else ""), color=color).props("outline")
+                status = ("removed" if d.removed else f"day {d.day}" if d.day is not None
+                          else "in place (no date)")
+                ui.label(status + (" — still needed?" if d.needs_review else "")) \
+                    .classes("text-xs font-semibold w-40")
+                ui.label(d.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                    .tooltip(d.last_line)
+
+    def render_micro(report) -> None:
+        for a in report.antibiotics:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.badge(a.name, color="grey" if a.stopped else "teal").props("outline")
+                status = ("stopped" if a.stopped else f"day {a.day}" if a.day is not None else "")
+                ui.label(status).classes("text-xs font-semibold w-20")
+                ui.label(a.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                    .tooltip(a.last_line)
+        if report.cultures:
+            ui.label("Cultures").classes("text-xs font-semibold mt-1")
+            for c in report.cultures:
+                positive = (bool(c.organism) or "positive" in c.result.lower()
+                            or "grew" in c.result.lower())
+                ui.label(c.to_text()).classes(
+                    "text-xs cc-mono " + ("text-red-600 font-semibold" if positive else ""))
+
+    def render_problems(report) -> None:
+        ui.label("Each problem from the latest Assessment & Plan with the chart lines that relate "
+                 "to it — copied verbatim, never reworded.").classes("text-xs opacity-60")
+        for p in report.problems:
+            with ui.expansion(p.heading[:120] + (f"  ({p.note})" if p.note else ""),
+                              caption=f"{len(p.evidence)} related line(s)").classes("w-full"):
+                for line in p.plan:
+                    ui.label(line).classes("text-xs cc-mono font-semibold")
+                for e in p.evidence[:15]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap cursor-pointer") \
+                            .on("click", lambda e=e: (show_tab(0), jump_to(e.offset, e.offset + len(e.line)))):
+                        if e.note:
+                            ui.badge(e.note).props("outline")
+                        ui.label(e.line).classes("text-xs cc-mono break-all")
+                ui.button("Copy problem", icon="content_copy",
+                          on_click=lambda p=p: copy_to_clipboard(p.to_text())).props("flat dense")
 
     def render_trends(trends) -> None:
-        ui.label(f"Lab trends across {len(trends.notes)} notes").classes("text-sm font-semibold")
+        ui.label(f"{'Lab trends' if trends.labs else 'Trends'} across {len(trends.notes)} notes") \
+            .classes("text-sm font-semibold")
         ui.label("Shaded band = typical adult reference range; red points are outside it. "
                  "Your lab's ranges may differ.").classes("text-xs opacity-60")
         if trends.labs:
@@ -659,6 +788,19 @@ async def clean_page():
                         ui.echart(sparkline_options(t, trends.notes)).classes("w-full h-16")
             for t in trends.labs[16:]:
                 ui.label(t.to_text()).classes("text-xs cc-mono")
+        if trends.scores:
+            ui.label("Scores").classes("text-sm font-semibold mt-2")
+            with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-2 w-full") \
+                    .mark("trends-scores"):
+                for t in trends.scores:
+                    with ui.card().classes("p-2 gap-0"):
+                        with ui.row().classes("w-full items-center justify-between no-wrap"):
+                            ui.label(t.name).classes("font-semibold")
+                            ui.label(" → ".join(v or "—" for v in t.values)
+                                     + (f"  {t.direction()}" if t.direction() else "")) \
+                                .classes("text-xs cc-mono")
+                        if any(n is not None for n in t.numbers()):
+                            ui.echart(sparkline_options(t, trends.notes)).classes("w-full h-16")
         rows = trends.med_rows()
         if rows:
             ui.label("Medication changes").classes("text-sm font-semibold mt-2")
@@ -716,10 +858,42 @@ async def clean_page():
         download_file(f"/exports/{name}", name)
 
     # ---- AI drawer: local summary + ask this chart ------------------------------
-    summary_state = {"running": False}
+    summary_state = {"running": False, "partial": None}
     summary_refs: dict = {}  # panel widgets, repopulated by render_ai
-    qa_state = {"running": False}
+    qa_state = {"running": False, "partial": None}
     qa_refs: dict = {}
+
+    def tick_streams() -> None:
+        """Show AI text as it streams in (the worker thread only writes the partial text)."""
+        try:
+            partial = summary_state.get("partial")
+            if summary_state["running"] and partial is not None and "output" in summary_refs:
+                summary_refs["output"].set_value(partial)
+            partial = qa_state.get("partial")
+            if qa_state["running"] and partial is not None and "stream" in qa_refs:
+                qa_refs["stream"].set_text(partial)
+                qa_refs["stream"].set_visibility(True)
+        except Exception:
+            pass  # the panel may have been re-rendered
+
+    def render_citations(container, citations, marker: str) -> None:
+        """[n] chips under an AI answer; a click jumps to the chart line it came from."""
+        found = [c for c in citations or [] if c.found]
+        if not found:
+            return
+        with container:
+            with ui.column().classes("w-full gap-0").mark(marker):
+                ui.label("Where it comes from in the chart (click to jump):").classes("text-xs opacity-60")
+                for n, c in enumerate(found, start=1):
+                    with ui.row().classes("w-full items-start gap-1 no-wrap cursor-pointer") \
+                            .on("click", lambda c=c: (show_tab(0), jump_to(c.start, c.end))):
+                        ui.badge(f"[{n}]").props("outline color=primary")
+                        ui.label(f"{c.text[:70]} ← {c.source[:110]}").classes("text-xs break-all")
+                missing = [c for c in citations if not c.found]
+                if missing:
+                    ui.label(f"{len(missing)} line(s) with no matching chart line — check them: "
+                             + "; ".join(c.text[:50] for c in missing[:3])) \
+                        .classes("text-xs text-orange-700")
 
     def render_ai() -> None:
         ai_col.clear()
@@ -774,6 +948,9 @@ async def clean_page():
             custom_box.set_visibility(preset_key == "custom")
             summary_refs["output"] = ui.textarea("").props(
                 "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
+            summary_refs["marked"] = ui.html("").classes("w-full").mark("ai-summary-marked")
+            summary_refs["marked"].set_visibility(False)
+            summary_refs["cites"] = ui.column().classes("w-full gap-0")
             with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                 summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
                 summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
@@ -796,6 +973,9 @@ async def clean_page():
             if model_val:
                 ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
                          "verified against the chart").classes("text-xs opacity-60")
+            qa_refs["stream"] = ui.label("").classes("text-sm whitespace-pre-wrap opacity-80") \
+                .mark("ai-answer-stream")
+            qa_refs["stream"].set_visibility(False)
             qa_refs["log"] = ui.column().classes("w-full gap-2")
             render_qa_log()
 
@@ -836,10 +1016,21 @@ async def clean_page():
         summary_refs["output"].set_value(res.text)
         summary_refs["meta"].set_text(f"model: {res.model} · {res.duration_ms:,} ms")
         g = res.grounding
+        facts = getattr(res, "facts", None)
+        marked = summary_refs.get("marked")
+        if marked is not None:
+            show = bool(facts and facts.unsupported)
+            marked.set_content(highlight_unsupported_html(res.text, facts) if show else "")
+            marked.set_visibility(show)
+        cites = summary_refs.get("cites")
+        if cites is not None:
+            cites.clear()
+            render_citations(cites, getattr(res, "citations", None), "ai-summary-citations")
         row = summary_refs["grounding_row"]
         row.clear()
         with row:
             grounding_badge(g.grounding_score, g.is_safe, g.total_entities)
+            facts_badge(facts)
             for item in g.ungrounded_entities:
                 ui.button(item, icon="content_copy",
                           on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
@@ -851,6 +1042,7 @@ async def clean_page():
         chart_result = CLEAN_STATE.get("result")
         chart_text = CLEAN_STATE["result_text"]
         summary_state["running"] = True
+        summary_state["partial"] = None
         sum_btn = summary_refs.get("button")
         sum_spin = summary_refs.get("spinner")
         if sum_btn:
@@ -859,7 +1051,8 @@ async def clean_page():
             sum_spin.set_visibility(True)
         try:
             def work():
-                return summarize(chart_text, load_config(common.CONFIG_PATH))
+                return summarize(chart_text, load_config(common.CONFIG_PATH),
+                                 on_token=lambda t: summary_state.update(partial=t))
 
             result = await run.io_bound(work)
             if (CLEAN_STATE.get("result") is not chart_result
@@ -878,6 +1071,7 @@ async def clean_page():
             report_error("Summarization failed", e)
         finally:
             summary_state["running"] = False
+            summary_state["partial"] = None
             try:
                 if sum_btn:
                     sum_btn.set_enabled(True)
@@ -895,10 +1089,16 @@ async def clean_page():
         with log_col:
             for t in turns:
                 ui.label("Q: " + t["q"]).classes("text-sm font-semibold")
-                ui.markdown(t["a"]).classes("w-full")
+                facts = t.get("facts")
+                if facts is not None and facts.unsupported:
+                    ui.html(highlight_unsupported_html(t["a"], facts)).classes("w-full")
+                else:
+                    ui.markdown(t["a"]).classes("w-full")
                 g = t["g"]
+                render_citations(log_col, t.get("citations"), "ai-answer-citations")
                 with ui.row().classes("items-center gap-1 flex-wrap"):
                     grounding_badge(g["score"], g["safe"], g["total"])
+                    facts_badge(facts)
                     ui.button("Copy answer", icon="content_copy",
                               on_click=lambda _, a=t["a"]: copy_to_clipboard(a)).props("flat dense")
                     ui.label(f"{t['model']} · {t['ms']:,} ms").classes("text-xs opacity-60")
@@ -918,6 +1118,7 @@ async def clean_page():
             ui.notify("Type a question about the chart first.", type="warning")
             return
         qa_state["running"] = True
+        qa_state["partial"] = None
         btn, spin = qa_refs.get("button"), qa_refs.get("spinner")
         if btn:
             btn.set_enabled(False)
@@ -927,7 +1128,8 @@ async def clean_page():
             history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
 
             def work():
-                return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history)
+                return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history,
+                                 on_token=lambda t: qa_state.update(partial=t))
 
             res = await run.io_bound(work)
             if (CLEAN_STATE.get("result") is not chart_result
@@ -937,6 +1139,8 @@ async def clean_page():
                 "q": res.question, "a": res.answer,
                 "g": {"score": res.grounding.grounding_score, "safe": res.grounding.is_safe,
                       "total": res.grounding.total_entities},
+                "facts": getattr(res, "facts", None),
+                "citations": getattr(res, "citations", None),
                 "model": res.model, "ms": res.duration_ms})
             if q_box:
                 q_box.set_value("")
@@ -952,7 +1156,12 @@ async def clean_page():
             report_error("Chart Q&A failed", e)
         finally:
             qa_state["running"] = False
+            qa_state["partial"] = None
             try:
+                stream = qa_refs.get("stream")
+                if stream is not None:
+                    stream.set_text("")
+                    stream.set_visibility(False)
                 if btn:
                     btn.set_enabled(True)
                 if spin:
@@ -1498,7 +1707,7 @@ async def clean_page():
 
     def render_fact_check(report) -> None:
         """Details behind the trust badge: which clinical values went, and where."""
-        if not report.losses:
+        if not (report.losses or report.meaning or report.introduced or report.implausible):
             return
         status = report.status
         icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
@@ -1531,6 +1740,32 @@ async def clean_page():
                                 .props("flat dense")
                 if len(items) > 20:
                     ui.label(f"… {len(items) - 20} more").classes("text-xs opacity-60")
+            if report.meaning:
+                ui.label("Lines whose meaning changed (a negation dropped, or a side switched)") \
+                    .classes("text-sm font-semibold mt-1")
+                for m in report.meaning[:20]:
+                    with ui.column().classes("w-full gap-0 border-l-4 pl-2").mark("meaning-change"):
+                        ui.label(m.message).classes("text-xs font-semibold text-red-600"
+                                                    if m.category == "unexpected" else "text-xs font-semibold")
+                        ui.label("before: " + m.before).classes("text-xs cc-mono break-all")
+                        ui.label("after:  " + m.after).classes("text-xs cc-mono break-all")
+            if report.introduced:
+                ui.label("Values in the output that weren't in the chart") \
+                    .classes("text-sm font-semibold mt-1")
+                for x in report.introduced[:20]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.badge(x.display).props(f"outline color={'red' if x.category == 'unexpected' else 'grey'}")
+                        ui.label(f"{x.stage_label}: {x.lines[0][:240] if x.lines else ''}") \
+                            .classes("text-xs cc-mono flex-grow break-all")
+            if report.implausible:
+                ui.label("Values that look impossible").classes("text-sm font-semibold mt-1")
+                for x in report.implausible[:20]:
+                    new = x.key() not in report.implausible_in_source
+                    with ui.row().classes("w-full items-start gap-2 no-wrap").mark("implausible-value"):
+                        ui.badge("after cleaning" if new else "in the chart",
+                                 color="red" if new else "orange").props("outline")
+                        ui.label(f"{x.message} — {x.line[:200]}") \
+                            .classes("text-xs cc-mono flex-grow break-all")
 
     async def keep_text(sid: str, text: str) -> None:
         cfg = load_config(common.CONFIG_PATH)
@@ -1555,6 +1790,69 @@ async def clean_page():
             ui.notify(f"Could not save: {ex}", type="negative")
             return
         ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
+
+    def copy_note(name: str) -> None:
+        try:
+            text = note_templates_mod.render(name, CLEAN_STATE.get("result_text") or "",
+                                             load_config(common.CONFIG_PATH))
+        except Exception as ex:
+            ui.notify(f"Could not fill the note template: {ex}", type="negative")
+            return
+        copy_to_clipboard(text, f"“{name}” note copied")
+
+    def open_daily_note_dialog() -> None:
+        """Pick a previous chart (same bed tag first) and show today's daily update."""
+        if not CLEAN_STATE.get("result_text") or CLEAN_STATE.get("result_mode") not in (None, "clean"):
+            ui.notify("Do a full clean first.", type="info")
+            return
+        tag = CLEAN_STATE.get("tag") or ""
+        today_input = CLEAN_STATE.get("input") or ""
+        try:
+            records = [r for r in recent_charts.load(30) if r["text"] != today_input]
+        except Exception:
+            records = []
+        # same bed first (newest first within each group: load() is newest-first)
+        records.sort(key=lambda r: not (tag and (r.get("tag") or "").casefold() == tag.casefold()))
+        with ui.dialog() as dlg, ui.card().classes("w-[760px] max-w-full gap-2").mark("daily-note-dialog"):
+            ui.label("Daily note").classes("text-lg font-semibold")
+            if not records:
+                ui.label("No previous charts stored yet — recent charts are kept (encrypted) after "
+                         "each clean. Clean yesterday's chart with the same bed tag first.") \
+                    .classes("text-sm opacity-70")
+                ui.button("Close", on_click=dlg.close).props("flat")
+                dlg.open()
+                return
+            options = {}
+            for i, r in enumerate(records):
+                first = next((ln.strip() for ln in r["text"].splitlines() if ln.strip()), "")[:60]
+                options[i] = f"{r.get('ts', '')[:16].replace('T', ' ')}" + \
+                    (f" · {r['tag']}" if r.get("tag") else "") + f" · {first}"
+            pick = ui.select(options, value=0, label="Compare with").classes("w-full")
+            out = ui.textarea("").props("outlined readonly input-style='min-height: 320px'") \
+                .classes("w-full cc-mono").mark("daily-note-output")
+
+            async def build_note() -> None:
+                rec = records[pick.value or 0]
+                today_text = CLEAN_STATE["result_text"]
+
+                def work():
+                    cfg = load_config(common.CONFIG_PATH)
+                    previous = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
+                        rec["text"], wrap=False, fact_check=False).text
+                    return build_daily_note(service_mod._unwrap(today_text), previous, cfg).to_text()
+
+                try:
+                    out.set_value(await run.io_bound(work))
+                except Exception as ex:
+                    report_error("Daily note failed", ex)
+
+            with ui.row().classes("gap-2"):
+                ui.button("Build", icon="today", on_click=build_note).props("unelevated color=primary") \
+                    .mark("daily-note-build")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(out.value or "")).props("flat")
+                ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def copy_prompt(name: str) -> None:
         try:
@@ -1943,6 +2241,13 @@ async def clean_page():
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:
                         f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                    tag_input = ui.input("Bed tag", value=CLEAN_STATE.get("tag") or "",
+                                         autocomplete=recent_charts.tags(),
+                                         on_change=lambda e: CLEAN_STATE.update(
+                                             tag=recent_charts.clean_tag(e.value))) \
+                        .props("dense outlined clearable").classes("w-32").mark("bed-tag")
+                    tag_input.tooltip("e.g. G20-1 — kept with this chart (encrypted) so the daily "
+                                      "note and trends follow the patient, not the paste")
                     ui.space()
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \
@@ -1958,6 +2263,7 @@ async def clean_page():
         sync_mode_controls()
         sync_layout()
         ui.timer(0.5, auto_tick)
+        ui.timer(0.25, tick_streams)
         ui.timer(0.3, refresh_inbox, once=True)
         render_results()
 

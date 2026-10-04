@@ -537,6 +537,12 @@ def _edit_custom(update, item: dict, load_current: Callable[[], dict]) -> None:
     with ui.context.client.content, ui.dialog() as dialog, ui.card():
         term = ui.input("Expanded term", value=item["term"])
         replacement = ui.input("Replacement", value=item["replacement"])
+        options = _section_options()
+        for name in item.get("sections") or []:
+            options.setdefault(name, name)
+        sections = ui.select(options, multiple=True, value=list(item.get("sections") or []),
+                             label="Only in these sections (empty = wherever abbreviations apply)") \
+            .props("use-chips").classes("min-w-[320px]").mark("abbr-entry-sections")
         def save() -> None:
             new_term = (term.value or "").strip()
             new_replacement = (replacement.value or "").strip()
@@ -553,6 +559,10 @@ def _edit_custom(update, item: dict, load_current: Callable[[], dict]) -> None:
                     entry = {"term": new_term, "replacement": new_replacement, "enabled": item.get("enabled", True)}
                     if acknowledged:
                         entry["acknowledged"] = True
+                    if item.get("pack"):
+                        entry["pack"] = item["pack"]
+                    if sections.value:
+                        entry["sections"] = list(sections.value)
                     group["custom"].append(entry)
                 update(mutate)
                 dialog.close()

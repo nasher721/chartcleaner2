@@ -69,7 +69,10 @@ Tools:
 - `clean_chart`, `abbreviate`, `expand_abbreviations`
 - `render_prompt` (clean, then wrap in a prompt template)
 - `list_presets`, `list_prompt_templates`
-- `ask_chart` (on-device Ollama)
+- `ask_chart` (on-device Ollama; returns a value-by-value check and citations)
+- `chart_insights` (problems, devices, antibiotics/cultures, overnight events, trends)
+- `fill_note_template`, `list_note_templates` (the note itself, filled with the chart's own lines)
+- `clean_patient_list` (split a sign-out or census paste per patient and clean each)
 
 What Claude receives is cleaned according to your rules. Cleaning is not a
 guarantee of de-identification, so treat it as clinical data.
@@ -87,6 +90,10 @@ Routes:
 - `/api/v1/abbreviate`, `/api/v1/expand`
 - `/api/v1/restore` — puts real values back into text with `[[Tn]]` tokens, using the newest saved token map (REST only: the MCP server deliberately has no restore tool, so an AI client can't read the PHI back)
 - `/api/v1/prompt`, with `template`
+- `/api/v1/insights`, with optional `which` (`["problems", "devices", "micro", "overnight", "trends"]`)
+- `/api/v1/note`, with `template` (a note template: `Systems note ([N] [CV] [R] …)`, `Interval note`, …)
+- `/api/v1/patients` — splits a patient list and cleans each patient
+- `/api/v1/daily-note`, with `previous` (yesterday's chart) or `tag` (the bed tag of a stored chart)
 
 The API only answers this computer, rejects requests from web pages, needs the
 token, and caps requests at 5 MB.
@@ -101,6 +108,18 @@ token, and caps requests at 5 MB.
 
 The extension can only reach `127.0.0.1`/`localhost`. It runs nothing on a page
 until you use the menu. Hospital browser policies may block unpacked extensions.
+
+## Daily notes, patient lists and note templates
+```bash
+./clean-chart --tag G20-1                 # compare with the last chart stored for bed G20-1,
+                                          # then store today's for tomorrow (encrypted)
+./clean-chart --daily-note yesterday.txt  # compare with a file instead
+./clean-chart --split-patients            # sign-out / census paste → one cleaned block per patient
+./clean-chart --template "Systems note ([N] [CV] [R] …)"
+./clean-chart --insights                  # overnight events, devices, antibiotics, problems on top
+./clean-chart --check-known-good          # re-check your known-good charts (exit 1 on a change)
+./clean-chart --doctor                    # check the installation (exit 1 when something is broken)
+```
 
 ## Prompts, exports and notes
 - **Copy as prompt** (Clean page) wraps the cleaned chart in a template. Edit
@@ -119,3 +138,7 @@ These can't run on the Linux machine the tests use. Try them once on your own co
 - [ ] The Windows AutoHotkey hotkeys work in Notepad and in Epic.
 - [ ] The browser extension loads unpacked, saves the token, and the right-click menu works on a test page.
 - [ ] The clipboard watcher's macOS notification appears.
+- [ ] `python3 integrations/macos/make_quick_actions.py --self-test` passes on a Mac (it runs each
+      installed Quick Action's command on a sample; `./install.sh --services` runs it too).
+- [ ] Settings → Local AI → **Pull llama3.1** downloads the model with progress (needs Ollama).
+- [ ] An AI summary streams into the drawer and its `[n]` chips jump to the chart line.

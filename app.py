@@ -7,6 +7,7 @@ Pages:
   /stats     Statistics — history dashboard: how much text was cleaned, by what
   /scripts   Scripts    — create and edit custom Python cleaning rules
   /settings  Settings   — output options, NLP status, data management
+  /doctor    Doctor     — checks every dependency and offers a fix for each problem
 
 Run with:  python app.py            (or the platform launcher / double-click helper)
            python app.py --help     for options
@@ -28,6 +29,7 @@ from app_pages import common, updates
 from app_pages.common import *  # noqa: F401,F403 — re-exported for scripts and tests
 from app_pages.batch import batch_page
 from app_pages.clean import clean_page
+from app_pages.doctor import doctor_page
 from app_pages.pipeline import pipeline_page
 from app_pages.rules import text_rules_page
 from app_pages.scripts import scripts_page
@@ -67,6 +69,7 @@ ROUTES = {
     "/stats": stats_page,
     "/scripts": scripts_page,
     "/settings": settings_page,
+    "/doctor": doctor_page,
 }
 for _path, _page in ROUTES.items():
     ui.page(_path)(_page)
@@ -111,6 +114,11 @@ def _warm_nlp_engines() -> None:
         try:
             if os.environ.get("NICEGUI_USER_SIMULATION"):
                 return  # test harness: never pay model-load time
+            try:
+                from chartcleaner.abbreviations import _matcher
+                _matcher()  # the abbreviation matcher is built lazily; build it now
+            except Exception:
+                pass
             cfg = load_config(common.CONFIG_PATH)
             if not bool((cfg.get("nlp_redaction") or {}).get("enabled", True)):
                 return

@@ -49,6 +49,9 @@ BACKUPS_DIR = DATA_DIR / "backups"
 RECENT_DIR = DATA_DIR / "recent"            # encrypted recent inputs (recent_charts.py)
 KNOWN_GOOD_DIR = DATA_DIR / "known_good"    # encrypted regression charts (regression_set.py)
 INBOX_STATE_FILE = DATA_DIR / "inbox_state.json"  # dismissed rule-inbox ids (no chart text)
+EDIT_LOG_FILE = DATA_DIR / "edit_log.enc"    # encrypted lines you deleted from outputs (edit_log.py)
+SIGNING_KEY_FILE = DATA_DIR / "signing_key.enc"     # encrypted Ed25519 key for rule files
+TRUSTED_KEYS_FILE = DATA_DIR / "trusted_keys.json"  # colleagues' public keys (no chart text)
 _MIGRATION_CHECKED = False
 
 
@@ -256,6 +259,8 @@ def summarize(runs: list[dict]) -> dict:
     fact_losses: dict[str, int] = {}
     phi_by_type: dict[str, int] = {}
     stage_totals: dict[str, int] = {}
+    stage_runs: dict[str, int] = {}
+    stage_by_day: dict[str, dict[str, int]] = {}
     by_day: dict[str, dict[str, float]] = {}
 
     for r in runs:
@@ -265,18 +270,25 @@ def summarize(runs: list[dict]) -> dict:
         totals["words_after"] += r.get("words_after", 0) or 0
         totals["duration_ms"] += r.get("duration_ms", 0) or 0
 
+        day = (r.get("ts") or "")[:10]
         for s in r.get("stages", []):
             if s.get("skipped") or s.get("error"):
                 continue
-            delta = (s.get("chars_before", 0) or 0) - (s.get("chars_after", 0) or 0)
+            # batch runs record "before"/"after"; Clean-page runs "chars_before"/"chars_after"
+            before = s.get("chars_before", s.get("before", 0)) or 0
+            after = s.get("chars_after", s.get("after", 0)) or 0
+            delta = before - after
             if delta > 0:
                 label = s.get("label") or s.get("id") or "?"
                 stage_totals[label] = stage_totals.get(label, 0) + delta
+                stage_runs[label] = stage_runs.get(label, 0) + 1
+                if day:
+                    per = stage_by_day.setdefault(day, {})
+                    per[label] = per.get(label, 0) + delta
             for k, v in (s.get("details") or {}).get("phi", {}).items():
                 phi_by_type[k] = phi_by_type.get(k, 0) + int(v)
                 totals["phi"] += int(v)
 
-        day = (r.get("ts") or "")[:10]
         if day:
             bucket = by_day.setdefault(day, {"runs": 0, "chars_removed": 0, "chars_before": 0})
             bucket["runs"] += 1
@@ -299,6 +311,11 @@ def summarize(runs: list[dict]) -> dict:
 
     top_stages = sorted(stage_totals.items(), key=lambda kv: kv[1], reverse=True)[:10]
     days = sorted(by_day)[-30:]
+    all_removed = sum(stage_totals.values()) or 1
+    stage_share = [{"label": label, "removed": n, "share": round(100.0 * n / all_removed, 1),
+                    "runs": stage_runs.get(label, 0),
+                    "avg_per_run": round(n / max(1, stage_runs.get(label, 0)))}
+                   for label, n in sorted(stage_totals.items(), key=lambda kv: -kv[1])]
 
     return {
         **totals,
@@ -309,6 +326,9 @@ def summarize(runs: list[dict]) -> dict:
                                                        / by_day[d]["chars_before"], 1)
                        if by_day[d]["chars_before"] else 0.0} for d in days},
         "fact_losses_by_stage": dict(sorted(fact_losses.items(), key=lambda kv: -kv[1])),
+        # characters each stage removed, per day (noise reduction over time) and overall
+        "stage_by_day": {d: dict(stage_by_day.get(d, {})) for d in days},
+        "stage_share": stage_share,
     }
 
 
@@ -563,6 +583,8 @@ def _chart_data_paths() -> list[Path]:
     paths: list[Path] = _token_map_files()
     if RECENT_DIR.exists():
         paths += list(RECENT_DIR.glob("chart-*.enc"))
+    if EDIT_LOG_FILE.exists():
+        paths.append(EDIT_LOG_FILE)
     if EXPORTS_DIR.exists():
         paths += [p for p in EXPORTS_DIR.iterdir() if p.name != ".gitkeep"]
     if WATCHED_OUT_DIR.exists():

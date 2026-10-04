@@ -6,6 +6,11 @@ Routes (JSON in, JSON out), all backed by :mod:`chartcleaner.service`:
 * ``POST /api/v1/clean`` — ``{"text", "preset"?, "format"?, "delta"?, "trends"?, "wrap"?}``
 * ``POST /api/v1/abbreviate`` / ``/api/v1/expand`` — ``{"text", "preset"?}``
 * ``POST /api/v1/prompt`` — ``{"text", "template", "preset"?}``
+* ``POST /api/v1/insights`` — ``{"text", "which"?: ["problems", "devices", "micro",
+  "overnight", "trends"]}`` (reads the text as given; clean it first)
+* ``POST /api/v1/note`` — ``{"text", "template", "preset"?}`` (fill a note template)
+* ``POST /api/v1/patients`` — ``{"text", "preset"?}`` (split a patient list, clean each)
+* ``POST /api/v1/daily-note`` — ``{"text", "previous"?, "tag"?, "preset"?}``
 
 Guards, in order: the caller must be on this computer (loopback address),
 an ``Origin`` header — if any — must be this app or a browser extension,
@@ -130,6 +135,32 @@ def register(app) -> None:
     @app.post("/api/v1/restore")
     async def api_restore(request: Request):
         return await run(request, ("text",), lambda d: service.restore(str(d["text"])))
+
+    @app.post("/api/v1/insights")
+    async def api_insights(request: Request):
+        def call(d):
+            which = d.get("which")
+            if which is not None and not (isinstance(which, list) and all(isinstance(w, str) for w in which)):
+                raise ValueError("which must be a list of insight names")
+            return service.insights(d["text"], which or None)
+        return await run(request, ("text",), call)
+
+    @app.post("/api/v1/note")
+    async def api_note(request: Request):
+        return await run(request, ("text", "template"), lambda d: service.note(
+            d["text"], d["template"], preset=d.get("preset") or None, source="api:rest"))
+
+    @app.post("/api/v1/patients")
+    async def api_patients(request: Request):
+        return await run(request, ("text",), lambda d: {"patients": service.clean_patients(
+            d["text"], preset=d.get("preset") or None)})
+
+    @app.post("/api/v1/daily-note")
+    async def api_daily_note(request: Request):
+        return await run(request, ("text",), lambda d: service.daily_note(
+            d["text"], d["previous"] if isinstance(d.get("previous"), str) else None,
+            tag=d.get("tag") if isinstance(d.get("tag"), str) else None,
+            preset=d.get("preset") or None, source="api:rest"))
 
     @app.post("/api/v1/prompt")
     async def api_prompt(request: Request):

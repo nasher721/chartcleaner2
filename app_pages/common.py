@@ -75,9 +75,11 @@ from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TES
 from chartcleaner.benchmark import generate as generate_benchmark
 from chartcleaner.evaluate import evaluate as evaluate_samples
 from chartcleaner.evaluate import load_last_evaluation, save_evaluation
-from chartcleaner.local_llm import LocalLlmClient
+from chartcleaner.local_llm import LocalLlmClient, RECOMMENDED_MODEL
+from chartcleaner.local_llm import health as local_llm_health
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
+from chartcleaner.batch import run_texts as run_patient_texts
 from chartcleaner.delta_engine import extract_note_deltas
 from chartcleaner import api as local_api
 from chartcleaner import rule_examples
@@ -85,6 +87,8 @@ from chartcleaner.clipboard_watcher import ClipboardWatcher
 from chartcleaner.exporters import save_to_vault, to_docx, to_markdown, to_smartphrase
 from chartcleaner.prompt_templates import render as render_prompt
 from chartcleaner.prompt_templates import templates as prompt_templates
+from chartcleaner import note_templates as note_templates_mod
+from chartcleaner import patients as patients_mod
 from chartcleaner.rule_health import report as rule_health_report
 from chartcleaner.note_type import LABELS as NOTE_TYPE_LABELS
 from chartcleaner.note_type import detect as detect_note_type
@@ -143,6 +147,7 @@ NAV = [
     ("/stats", "insights", "Statistics"),
     ("/scripts", "code", "Custom Scripts"),
     ("/settings", "settings", "Settings"),
+    ("/doctor", "medical_services", "Doctor"),
 ]
 
 CSS = """
@@ -420,6 +425,40 @@ MOD = "⌘" if sys.platform == "darwin" else "Ctrl"
 # Shortcuts every page has; pages add their own through shell(shortcuts=...).
 GLOBAL_SHORTCUTS = [("mod+k", "Open the command palette"),
                     ("mod+/", "Show keyboard shortcuts")]
+
+
+def highlight_unsupported_html(text: str, facts) -> str:
+    """``text`` as HTML with each value the chart doesn't support marked in red.
+
+    ``facts`` is a :class:`chartcleaner.fact_check.OutputCheck` (or None).
+    """
+    spans = sorted(((u.start, u.end, u.display) for u in (facts.unsupported if facts else [])),
+                   key=lambda x: x[0])
+    out, pos = [], 0
+    for start, end, display in spans:
+        if start < pos:
+            continue
+        out.append(esc(text[pos:start]))
+        out.append(f'<mark class="cc-unsupported" title="Not in the chart: {esc(display)}" '
+                   f'style="background:#fecaca;color:#7f1d1d;border-radius:3px;padding:0 2px">'
+                   f"{esc(text[start:end])}</mark>")
+        pos = end
+    out.append(esc(text[pos:]))
+    return ('<div class="cc-mono text-sm" style="white-space:pre-wrap">' + "".join(out) + "</div>")
+
+
+def facts_badge(facts) -> None:
+    """Badge for an AI output's value-by-value check (fact_check.OutputCheck)."""
+    if facts is None:
+        return
+    if not facts.total:
+        return
+    if facts.ok:
+        ui.badge(f"All {facts.total} values in the chart", color="green").props("outline") \
+            .mark("ai-facts-ok")
+    else:
+        ui.badge(f"{len(facts.unsupported)} value(s) not in the chart", color="red") \
+            .tooltip(facts.headline()).mark("ai-facts-unsupported")
 
 
 def shortcut_label(combo: str) -> str:

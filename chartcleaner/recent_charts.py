@@ -11,18 +11,24 @@ runs are kept here instead:
 * deleted by the retention purge (``prefs.retention_days``) and by
   Settings → *Delete stored chart data now*;
 * off entirely when ``prefs.recent_charts.enabled`` is false.
+
+A chart can carry a **bed tag** (``G20-1``, ``Bed 4``) so the daily-note view,
+trends and deltas follow the patient rather than the paste. The tag is a
+short label stored *inside* the encrypted record — never in a file name.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
 from . import store
 
-__all__ = ["DEFAULTS", "recent_dir", "settings", "remember", "load", "texts", "count", "clear"]
+__all__ = ["DEFAULTS", "recent_dir", "settings", "remember", "load", "texts", "count", "clear",
+           "clean_tag", "set_tag", "tags", "latest_for"]
 
 DEFAULTS = {"enabled": True, "keep": 20}
 MAX_CHARS = 400_000  # a chart bigger than this isn't kept (suggestions don't need it)
@@ -50,7 +56,16 @@ def _files() -> list[Path]:
     return sorted(d.glob("chart-*.enc"), key=lambda p: p.name) if d.exists() else []
 
 
-def remember(text: str, source: str = "", prefs: dict | None = None) -> Path | None:
+_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9 #._/-]{0,23}")
+
+
+def clean_tag(tag: str | None) -> str:
+    """A bed tag as stored: trimmed, at most 24 safe characters ("" when invalid)."""
+    tag = " ".join((tag or "").split())
+    return tag if _TAG.fullmatch(tag) else ""
+
+
+def remember(text: str, source: str = "", prefs: dict | None = None, *, tag: str = "") -> Path | None:
     """Keep ``text`` (encrypted) unless disabled, empty, huge or already the newest."""
     from . import secure_store
 
@@ -59,12 +74,17 @@ def remember(text: str, source: str = "", prefs: dict | None = None) -> Path | N
         return None
     digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
     files = _files()
+    tag = clean_tag(tag)
     if files and files[-1].stem.endswith(digest):
+        if tag:
+            set_tag(files[-1], tag)
         return files[-1]  # the same chart cleaned again
     d = recent_dir()
     d.mkdir(parents=True, exist_ok=True)
     dest = d / f"chart-{time.time_ns():020d}-{digest}.enc"
     record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "source": source, "text": text}
+    if tag:
+        record["tag"] = tag
     secure_store.write_text(dest, json.dumps(record, ensure_ascii=False))
     for old in _files()[:-opts["keep"]]:
         try:
@@ -74,10 +94,14 @@ def remember(text: str, source: str = "", prefs: dict | None = None) -> Path | N
     return dest
 
 
-def load(limit: int | None = None) -> list[dict]:
-    """Newest-first ``{"ts", "source", "text", "file"}``; unreadable files are skipped."""
+def load(limit: int | None = None, *, tag: str | None = None) -> list[dict]:
+    """Newest-first ``{"ts", "source", "text", "file", "tag"?}``; unreadable files are skipped.
+
+    ``tag`` keeps only the charts carrying that bed tag (case-insensitive).
+    """
     from . import secure_store
 
+    want = clean_tag(tag).casefold() if tag else None
     out: list[dict] = []
     for p in reversed(_files()):
         if limit is not None and len(out) >= limit:
@@ -85,10 +109,51 @@ def load(limit: int | None = None) -> list[dict]:
         try:
             data = json.loads(secure_store.read_text(p))
             if isinstance(data, dict) and isinstance(data.get("text"), str):
+                if want is not None and str(data.get("tag") or "").casefold() != want:
+                    continue
                 out.append({**data, "file": str(p)})
         except Exception:
             continue  # encrypted with another machine's key, or damaged
     return out
+
+
+def set_tag(file: str | Path, tag: str) -> bool:
+    """Give a stored chart a bed tag ("" removes it)."""
+    from . import secure_store
+
+    path = Path(file)
+    if path.parent.resolve() != recent_dir().resolve() or not path.exists():
+        return False
+    try:
+        data = json.loads(secure_store.read_text(path))
+    except Exception:
+        return False
+    tag = clean_tag(tag)
+    if tag:
+        data["tag"] = tag
+    else:
+        data.pop("tag", None)
+    secure_store.write_text(path, json.dumps(data, ensure_ascii=False))
+    return True
+
+
+def tags() -> list[str]:
+    """Bed tags in use, most recently used first."""
+    seen: dict[str, str] = {}
+    for rec in load():
+        tag = rec.get("tag")
+        if tag and tag.casefold() not in seen:
+            seen[tag.casefold()] = tag
+    return list(seen.values())
+
+
+def latest_for(tag: str, *, exclude_text: str | None = None) -> dict | None:
+    """The newest stored chart for a bed tag, skipping ``exclude_text`` (today's)."""
+    for rec in load(tag=tag):
+        if exclude_text is not None and rec["text"] == exclude_text:
+            continue
+        return rec
+    return None
 
 
 def texts(limit: int | None = None) -> list[str]:

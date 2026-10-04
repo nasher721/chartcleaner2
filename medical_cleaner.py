@@ -50,6 +50,7 @@ class MedicalCleaner:
             print(f"Invalid config ({path}):\n- " + "\n- ".join(errors), file=sys.stderr)
             sys.exit(1)
         self._custom_dir = _SCRIPT_DIR / "custom_rules"
+        self.mode = mode
         self._wrap = wrap_output
         self._pipeline = Pipeline(self.config, custom_dir=self._custom_dir, mode=mode)
 
@@ -85,6 +86,12 @@ def _print_fact_check(result, limit: int = 5) -> None:
     for x in [x for x in report.losses if x.category != "by_design"][:limit]:
         print(f"    - {x.display} ({x.stage_label}): {x.lines[0][:100] if x.lines else ''}",
               file=sys.stderr)
+    for m in report.meaning[:limit]:
+        print(f"    - {m.message}: {m.before[:60]!r} → {m.after[:60]!r}", file=sys.stderr)
+    for x in report.introduced[:limit]:
+        print(f"    - new value {x.display} ({x.stage_label})", file=sys.stderr)
+    for x in report.implausible_new[:limit]:
+        print(f"    - {x.message}", file=sys.stderr)
 
 
 def _print_audit(audit, limit: int = 10) -> None:
@@ -101,14 +108,15 @@ def _print_audit(audit, limit: int = 10) -> None:
         print(f"    … {len(audit.findings) - limit} more")
 
 
-def _format_output(text: str, delta: bool, fmt: str, trends: bool = False) -> str:
+def _format_output(text: str, delta: bool, fmt: str, trends: bool = False,
+                   insights: bool = False) -> str:
     if fmt in ("smartphrase", "docx"):
-        out, delta_res = format_output(text, "text", delta, trends)
+        out, delta_res = format_output(text, "text", delta, trends, insights)
         if fmt == "smartphrase":
             from chartcleaner.exporters import to_smartphrase
             out = to_smartphrase(out)
     else:
-        out, delta_res = format_output(text, fmt, delta, trends)
+        out, delta_res = format_output(text, fmt, delta, trends, insights)
     if delta_res is not None and delta_res.notes_found > 1:
         print(f"  [Delta Engine] {delta_res.notes_found} notes analyzed: {delta_res.compression_ratio}% copy-forward bloat removed", file=sys.stderr)
     return out
@@ -137,21 +145,77 @@ def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
     if not text.strip():
         print("Nothing to clean.", file=sys.stderr)
         sys.exit(1)
-    result = cleaner.clean_detailed(text)
     if args.format == "docx":
         print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
         sys.exit(1)
-    out = _format_output(result.text, args.delta, args.format, args.trends)
+    if args.split_patients:
+        _emit(args, _split_and_clean(text, cleaner))
+        return
+    result = cleaner.clean_detailed(text)
+    out = _format_output(result.text, args.delta, args.format, args.trends, args.insights)
     if args.prompt:
         from chartcleaner.prompt_templates import render
         out = render(args.prompt, result.text, cleaner.config)
+    if args.template:
+        from chartcleaner.note_templates import render as render_note
+        out = render_note(args.template, result.text, cleaner.config)
+    if args.daily_note or args.tag:
+        out = _daily_note(args, text, result.text, cleaner) or out
+    _emit(args, out)
+    print(f"{result.summary()}", file=sys.stderr)
+    _print_fact_check(result)
+
+
+def _emit(args, out: str) -> None:
     if args.stdout:
         sys.stdout.write(out)
         sys.stdout.flush()
     else:
         pyperclip.copy(out)
-    print(f"{result.summary()}", file=sys.stderr)
-    _print_fact_check(result)
+
+
+def _split_and_clean(text: str, cleaner: "MedicalCleaner") -> str:
+    """Each patient of a list cleaned on its own, under a "=== label ===" line."""
+    from chartcleaner.patients import split
+    from chartcleaner.engine import Pipeline
+    chunks = split(text)
+    pipe = Pipeline(cleaner.config, custom_dir=cleaner._custom_dir, mode=cleaner.mode)
+    parts = []
+    for c in chunks:
+        parts.append(f"=== {c.label} ===\n{pipe.run(c.text, wrap=False).text}")
+    print(f"{len(chunks)} patient(s) cleaned.", file=sys.stderr)
+    return "\n\n".join(parts) + "\n"
+
+
+def _daily_note(args, raw_today: str, cleaned_today: str, cleaner: "MedicalCleaner") -> str | None:
+    """Today's update against --daily-note FILE or the last chart with --tag; remembers today."""
+    from chartcleaner import recent_charts
+    from chartcleaner.daily_note import build
+    from chartcleaner.engine import Pipeline
+    from chartcleaner.service import _unwrap
+
+    previous = None
+    if args.daily_note:
+        try:
+            previous = Path(args.daily_note).expanduser().read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"Could not read {args.daily_note}: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.tag:
+        found = recent_charts.latest_for(args.tag, exclude_text=raw_today)
+        previous = found["text"] if found else None
+    if args.tag:
+        try:
+            recent_charts.remember(raw_today, "cli", tag=args.tag)
+        except Exception:
+            pass  # remembering is a convenience; never fail the run
+    if previous is None:
+        print(f"No earlier chart for bed {args.tag!r} yet — today's chart is now stored for tomorrow.",
+              file=sys.stderr)
+        return None
+    pipe = Pipeline(cleaner.config, custom_dir=cleaner._custom_dir)
+    prev_clean = pipe.run(previous, wrap=False, fact_check=False).text
+    return build(_unwrap(cleaned_today), prev_clean, cleaner.config).to_text()
 
 
 def _run_export_abbreviations(args) -> None:
@@ -172,7 +236,7 @@ def _run_export_abbreviations(args) -> None:
 
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
                  audit: bool = False, delta: bool = False, out_format: str = "text",
-                 trends: bool = False) -> None:
+                 trends: bool = False, insights: bool = False) -> None:
     """Processes a single file (.txt/.md/.docx/.pdf) and saves the output."""
     try:
         from chartcleaner.ingest import IngestError, load_file
@@ -182,7 +246,7 @@ def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
         for w in ing.warnings:
             print(f"  ! {w}", file=sys.stderr)
         result = cleaner.clean_detailed(ing.text)
-        final_text = _format_output(result.text, delta, out_format, trends)
+        final_text = _format_output(result.text, delta, out_format, trends, insights)
 
         ext = {"json": ".json", "xml": ".xml", "markdown": ".md", "docx": ".docx"}.get(out_format, ".txt")
         out_path = output_dir / f"{file_path.stem}_cleaned{ext}"
@@ -281,6 +345,40 @@ def _run_untoken(source: str | None, tokens_file: str | None) -> None:
         print(f"Restored {n} token(s) — text copied back to clipboard.")
 
 
+def _run_doctor() -> int:
+    from chartcleaner import doctor
+    checks = doctor.run_checks()
+    marks = {"ok": "✓", "warn": "!", "fail": "✕", "info": "·"}
+    for c in checks:
+        print(f"{marks.get(c.status, '?')} {c.label}: {c.detail}"
+              + (f"  [fix in the app: Doctor → {c.fix_label}]" if c.fix else ""))
+    print(doctor.summary(checks))
+    return 1 if any(c.status == "fail" for c in checks) else 0
+
+
+def _run_check_known_good(preset: str | None) -> int:
+    """Re-clean every known-good chart; exit status 1 when any output changed."""
+    from chartcleaner import regression_set, store
+    from chartcleaner.service import load_active_config
+
+    try:
+        cfg = load_active_config(preset)
+    except Exception as e:
+        print(f"Could not load {'preset ' + preset if preset else 'config.json'}: {e}", file=sys.stderr)
+        return 2
+    results = regression_set.check(cfg, custom_dir=store.CUSTOM_RULES_DIR)
+    if not results:
+        print("No known-good charts yet — mark one on the Clean page (Mark as known good).")
+        return 0
+    changed = [r for r in results if r.changed]
+    for r in results:
+        print(f"{'✕' if r.changed else '✓'} {r.label}" + (f" — {r.error}" if r.error else ""))
+        for line in r.diff[:20]:
+            print(f"    {line}")
+    print(f"{len(results) - len(changed)} of {len(results)} known-good chart(s) unchanged.")
+    return 1 if changed else 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Clean and structure Epic EMR text for LLMs. "
@@ -318,6 +416,12 @@ def main():
         help="Put lab trends and medication changes across the chart's notes above the output.",
     )
     parser.add_argument(
+        "--insights", action="store_true",
+        help="Put overnight events, lines/drains with day counts, antibiotic days and cultures, "
+             "and a problem-oriented view (chart lines grouped under each A&P problem) above "
+             "the output.",
+    )
+    parser.add_argument(
         "--format", choices=["text", "markdown", "json", "xml", "smartphrase", "docx"], default="text",
         help="Output format: text, markdown, json or xml (structured for LLMs); smartphrase "
              "(plain ASCII that pastes cleanly into Epic); docx (Word; files only).",
@@ -353,7 +457,30 @@ def main():
                         help="Characters typed before each abbreviation (default ';').")
     parser.add_argument("--export-custom-only", action="store_true",
                         help="Export only your own abbreviations, not the bundled dictionary.")
+    parser.add_argument("--template", type=str, metavar="NAME",
+                        help='Fill a note template from the cleaned chart, e.g. "Systems note ([N] '
+                             '[CV] [R] …)", "Interval note", "Problem-oriented note".')
+    parser.add_argument("--daily-note", type=str, metavar="PREVIOUS_FILE",
+                        help="Output today's update (what's new, trends, devices, antibiotics, "
+                             "overnight events) against the previous chart in PREVIOUS_FILE.")
+    parser.add_argument("--tag", type=str, metavar="BED",
+                        help="Bed tag (e.g. G20-1): compare with the last chart stored for this bed "
+                             "and store today's chart (encrypted) for tomorrow.")
+    parser.add_argument("--split-patients", action="store_true",
+                        help="Split a pasted patient list (bed labels, Patient: lines, separators) "
+                             "and clean each patient on its own.")
+    parser.add_argument("--doctor", action="store_true",
+                        help="Check Python, packages, the spaCy model, local AI, encryption, rules, "
+                             "launchers and the data folder; exits 1 when something is broken.")
+    parser.add_argument("--check-known-good", action="store_true",
+                        help="Re-clean your known-good charts with config.json (or --preset) and "
+                             "show any whose output changed; exits 1 when one did.")
     args = parser.parse_args()
+
+    if args.check_known_good:
+        sys.exit(_run_check_known_good(args.preset))
+    if args.doctor:
+        sys.exit(_run_doctor())
 
     if args.export_abbreviations:
         _run_export_abbreviations(args)
@@ -370,7 +497,8 @@ def main():
 
     cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode, preset=args.preset)
 
-    if args.stdin or args.stdout:
+    if (args.stdin or args.stdout or args.daily_note or args.tag or args.split_patients
+            or args.template):
         _run_pipe(args, cleaner)
         return
 
@@ -401,7 +529,7 @@ def main():
         print(f"Batch processing {len(files)} files...")
         for file in tqdm(files, desc="Cleaning Charts"):
             process_file(file, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends)
+                         trends=args.trends, insights=args.insights)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     elif args.file:
@@ -411,7 +539,7 @@ def main():
 
         print(f"Processing {file_path.name}...")
         process_file(file_path, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends)
+                         trends=args.trends, insights=args.insights)
         print(f"Done! Outputs written to: {output_dir.resolve()}")
 
     else:
@@ -426,7 +554,8 @@ def main():
                 sys.exit(1)
             print("Processing clipboard text...")
             result = cleaner.clean_detailed(input_text)
-            final_text = _format_output(result.text, args.delta, args.format, args.trends)
+            final_text = _format_output(result.text, args.delta, args.format, args.trends,
+                                        args.insights)
             if args.prompt:
                 from chartcleaner.prompt_templates import render
                 final_text = render(args.prompt, result.text, cleaner.config)

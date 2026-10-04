@@ -14,6 +14,7 @@ Keyboard Shortcuts → Services → Text).
 
     python3 integrations/macos/make_quick_actions.py            # install / update
     python3 integrations/macos/make_quick_actions.py --uninstall
+    python3 integrations/macos/make_quick_actions.py --self-test   # check installed ones
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import argparse
 import plistlib
 import shlex
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -99,13 +101,77 @@ def uninstall(target: Path = SERVICES) -> int:
     return removed
 
 
+SAMPLE = "Patient with hypertension and atrial fibrillation.\nMRN: 1234567\n"
+
+
+def self_test(target: Path = SERVICES, run=subprocess.run, timeout: float = 120) -> list[dict]:
+    """Check every installed Quick Action the way macOS would run it.
+
+    For each workflow: the bundle and its two plists parse, the service menu
+    entry is present, the ``clean-chart`` it calls exists and is executable,
+    and running its exact shell command on a sample selection exits 0 with
+    text on stdout. Returns one ``{"name", "ok", "detail"}`` row per action.
+    """
+    rows = []
+    for name in ACTIONS:
+        bundle = target / f"{name}.workflow" / "Contents"
+        row = {"name": name, "ok": False, "detail": ""}
+        rows.append(row)
+        try:
+            doc = plistlib.loads((bundle / "document.wflow").read_bytes())
+            info = plistlib.loads((bundle / "Info.plist").read_bytes())
+        except FileNotFoundError:
+            row["detail"] = "not installed — run without --self-test first"
+            continue
+        except Exception as exc:
+            row["detail"] = f"workflow files don't parse: {exc}"
+            continue
+        services = info.get("NSServices") or []
+        if not services or services[0].get("NSMenuItem", {}).get("default") != name:
+            row["detail"] = "Info.plist has no matching Services menu item"
+            continue
+        try:
+            command = doc["actions"][0]["action"]["ActionParameters"]["COMMAND_STRING"]
+        except (KeyError, IndexError, TypeError):
+            row["detail"] = "workflow has no shell command"
+            continue
+        cli = Path(shlex.split(command)[0])
+        if not cli.is_file():
+            row["detail"] = f"{cli} is missing — re-run the installer from the moved folder"
+            continue
+        if not cli.stat().st_mode & 0o111:
+            row["detail"] = f"{cli} is not executable (chmod +x it)"
+            continue
+        try:
+            done = run(["/bin/bash", "-c", command], input=SAMPLE, capture_output=True,
+                       text=True, timeout=timeout)
+        except Exception as exc:
+            row["detail"] = f"could not run: {exc}"
+            continue
+        if done.returncode != 0:
+            last = ((done.stderr or done.stdout or "").strip().splitlines() or ["failed"])[-1]
+            row["detail"] = f"exit {done.returncode}: {last}"
+        elif not (done.stdout or "").strip():
+            row["detail"] = "ran but returned no text"
+        else:
+            row.update(ok=True, detail=f"ok — {len(done.stdout.strip())} characters back")
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--uninstall", action="store_true")
+    parser.add_argument("--self-test", action="store_true",
+                        help="run each installed Quick Action's command on a sample and report")
     args = parser.parse_args()
     if args.uninstall:
         print(f"Removed {uninstall()} Quick Action(s).")
         return
+    if args.self_test:
+        rows = self_test()
+        for row in rows:
+            print(f"{'✓' if row['ok'] else '✕'} {row['name']}: {row['detail']}")
+        raise SystemExit(0 if all(r["ok"] for r in rows) else 1)
     for path in install():
         print(f"Installed {path.name}")
     print("Assign shortcuts in System Settings → Keyboard → Keyboard Shortcuts → Services → Text.")

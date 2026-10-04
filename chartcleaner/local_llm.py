@@ -25,9 +25,13 @@ __all__ = [
     "LocalLlmClient",
     "verify_clinical_grounding",
     "DEFAULT_OLLAMA_URL",
+    "RECOMMENDED_MODEL",
+    "health",
 ]
 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+# Good clinical summaries on a laptop, ~5 GB; what the Settings "pull" button offers.
+RECOMMENDED_MODEL = "llama3.1"
 
 _NUMBER_OR_DOSE_RE = re.compile(
     r"\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|cc|units?|mEq|mmol|%|bpm|mmhg)?)\b",
@@ -143,6 +147,90 @@ class LocalLlmClient:
         except Exception:
             return []
 
+    def version(self) -> str:
+        """Ollama's version string ("" when unknown)."""
+        try:
+            req = urllib.request.Request(f"{self.base_url}/api/version", method="GET")
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                return str(json.loads(resp.read().decode("utf-8")).get("version") or "")
+        except Exception:
+            return ""
+
+    def model_details(self) -> list[dict]:
+        """``[{"name", "size_gb", "modified", "family", "parameters"}]`` for pulled models."""
+        try:
+            req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return []
+        out = []
+        for m in data.get("models", []):
+            details = m.get("details") or {}
+            out.append({"name": m.get("name", ""),
+                        "size_gb": round((m.get("size") or 0) / 1e9, 1),
+                        "modified": str(m.get("modified_at") or "")[:10],
+                        "family": details.get("family", ""),
+                        "parameters": details.get("parameter_size", "")})
+        return out
+
+    def pull(self, model: str, on_progress=None) -> bool:
+        """Download ``model`` through Ollama; ``on_progress(status, fraction|None)``.
+
+        Model names only go to the local daemon (loopback-guarded), which
+        fetches the weights itself. Returns True when Ollama reports success.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,80}", model or ""):
+            raise ValueError(f"not a model name: {model!r}")
+        data = json.dumps({"model": model, "stream": True}).encode("utf-8")
+        req = urllib.request.Request(f"{self.base_url}/api/pull", data=data,
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        ok = False
+        with urllib.request.urlopen(req, timeout=max(self.timeout, 3600)) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if msg.get("error"):
+                    raise RuntimeError(str(msg["error"]))
+                status = str(msg.get("status") or "")
+                total, done = msg.get("total"), msg.get("completed")
+                fraction = (done / total) if total and done is not None else None
+                if on_progress is not None:
+                    on_progress(status, fraction)
+                if status == "success":
+                    ok = True
+        return ok
+
+    def generate_stream(self, prompt: str, model: str = "llama3.2", system: str | None = None):
+        """Yield the answer piece by piece as the model writes it (Ollama streaming)."""
+        payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": True}
+        if system:
+            payload["system"] = system
+        req = urllib.request.Request(
+            f"{self.base_url}/api/generate", data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if msg.get("error"):
+                    raise RuntimeError(str(msg["error"]))
+                piece = msg.get("response") or ""
+                if piece:
+                    yield piece
+                if msg.get("done"):
+                    break
+
     def generate(
         self,
         prompt: str,
@@ -184,3 +272,37 @@ class LocalLlmClient:
         summary = self.generate(deidentified_chart, model=model, system=system_prompt)
         grounding = verify_clinical_grounding(deidentified_chart, summary)
         return summary, grounding
+
+
+def health(base_url: str = DEFAULT_OLLAMA_URL, client: Any = None) -> dict:
+    """What the Settings "Local AI" card and the Doctor page show.
+
+    ``{"base_url", "loopback", "reachable", "version", "models": [...],
+    "recommended": name, "has_recommended", "error"}`` — never raises.
+    """
+    out: dict[str, Any] = {"base_url": base_url, "loopback": False, "reachable": False,
+                           "version": "", "models": [], "recommended": RECOMMENDED_MODEL,
+                           "has_recommended": False, "error": ""}
+    try:
+        client = client or LocalLlmClient(base_url, timeout=3.0)
+        out["loopback"] = True
+    except ValueError as exc:
+        out["error"] = str(exc)
+        return out
+    try:
+        out["reachable"] = bool(client.is_available())
+        if not out["reachable"]:
+            out["error"] = "Ollama is not running (start it, or install it from ollama.com)"
+            return out
+        version = getattr(client, "version", None)
+        out["version"] = version() if callable(version) else ""
+        details = getattr(client, "model_details", None)
+        models = details() if callable(details) else [{"name": n} for n in client.list_models()]
+        out["models"] = models
+        out["has_recommended"] = any(str(m.get("name", "")).split(":")[0] == RECOMMENDED_MODEL
+                                     for m in models)
+        if not models:
+            out["error"] = f"No models pulled yet — pull {RECOMMENDED_MODEL} to start"
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out

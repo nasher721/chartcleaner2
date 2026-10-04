@@ -8,6 +8,11 @@ Runs over stdio only — no network port is opened. Tools wrap
 * ``render_prompt`` — clean, then wrap in a prompt template
 * ``list_presets`` / ``list_prompt_templates``
 * ``ask_chart`` — grounded question via the on-device LLM (Ollama)
+* ``chart_insights`` — problem-oriented view, devices, antibiotics/cultures,
+  overnight events and trends
+* ``fill_note_template`` / ``list_note_templates`` — the note itself, filled
+  with the chart's own lines ([N] [CV] [R] … systems, problems, devices)
+* ``clean_patient_list`` — split a sign-out / census paste per patient and clean each
 
 Start it with ``clean-chart-mcp`` (``clean-chart-mcp.cmd`` on Windows); see
 docs/integrations.md for Claude Desktop / Claude Code setup.
@@ -87,8 +92,41 @@ def ask_chart(text: str, question: str) -> dict[str, Any]:
     return service.ask(question, text)
 
 
+def chart_insights(text: str, which: str = "") -> dict[str, Any]:
+    """Read a (cleaned) chart for: problems (each A&P problem with the chart lines about
+    it), devices (lines/drains/airway with day counts), micro (antibiotic days and
+    culture results), overnight (events since the evening) and trends (labs, scores,
+    medication changes across notes). ``which`` is a comma-separated subset; empty = all."""
+    names = [w.strip() for w in which.split(",") if w.strip()] or None
+    return service.insights(text, names)
+
+
+def fill_note_template(text: str, template: str, preset: str = "") -> str:
+    """Clean a chart and fill one of the user's note templates (see list_note_templates)
+    with the chart's own lines — e.g. "Systems note ([N] [CV] [R] …)"."""
+    return service.note(text, template, preset=preset or None, source="api:mcp")["text"]
+
+
+def list_note_templates() -> list[str]:
+    """Note templates available to fill_note_template."""
+    from .note_templates import templates as note_templates
+    try:
+        cfg = service.load_active_config()
+    except Exception:
+        cfg = {}
+    return [t["name"] for t in note_templates(cfg)]
+
+
+def clean_patient_list(text: str, preset: str = "") -> list[dict[str, Any]]:
+    """Split a multi-patient paste (bed labels like G20-1, Patient: lines, separators)
+    and clean each patient on its own. Returns label, cleaned text and status per patient."""
+    out = service.clean_patients(text, preset=preset or None)
+    return [{k: p[k] for k in ("label", "status", "text", "error")} for p in out]
+
+
 TOOLS = (clean_chart, abbreviate, expand_abbreviations, render_prompt, list_presets,
-         list_prompt_templates, ask_chart)
+         list_prompt_templates, ask_chart, chart_insights, fill_note_template, list_note_templates,
+         clean_patient_list)
 
 
 def build_server():

@@ -83,6 +83,25 @@ def _settings(cfg: dict | None) -> tuple[set[str], list[dict[str, Any]]]:
     return disabled, custom
 
 
+def _entry_sections(cfg: dict | None) -> dict[str, tuple[str, ...]]:
+    """Custom terms limited to named sections: term (casefolded) -> section names."""
+    group = cfg.get("abbreviations", {}) if isinstance(cfg, dict) else {}
+    out: dict[str, tuple[str, ...]] = {}
+    for item in group.get("custom", []) if isinstance(group, dict) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("term"), str):
+            continue
+        names = _clean_sections(item.get("sections"))
+        if names:
+            out[item["term"].strip().casefold()] = tuple(names)
+    return out
+
+
+def _clean_sections(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [x.strip() for x in value if isinstance(x, str) and x.strip()]
+
+
 def normalize_settings(group: dict | None) -> dict:
     """Normalize the portable abbreviation settings contract."""
     group = group if isinstance(group, dict) else {}
@@ -109,6 +128,9 @@ def normalize_settings(group: dict | None) -> dict:
                 entry["acknowledged"] = True
             if isinstance(item.get("pack"), str) and item["pack"].strip():
                 entry["pack"] = item["pack"].strip()
+            sections = _clean_sections(item.get("sections"))
+            if sections:
+                entry["sections"] = sections  # only abbreviate inside these sections
             custom.append(entry)
             seen.add(term.casefold())
     out: dict[str, Any] = {"disabled": disabled, "custom": custom}
@@ -141,7 +163,8 @@ def _normalize_scope(scope: Any) -> dict | None:
 
 
 @lru_cache(maxsize=32)
-def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None], int, dict[str, str]]:
+def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None], int, dict[str, str],
+                                         dict[str, str]]:
     options = json.loads(settings) if settings else {"disabled": [], "custom": []}
     disabled = set(options.get("disabled", []))
     custom = options.get("custom", [])
@@ -196,29 +219,47 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
             if active:
                 custom_terms[alias] = item["term"] if alias == key else alias
 
+    custom_owner = {}
+    for item in custom:
+        key = item["term"].casefold()
+        for alias in aliases_by_source.get(key, {key}):
+            custom_owner[alias] = key
     parts = []
     custom_groups = {}
+    group_terms = {}  # group name -> the custom entry's term (casefolded)
     for term in sorted(by_term, key=len, reverse=True):
         if term in custom_terms:
             name = f"custom_{len(custom_groups)}"
             custom_groups[name] = by_term[term]
+            group_terms[name] = custom_owner.get(term, term)
             parts.append(f"(?P<{name}>(?i:{re.escape(custom_terms[term])}))")
         else:
             parts.append(f"(?ai:{re.escape(term)})")
     pattern = re.compile(r"(?<!\w)(?:" + "|".join(parts) + r")(?!\w)") if parts else re.compile(r"(?!x)x")
-    return pattern, by_term, len(rows), custom_groups
+    return pattern, by_term, len(rows), custom_groups, group_terms
 
 
-SOURCE_ROW_COUNT = _matcher()[2]
+def __getattr__(name: str):
+    # Built on first use: compiling the ~1,000-term matcher costs ~50 ms, which
+    # the CLI, hotkeys and app start shouldn't pay before anything is abbreviated.
+    if name == "SOURCE_ROW_COUNT":
+        return _matcher()[2]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
-                     offset: int = 0, full: str | None = None) -> tuple[str, dict[str, int], int]:
-    """Abbreviate one stretch of text; change positions are reported in ``full``."""
+                     offset: int = 0, full: str | None = None,
+                     allowed: dict[str, list[tuple[int, int]]] | None = None,
+                     ) -> tuple[str, dict[str, int], int]:
+    """Abbreviate one stretch of text; change positions are reported in ``full``.
+
+    ``allowed`` maps a section-limited custom term to the spans of ``full``
+    where it may apply; elsewhere that term is left as written.
+    """
     full = segment if full is None else full
     disabled, custom = _settings(cfg)
     settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
-    pattern, replacements, row_count, custom_groups = _matcher(settings)
+    pattern, replacements, row_count, custom_groups, group_terms = _matcher(settings)
     counts: dict[str, int] = {}
 
     def replace(match: re.Match[str]) -> str:
@@ -226,6 +267,10 @@ def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
                        else replacements[match.group(0).casefold()])
         if replacement is None:
             return match.group(0)
+        if allowed and match.lastgroup and group_terms.get(match.lastgroup) in allowed:
+            pos = offset + match.start()
+            if not any(a <= pos < b for a, b in allowed[group_terms[match.lastgroup]]):
+                return match.group(0)
         counts[replacement] = counts.get(replacement, 0) + 1
         if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
             start = offset + match.start()
@@ -268,15 +313,22 @@ def abbreviate(text: str, cfg: dict | None = None,
                changes: list[dict] | None = None) -> tuple[str, int, dict]:
     """Replace whole expanded medical terms in one non-cascading pass.
 
-    Honors ``abbreviations.scope`` (only/except named sections). When
+    Honors ``abbreviations.scope`` (only/except named sections) and a custom
+    entry's own ``sections`` (that term is abbreviated only inside them). When
     ``changes`` is a list, each replacement is recorded in it (and returned
     as ``details["changes"]``) for the app's inspect views.
     """
     group = cfg.get("abbreviations") if isinstance(cfg, dict) else None
     scope = _normalize_scope(group.get("scope")) if isinstance(group, dict) else None
     details: dict[str, Any] = {}
+    allowed: dict[str, list[tuple[int, int]]] = {}
+    span_cache: dict[tuple[str, ...], list[tuple[int, int]]] = {}
+    for term, names in _entry_sections(cfg).items():
+        if names not in span_cache:
+            span_cache[names] = scoped_spans(text, {"mode": "only", "sections": list(names)}) or []
+        allowed[term] = span_cache[names]
     if scope is None:
-        result, counts, row_count = _abbreviate_span(text, cfg, changes)
+        result, counts, row_count = _abbreviate_span(text, cfg, changes, allowed=allowed)
     else:
         spans = scoped_spans(text, scope)
         if spans is None:
@@ -285,11 +337,12 @@ def abbreviate(text: str, cfg: dict | None = None,
             details["note"] = "No section headers found."
         parts: list[str] = []
         counts = {}
-        row_count = SOURCE_ROW_COUNT
+        row_count = _matcher()[2]
         pos = 0
         for start, end in spans:
             parts.append(text[pos:start])
-            segment, seg_counts, row_count = _abbreviate_span(text[start:end], cfg, changes, start, text)
+            segment, seg_counts, row_count = _abbreviate_span(text[start:end], cfg, changes, start, text,
+                                                              allowed=allowed)
             parts.append(segment)
             for key, n in seg_counts.items():
                 counts[key] = counts.get(key, 0) + n
