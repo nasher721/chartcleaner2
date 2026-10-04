@@ -322,6 +322,28 @@ def test_archive_rejects_complete_symlink_escape_graph_and_loops(tmp_path, links
     assert not (tmp_path / "created").exists()
 
 
+def test_archive_rejects_dotdot_after_a_name_in_a_link(tmp_path):
+    # POSIX and Windows resolve "a/up/.." differently, so the text alone must be refused,
+    # even when it would land inside the folder here; leading ".." stays allowed.
+    for link, ok in (("d/../e", False), ("d/x/../e", False), ("./d/..", False),
+                     ("../d/e", True), ("d/e", True)):
+        archive = tmp_path / "dotdot.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("d/e", b"x")
+            zf.writestr("top/e", b"x")
+            zf.writestr("top/d/e", b"x")
+            zf.writestr("top/d/x/", b"")
+            info = zipfile.ZipInfo("top/link")
+            info.external_attr = 0o120777 << 16
+            zf.writestr(info, link)
+        out = tmp_path / f"out-{abs(hash(link))}"
+        if ok:
+            safe_extract_archive(archive, out)
+        else:
+            with pytest.raises(UpdateError, match="unsafe_archive"):
+                safe_extract_archive(archive, out)
+
+
 def test_archive_retains_framework_link_graph(tmp_path):
     archive = tmp_path / "framework.zip"
     with zipfile.ZipFile(archive, "w") as zf:

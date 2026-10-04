@@ -176,6 +176,12 @@ def safe_extract_archive(archive: Path, destination: Path) -> None:
                     normalized = posixpath.normpath(posixpath.join(posixpath.dirname(raw_name), win_target))
                     if ("\x00" in link_text or win_target.startswith("/") or re.match(r"^[A-Za-z]:", win_target) or normalized == ".." or normalized.startswith("../")):
                         raise UpdateError("unsafe_archive")
+                    # ".." after a name ("a/up/..") means different places on different
+                    # systems: POSIX follows "up" first if it is a link, Windows drops
+                    # "up/.." as text. Only leading ".." segments are allowed.
+                    parts = [p for p in win_target.split("/") if p not in ("", ".")]
+                    if ".." in parts[next((i for i, p in enumerate(parts) if p != ".."), len(parts)):]:
+                        raise UpdateError("unsafe_archive")
                     links.append((destination / raw_name, link_text, mode & 0o7777))
                     continue
                 if info.is_dir() or file_type == 0o040000:
