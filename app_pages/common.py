@@ -155,6 +155,11 @@ CSS = """
 .cc-rep { background: rgba(255, 190, 40, 0.18); }
 .cc-flag { background: rgba(245, 158, 11, 0.16); box-shadow: inset 3px 0 0 #f59e0b; }
 .cc-diff-left { border-right: 1px solid rgba(128,128,128,0.35); }
+.cc-click { cursor: pointer; border-radius: 3px; }
+.cc-gone { text-decoration: line-through; text-decoration-color: rgba(220,38,38,.7); background: rgba(255,60,60,.18); }
+.cc-abbr { background: rgba(99,102,241,.18); border-bottom: 1px dotted #6366f1; }
+.cc-click:hover { outline: 2px solid #f59e0b; }
+.cc-spark td { padding: 2px 8px; }
 </style>
 """
 
@@ -316,19 +321,289 @@ def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> st
             + "".join(rows) + "</table>")
 
 
+REVIEW_CLICK_JS = ("(e) => { const t = e.target.closest('[data-cc]'); "
+                   "if (t) emit(t.dataset.cc); }")
+
+
+def _wrap_fragments(line: str, fragments: list[tuple[str, str, str]]) -> str:
+    """Escape ``line`` and wrap each (text, key, css) fragment's first occurrence."""
+    spans: list[tuple[int, int, str, str]] = []
+    for frag, key, css in sorted(fragments, key=lambda f: -len(f[0])):
+        if not frag:
+            continue
+        if css == "cc-abbr":
+            m = re.search(r"(?<![\w])" + re.escape(frag) + r"(?![\w])", line)
+            pos = m.start() if m else -1
+        else:
+            pos = line.find(frag)
+        while pos >= 0 and any(a < pos + len(frag) and pos < b for a, b, _k, _c in spans):
+            pos = line.find(frag, pos + 1)
+        if pos >= 0:
+            spans.append((pos, pos + len(frag), key, css))
+    out, cursor = [], 0
+    for a, b, key, css in sorted(spans):
+        out.append(esc(line[cursor:a]))
+        out.append(f"<span class='{css} cc-click' data-cc='{key}' title='Click for details'>"
+                   f"{esc(line[a:b])}</span>")
+        cursor = b
+    out.append(esc(line[cursor:]))
+    return "".join(out)
+
+
+def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
+                     groups: list[dict]) -> str:
+    """Side-by-side diff where every tracked change is clickable.
+
+    ``groups`` (built by the Clean page) are ``{"kind": "removal"|"replace"|"abbr",
+    "before", "after", ...}``; removed/replaced text on the left and applied
+    abbreviations on the right carry ``data-cc="g<index>"``.
+    """
+    if len(before) + len(after) > 600_000:
+        return "<p>Diff too large to display (use a smaller input).</p>"
+    flagged = flag_lines or set()
+    left_frags: list[tuple[str, str, str]] = []
+    right_frags: list[tuple[str, str, str]] = []
+    for i, g in enumerate(groups):
+        if g["kind"] == "abbr":
+            right_frags.append((g["after"], f"g{i}", "cc-abbr"))
+            continue
+        for b in g.get("befores", [g.get("before", "")]):
+            for piece in str(b).split("\n"):
+                piece = piece.strip()
+                if len(piece) >= 2:
+                    left_frags.append((piece, f"g{i}", "cc-gone"))
+
+    def left(line: str) -> str:
+        frags = [f for f in left_frags if f[0] in line]
+        return _wrap_fragments(line, frags) if frags else esc(line)
+
+    def right(line: str) -> str:
+        frags = [f for f in right_frags if f[0] in line]
+        return _wrap_fragments(line, frags) if frags else esc(line)
+
+    a_lines, b_lines = before.splitlines(), after.splitlines()
+    sm = difflib.SequenceMatcher(a=a_lines, b=b_lines, autojunk=False)
+    rows: list[str] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                jl = j1 + k
+                cls = " cc-flag" if (jl + 1) in flagged else ""
+                rows.append(f"<tr><td class='cc-diff-left'>{esc(a_lines[i1 + k])}</td>"
+                            f"<td class='{cls.strip()}'>{esc(b_lines[jl])}</td></tr>")
+        elif tag == "delete":
+            for k in range(i1, i2):
+                rows.append(f"<tr><td class='cc-diff-left cc-del'>{left(a_lines[k])}</td><td></td></tr>")
+        elif tag == "insert":
+            for k in range(j1, j2):
+                cls = "cc-ins cc-flag" if (k + 1) in flagged else "cc-ins"
+                rows.append(f"<tr><td class='cc-diff-left'></td><td class='{cls}'>{right(b_lines[k])}</td></tr>")
+        else:
+            n = max(i2 - i1, j2 - j1)
+            for k in range(n):
+                lt = left(a_lines[i1 + k]) if i1 + k < i2 else ""
+                rt = right(b_lines[j1 + k]) if j1 + k < j2 else ""
+                jl = j1 + k
+                cls = "cc-ins cc-flag" if (jl + 1) in flagged else "cc-ins"
+                rows.append(f"<tr><td class='cc-diff-left cc-del'>{lt}</td><td class='{cls}'>{rt}</td></tr>")
+    return ("<table class='cc-diff' style='width:100%; border-collapse:collapse'>"
+            + "".join(rows) + "</table>")
+
+
+# ---------------------------------------------------------------------------
+# keyboard shortcuts and the command palette (⌘K / Ctrl+K)
+# ---------------------------------------------------------------------------
+
+MOD = "⌘" if sys.platform == "darwin" else "Ctrl"
+# Shortcuts every page has; pages add their own through shell(shortcuts=...).
+GLOBAL_SHORTCUTS = [("mod+k", "Open the command palette"),
+                    ("mod+/", "Show keyboard shortcuts")]
+
+
+def shortcut_label(combo: str) -> str:
+    parts = combo.split("+")
+    names = {"mod": MOD, "shift": "Shift", "alt": "Alt", "enter": "Enter", "/": "/"}
+    return "+".join(names.get(p.lower(), p.upper()) for p in parts)
+
+
+def shortcut_matches(combo: str, e) -> bool:
+    """True when key event ``e`` is ``combo`` (e.g. "mod+shift+c", "alt+1")."""
+    parts = [p.lower() for p in combo.split("+")]
+    key = parts[-1]
+    mods = e.modifiers
+    want_mod = "mod" in parts
+    if want_mod != bool(mods.ctrl or mods.meta):
+        return False
+    if ("shift" in parts) != bool(mods.shift) or ("alt" in parts) != bool(mods.alt):
+        return False
+    name = (e.key.name or "").lower()
+    code = (e.key.code or "").lower()
+    if key == "enter":
+        return name == "enter"
+    if key == "/":
+        return name in ("/", "?") or code == "slash"
+    if key.isdigit():
+        return code == f"digit{key}" or name == key
+    return name == key or code == f"key{key}"
+
+
+def apply_preset(name: str) -> bool:
+    """Make preset ``name`` the current rules (config.json); False if refused."""
+    try:
+        cfg = store.load_preset(name)
+        perrs, _ = validate_config(cfg)
+        if perrs:
+            ui.notify("Preset has invalid rules: " + "; ".join(perrs[:3]), type="negative")
+            return False
+        save_config(cfg, CONFIG_PATH)
+        PREFS.update(last_preset=name)
+        save_prefs()
+        ui.notify(f"Preset '{name}' applied.", type="positive")
+        return True
+    except Exception as ex:
+        ui.notify(f"Could not apply preset: {ex}", type="negative")
+        return False
+
+
+def open_shortcuts_dialog(shortcuts: list[tuple[str, str]]) -> None:
+    with ui.dialog() as dlg, ui.card().classes("w-[440px] gap-1"):
+        ui.label("Keyboard shortcuts").classes("text-lg font-semibold")
+        for combo, desc in list(GLOBAL_SHORTCUTS) + list(shortcuts):
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label(desc).classes("text-sm")
+                ui.badge(shortcut_label(combo), color="blue-grey").props("outline")
+        ui.label("Shortcuts work while typing in the chart box too.").classes("text-xs opacity-60 mt-1")
+        ui.button("Close", on_click=dlg.close).props("flat")
+    dlg.on("hide", dlg.delete)
+    dlg.open()
+
+
+def palette_commands(extra: list[dict] | None = None) -> list[dict]:
+    """Every command the palette offers: ``{"label", "icon", "run", "group"}``."""
+    cmds: list[dict] = list(extra or [])
+    for path, icon, label in NAV:
+        cmds.append({"label": f"Go to {label}", "icon": icon, "group": "Pages",
+                     "run": lambda p=path: ui.navigate.to(p)})
+    for name in store.list_presets():
+        cmds.append({"label": f"Use preset: {name}", "icon": "inventory_2", "group": "Presets",
+                     "run": lambda n=name: apply_preset(n) and ui.navigate.reload()})
+    cmds.append({"label": "Clipboard watcher settings", "icon": "content_paste_search",
+                 "group": "Settings", "run": lambda: ui.navigate.to("/settings")})
+    return cmds
+
+
+def open_command_palette(extra: list[dict] | None = None) -> None:
+    commands = palette_commands(extra)
+    with ui.dialog().props("position=top") as dlg, ui.card().classes("w-[560px] gap-1 mt-16"):
+        query = ui.input(placeholder="Type a command…").props("autofocus outlined dense clearable") \
+            .classes("w-full").mark("palette-input")
+        listing = ui.column().classes("w-full gap-0 max-h-[50vh] overflow-auto")
+        shown: list[dict] = []
+
+        def choose(cmd: dict) -> None:
+            dlg.close()
+            result = cmd["run"]()
+            if asyncio.iscoroutine(result):
+                asyncio.get_running_loop().create_task(result)
+
+        def draw() -> None:
+            q = (query.value or "").casefold().split()
+            shown[:] = [c for c in commands if all(w in c["label"].casefold() for w in q)][:40]
+            listing.clear()
+            with listing:
+                if not shown:
+                    ui.label("No matching command.").classes("text-sm opacity-60 p-2")
+                for c in shown:
+                    with ui.item(on_click=lambda c=c: choose(c)).classes("w-full rounded"):
+                        with ui.item_section().props("avatar"):
+                            ui.icon(c.get("icon") or "chevron_right")
+                        with ui.item_section():
+                            ui.item_label(c["label"])
+                        with ui.item_section().props("side"):
+                            ui.item_label(c.get("group", "")).props("caption")
+
+        query.on_value_change(lambda _: draw())
+        query.on("keydown.enter", lambda: shown and choose(shown[0]))
+        draw()
+    dlg.on("hide", dlg.delete)
+    dlg.open()
+
+
+def _status_strip() -> None:
+    """Header chips: active preset, clipboard watcher, local AI, stored-data protection."""
+    with ui.row().classes("items-center gap-1 flex-nowrap").mark("status-strip"):
+        preset = PREFS.get("last_preset") or ""
+        ui.chip(preset or "current rules", icon="inventory_2", color="white", text_color="primary",
+                on_click=lambda: ui.navigate.to("/pipeline")).props("dense outline") \
+            .tooltip("Rule preset in use — click to edit the pipeline")
+        watcher = CLIPBOARD_WATCHER.get("watcher")
+        on = bool(watcher is not None and watcher.running)
+        ui.chip("watcher on" if on else "watcher off", icon="content_paste_search",
+                color="white", text_color="green" if on else "grey",
+                on_click=lambda: ui.navigate.to("/settings")).props("dense outline") \
+            .tooltip("Clipboard watcher — click for settings")
+        ai_chip = ui.chip("AI …", icon="psychology", color="white", text_color="grey") \
+            .props("dense outline").tooltip("Local AI (Ollama) status")
+        ui.chip("encrypted", icon="lock", color="white", text_color="teal",
+                on_click=lambda: ui.navigate.to("/settings")).props("dense outline") \
+            .tooltip("Stored chart data (token maps, recent charts) is encrypted on this computer")
+
+    async def probe() -> None:
+        if os.environ.get("NICEGUI_USER_SIMULATION"):
+            ai_chip.set_text("AI ?")
+            return
+        try:
+            from chartcleaner.summarizer import merge_llm_config
+
+            def work():
+                opts = merge_llm_config(load_config(CONFIG_PATH))
+                client = LocalLlmClient(str(opts["base_url"]), timeout=0.6)
+                models = client.list_models() if client.is_available() else []
+                return str(opts["model"] or (models[0] if models else "")), bool(models)
+
+            model, up = await run.io_bound(work)
+        except Exception:
+            model, up = "", False
+        try:
+            ai_chip.set_text(model.split(":")[0] if up and model else "AI off")
+            ai_chip.props(f"text-color={'green' if up else 'grey'}")
+        except Exception:
+            pass  # the page may be gone
+
+    ui.timer(0.2, probe, once=True)
+
+
 @contextmanager
-def shell(title: str, active: str):
+def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] | None = None,
+          shortcuts: list[tuple[str, str, object]] | None = None, actions=None):
+    """Page frame: header (status strip, palette), menu, footer and content column.
+
+    ``commands`` are extra palette entries; ``shortcuts`` are
+    ``(combo, description, callback)``; ``actions`` is a callable that adds
+    page-specific header buttons.
+    """
     ui.add_head_html(CSS)
     dark = ui.dark_mode(bool(PREFS.get("dark", True)))
+    page_shortcuts = list(shortcuts or [])
 
     with ui.header().classes("items-center justify-between"):
-        with ui.row().classes("items-center gap-2"):
+        with ui.row().classes("items-center gap-2 flex-nowrap"):
             ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round aria-label='Toggle menu'")
             ui.icon("health_and_safety").classes("text-2xl")
             ui.label("Chart Cleaner").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
             ui.badge(f"v{__version__}", color="blue-grey").props("outline")
-        ui.switch("Dark", value=dark.value,
-                  on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
+        with ui.row().classes("items-center gap-2 flex-nowrap"):
+            _status_strip()
+            if actions is not None:
+                actions()
+            ui.button(icon="search", on_click=lambda: open_command_palette(commands)) \
+                .props("flat round aria-label='Command palette'").mark("palette-button") \
+                .tooltip(f"Command palette ({MOD}+K)")
+            ui.button(icon="keyboard", on_click=lambda: open_shortcuts_dialog(
+                [(c, d) for c, d, _ in page_shortcuts])) \
+                .props("flat round aria-label='Keyboard shortcuts'").tooltip(f"Keyboard shortcuts ({MOD}+/)")
+            ui.switch("Dark", value=dark.value,
+                      on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
 
     with ui.left_drawer(fixed=True, value=None).classes("bg-grey-1 dark:bg-grey-10") as drawer:
         ui.label("Menu").classes("text-xs uppercase opacity-60 ml-2")
@@ -342,7 +617,29 @@ def shell(title: str, active: str):
         ui.label("Runs entirely on this computer — 127.0.0.1 only. Not a guarantee of "
                  "de-identification; review output before sharing.")
 
-    with ui.column().classes("w-full max-w-[1150px] mx-auto p-6 gap-4"):
+    def on_key(e) -> None:
+        if not e.action.keydown or e.action.repeat:
+            return
+        try:
+            if shortcut_matches("mod+k", e):
+                open_command_palette(commands)
+                return
+            if shortcut_matches("mod+/", e):
+                open_shortcuts_dialog([(c, d) for c, d, _ in page_shortcuts])
+                return
+            for combo, _desc, callback in page_shortcuts:
+                if shortcut_matches(combo, e):
+                    result = callback()
+                    if asyncio.iscoroutine(result):
+                        asyncio.get_running_loop().create_task(result)
+                    return
+        except Exception:
+            pass  # a shortcut must never break the page
+
+    ui.keyboard(on_key=on_key, ignore=[])
+
+    width = "max-w-[1680px]" if wide else "max-w-[1150px]"
+    with ui.column().classes(f"w-full {width} mx-auto p-6 gap-4"):
         ui.label(title).classes("text-2xl font-semibold")
         yield
 

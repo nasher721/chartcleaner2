@@ -44,6 +44,12 @@ def _checkbox(user, label):
     return matches[0]
 
 
+def _act(user, selection, action):
+    """Select text in the chart, then press a selection-toolbar button."""
+    user.find(marker="highlight-source").trigger("mouseup", selection)
+    user.find(marker=f"sel-{action}").click()
+
+
 def _chart_textarea(user):
     matches = [element for element in user.find().elements
                if element.props.get("label", "").startswith("Chart text")]
@@ -63,12 +69,14 @@ async def test_off_mode_does_not_change_selection_or_config(user, clean_fixture)
 
     user.find(marker="highlight-source").trigger("mouseup", _selection("Keep remove", "remove"))
 
+    # Selecting only offers the toolbar; nothing changes until a button is pressed.
+    assert next(iter(user.find(marker="selection-bar").elements)).visible
     assert _chart_textarea(user).value == "Keep remove"
     assert load_config(path) == before
 
 
 @pytest.mark.nicegui_main_file("")
-async def test_remove_mode_saves_only_selection_and_checkboxes_are_exclusive(user, clean_fixture):
+async def test_remove_saves_only_selection(user, clean_fixture):
     from nicegui import ui
 
     _cfg, path = clean_fixture
@@ -76,19 +84,9 @@ async def test_remove_mode_saves_only_selection_and_checkboxes_are_exclusive(use
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-remove")
-    with user.client:
-        _checkbox(user, "Remove mode").set_value(True)
-        _checkbox(user, "Replace mode").set_value(True)
-    checks = {element._text: element for element in user.find(ui.checkbox).elements}
-    assert checks["Remove mode"].value is False
-    assert checks["Replace mode"].value is True
-    with user.client:
-        _checkbox(user, "Remove mode").set_value(True)
-    assert checks["Remove mode"].value is True
-    assert checks["Replace mode"].value is False
-
-    user.find(marker="highlight-source").trigger("mouseup", _selection(text, "remove"))
+    _act(user, _selection(text, "remove"), "remove")
     assert _chart_textarea(user).value == "Keep "
+    await user.should_not_see(marker="selection-bar")
     saved = load_config(path)
     assert saved["learned_rules"] == [make_rule("remove")]
 
@@ -102,9 +100,7 @@ async def test_undo_restores_text_rule_and_previous_enabled_setting(user, clean_
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-undo")
-    with user.client:
-        _checkbox(user, "Remove mode").set_value(True)
-    user.find(marker="highlight-source").trigger("mouseup", _selection(text, "remove"))
+    _act(user, _selection(text, "remove"), "remove")
     user.find("Undo last highlight").click()
 
     assert _chart_textarea(user).value == text
@@ -122,10 +118,7 @@ async def test_replacement_cancel_does_not_write_and_confirm_escapes_backslash(u
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-cancel")
-    with user.client:
-        _checkbox(user, "Replace mode").set_value(True)
-    selection = _selection(text, "remove")
-    user.find(marker="highlight-source").trigger("mouseup", selection)
+    _act(user, _selection(text, "remove"), "replace")
     await user.should_see("Replace highlighted text")
     user.find("Cancel").click()
     assert load_config(path)["learned_rules"] == []
@@ -141,10 +134,7 @@ async def test_replacement_confirm_escapes_backslash(user, clean_fixture):
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-confirm")
-    with user.client:
-        _checkbox(user, "Replace mode").set_value(True)
-    selection = _selection(text, "remove")
-    user.find(marker="highlight-source").trigger("mouseup", selection)
+    _act(user, _selection(text, "remove"), "replace")
     await user.should_see("Replace highlighted text")
     replacement = next(
         element for element in user.find(ui.textarea).elements
@@ -170,19 +160,18 @@ async def test_stale_selection_and_conflicting_rule_are_refused(user, clean_fixt
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, f"/highlight-conflict-{kind}")
-    with user.client:
-        _checkbox(user, "Remove mode" if kind == "remove" else "Replace mode").set_value(True)
-
     stale = _selection(text, "remove")
+    user.find(marker="highlight-source").trigger("mouseup", stale)
     with user.client:
         _chart_textarea(user).set_value("Changed remove")
-    user.find(marker="highlight-source").trigger("mouseup", stale)
+    user.find(marker=f"sel-{kind}").click()
+    await user.should_not_see("Replace highlighted text")
     assert load_config(path)["learned_rules"] == [make_rule("remove", "already")]
     assert _chart_textarea(user).value == "Changed remove"
 
     with user.client:
         _chart_textarea(user).set_value(text)
-    user.find(marker="highlight-source").trigger("mouseup", _selection(text, "remove"))
+    _act(user, _selection(text, "remove"), kind)
     assert load_config(path)["learned_rules"] == [make_rule("remove", "already")]
 
 
@@ -217,10 +206,7 @@ async def test_abbreviate_mode_saves_custom_rule_and_undo_restores(user, clean_f
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-abbreviate")
-    with user.client:
-        _checkbox(user, "Abbreviate mode").set_value(True)
-    assert _checkbox(user, "Remove mode").value is False
-    user.find(marker="highlight-source").trigger("mouseup", _selection(text, " left side weakness "))
+    _act(user, _selection(text, " left side weakness "), "abbreviate")
     await user.should_see("Abbreviate highlighted text")
     assert _input(user, "Abbreviation").value == "LSW"
     await user.should_see("Would change 1 place(s)")
@@ -242,9 +228,7 @@ async def test_abbreviate_mode_do_not_use_needs_override(user, clean_fixture):
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-abbreviate-dnu")
-    with user.client:
-        _checkbox(user, "Abbreviate mode").set_value(True)
-    user.find(marker="highlight-source").trigger("mouseup", _selection(text, "units"))
+    _act(user, _selection(text, "units"), "abbreviate")
     await user.should_see("Abbreviate highlighted text")
     with user.client:
         _input(user, "Abbreviation").set_value("U")
@@ -285,3 +269,18 @@ async def test_abbreviation_editor_blocks_and_allows(user, clean_fixture):
     user.find("Save anyway").click()
     custom = load_config(path)["abbreviations"]["custom"]
     assert {"term": "Units", "replacement": "U", "enabled": True, "acknowledged": True} in custom
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_never_remove_saves_an_exception_for_every_regex_stage(user, clean_fixture):
+    _cfg, path = clean_fixture
+    text = "Printed by Dr. Lee: K 6.1 called"
+    cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
+                              summary=None, qa=[])
+    await _open_clean(user, "/highlight-keep")
+    _act(user, _selection(text, "K 6.1 called"), "keep")
+    await user.should_see("Saved — rules will never remove")
+    options = load_config(path)["stage_options"]
+    for sid in ("metadata_lines", "boilerplate", "learned_rules", "literal_replacements"):
+        assert options[sid]["exceptions"] == ["K 6.1 called"]
+    assert _chart_textarea(user).value == text

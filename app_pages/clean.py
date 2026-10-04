@@ -1,9 +1,24 @@
-"""The Clean page (/): paste or drop a chart, review the result."""
+"""The Clean page (/): paste or drop a chart, review the result.
+
+Layout: the chart on the left, the result on the right (stacked on narrow
+windows), and the local AI (summary + "Ask this chart") in a drawer on the
+right. The result has three tabs — **Output** (copy as…, timeline),
+**Review** (every change, clickable, plus what was removed and why) and
+**Insights** (trends, changes over time).
+"""
 
 from __future__ import annotations
 
+import time
+
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from chartcleaner import recent_charts, regression_set, rule_inbox
+from chartcleaner import service as service_mod
+from chartcleaner.rule_preview import preview as preview_rule
+from chartcleaner.summarizer import PRESET_LABELS
+from chartcleaner.timeline import build as build_timeline
+from chartcleaner.trends import REFERENCE_RANGES
 from chartcleaner.trends import build as build_trends
 
 
@@ -11,11 +26,28 @@ from chartcleaner.trends import build as build_trends
 REVIEWABLE_REMOVAL_STAGES = ("metadata_lines", "boilerplate", "learned_rules")
 # Regex stages that honor stage_options.<sid>.exceptions ("Never remove this").
 EXCEPTION_STAGES = ("metadata_lines", "boilerplate", "learned_rules", "literal_replacements")
+# Regex stages whose rules live in a config list (stage id -> config key).
+RULE_LISTS = {"metadata_lines": "emr_line_metadata", "boilerplate": "boilerplate",
+              "phi_patterns": "epic_phi_patterns", "literal_replacements": "literal_replacements",
+              "learned_rules": "learned_rules"}
+
+# "Copy as…" formats: key -> (label, icon). The main button copies the "copy_default" pref.
+COPY_FORMATS = {
+    "text": ("Plain text", "content_copy"),
+    "epic": ("Epic-safe text", "assignment"),
+    "markdown": ("Markdown", "notes"),
+    "stats": ("Text + stats", "data_object"),
+    "trends": ("Text with trends on top", "vertical_align_top"),
+    "ai": ("Tokenized, for an external AI", "smart_toy"),
+}
+AUTO_CLEAN_PAUSE = 1.5  # seconds of no typing before auto-clean runs
 
 
 async def clean_page():
-    state = {"running": False}
-    highlight = {"mode": "off", "pending": False, "undo": None}
+    state = {"running": False, "edited": 0.0}
+    highlight = {"pending": False, "undo": None, "selection": None}
+    refs: dict = {}          # result widgets (tabs, output box), repopulated by render_results
+    inbox = {"items": []}    # rule-inbox suggestions for the current recent charts
 
     # ---- handlers (defined before the UI that references them) -------------
     def set_running(flag: bool) -> None:
@@ -32,37 +64,37 @@ async def clean_page():
         try:
             def work():
                 cfg = load_config(common.CONFIG_PATH)
+                cache = service_mod.result_cache()
                 if mode != "clean":
-                    return Pipeline(cfg, mode=mode).run(text, track_changes=True), None
+                    return Pipeline(cfg, mode=mode).run(text, track_changes=True, cache=cache), None
                 found = detect_note_type(text, cfg)
-                note_info.update(label=found.label, preset=None)
+                note_info.update(label=found.label, type=found.note_type, preset=None)
                 preset = (common.PREFS.get("note_presets") or {}).get(found.note_type or "")
                 if common.PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
                     # This run only: applying a preset for real would overwrite config.json.
                     cfg = store.load_preset(preset)
                     note_info["preset"] = preset
                 # Tracked changes stay in memory for the inspect tabs; history drops them.
-                result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(text, track_changes=True)
+                result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
+                    text, track_changes=True, cache=cache)
                 return result, run_audit(result.text, cfg)
 
-            def delta_work(cleaned: str):
-                try:
-                    return extract_note_deltas(cleaned)
-                except Exception:
-                    return None  # the delta view is a bonus; never fail a clean over it
-
-            def trends_work(cleaned: str):
-                try:
-                    return build_trends(cleaned)
-                except Exception:
-                    return None  # same contract as the delta view
+            def extras_work(cleaned: str):
+                out = {}
+                for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
+                                ("timeline", build_timeline)):
+                    try:
+                        out[key] = fn(cleaned)
+                    except Exception:
+                        out[key] = None  # bonus views; never fail a clean over them
+                return out
 
             result, audit = await run.io_bound(work)
-            delta = await run.io_bound(delta_work, result.text) if mode == "clean" else None
-            trends = await run.io_bound(trends_work, result.text) if mode == "clean" else None
+            extras = await run.io_bound(extras_work, result.text) if mode == "clean" else {}
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               summary=None, qa=[], result_mode=mode, delta=delta, note=note_info,
-                               trends=trends)
+                               summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
+                               note=note_info, trends=extras.get("trends"),
+                               timeline=extras.get("timeline"))
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -74,6 +106,11 @@ async def clean_page():
                         store.save_token_map(tmap, source)
             except Exception:
                 pass  # map saving must never break a run
+            if mode == "clean":
+                try:
+                    recent_charts.remember(text, source, common.PREFS)
+                except Exception:
+                    pass  # suggestions are a bonus; never break a run
             store.maybe_purge_old_data()
             try:
                 if audit is not None:
@@ -82,6 +119,8 @@ async def clean_page():
                 pass  # history of findings must never break a run
             input_area.set_value(text)
             render_results()
+            if mode == "clean":
+                asyncio.get_running_loop().create_task(refresh_inbox())
         except ConfigError as e:
             ui.notify(str(e), type="negative")
         except Exception as e:
@@ -104,250 +143,667 @@ async def clean_page():
             return
         await do_clean_core(text, "editor")
 
+    # ---- result pane ----------------------------------------------------------
+    def change_groups(result) -> list[dict]:
+        """Tracked changes grouped by rule — what the Review tab makes clickable."""
+        groups: dict[tuple, dict] = {}
+        for st in result.stages:
+            for c in st.details.get("changes") or []:
+                if st.id == "medical_abbreviations":
+                    key = ("abbr", c["rule"], c["after"])
+                    g = groups.setdefault(key, {"kind": "abbr", "sid": st.id, "stage": st.label,
+                                                "rule": c["rule"], "term": c["before"],
+                                                "after": c["after"], "count": 0,
+                                                "source": c.get("source", "bundled")})
+                    g["count"] += 1
+                    continue
+                if not c["before"].strip():
+                    continue
+                kind = "removal" if c["after"] == "" else "replace"
+                key = (kind, st.id, c["rule"])
+                g = groups.setdefault(key, {"kind": kind, "sid": st.id, "stage": st.label,
+                                            "rule": c["rule"], "befores": [], "afters": [],
+                                            "count": 0})
+                g["count"] += 1
+                if c["before"] not in g["befores"] and len(g["befores"]) < 30:
+                    g["befores"].append(c["before"])
+                    g["afters"].append(c["after"])
+        return list(groups.values())
+
     def render_results() -> None:
         results_col.clear()
+        refs.clear()
         result = CLEAN_STATE.get("result")
+        render_ai()
         if not result:
+            with results_col:
+                with ui.column().classes("w-full items-center justify-center py-16 opacity-60 border "
+                                         "border-dashed rounded-lg"):
+                    ui.icon("auto_fix_high").classes("text-4xl")
+                    ui.label("Your cleaned chart appears here.").classes("text-sm")
+                    ui.label(f"Paste a chart on the left and press Clean ({MOD}+Enter).") \
+                        .classes("text-xs")
             return
+        result_mode = CLEAN_STATE.get("result_mode")
+        single_pass = result_mode in ("abbreviations", "expand")
         with results_col:
-            result_mode = CLEAN_STATE.get("result_mode")
-            single_pass = result_mode in ("abbreviations", "expand")
+            render_trust_strip(result, single_pass)
+            phi = result.phi_counts()
+            with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
+                ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
+                ui.label(f"{result.reduction:+.1f}%").classes(
+                    "font-semibold " + ("text-green-600" if result.reduction >= 0 else "text-orange-600"))
+                if result_mode == "abbreviations":
+                    ui.label(f"{sum(s.matches for s in result.stages)} abbreviations applied")
+                elif result_mode == "expand":
+                    ui.label(f"{sum(s.matches for s in result.stages)} abbreviations expanded")
+                else:
+                    ui.label(f"{sum(phi.values())} PHI redacted").classes("text-red-600")
+                ui.label(f"{result.duration_ms:.0f} ms").classes("opacity-60")
+                render_note_chip(result_mode)
             if result_mode == "abbreviations":
                 ui.label("Abbreviations only — other text and formatting preserved. "
-                         "PHI has not been removed.").classes("text-sm")
+                         "PHI has not been removed.").classes("text-xs opacity-70")
             elif result_mode == "expand":
                 ui.label("Abbreviations expanded — other text and formatting preserved. "
-                         "PHI has not been removed.").classes("text-sm")
-            phi = result.phi_counts()
-            chips = ui.row().classes("gap-3 flex-wrap items-stretch")
-            stat_chip(chips, "characters", f"{result.chars_before:,} → {result.chars_after:,}")
-            stat_chip(chips, "reduction", f"{result.reduction:+.1f}%",
-                      "green" if result.reduction >= 0 else "orange")
-            stat_chip(chips, "words", f"{result.words_before:,} → {result.words_after:,}", "indigo")
-            if result_mode == "abbreviations":
-                stat_chip(chips, "abbreviations applied", str(sum(s.matches for s in result.stages)))
-            elif result_mode == "expand":
-                stat_chip(chips, "abbreviations expanded", str(sum(s.matches for s in result.stages)))
-                ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
-                if ambiguous:
-                    stat_chip(chips, "ambiguous, left as written", str(sum(ambiguous.values())), "orange")
-            else:
-                stat_chip(chips, "PHI redacted", str(sum(phi.values())), "red")
-            stat_chip(chips, "elapsed", f"{result.duration_ms:.0f} ms", "blue-grey")
-            note = CLEAN_STATE.get("note") or {}
-            if note.get("label") and result_mode == "clean":
-                stat_chip(chips, "note type" + (f" · preset {note['preset']}" if note.get("preset") else ""),
-                          note["label"], "teal")
+                         "PHI has not been removed.").classes("text-xs opacity-70")
 
-            # ---- post-run review: what survived and deserves a second look ----
+            groups = change_groups(result)
+            refs["groups"] = groups
+            with ui.tabs().props("dense align=left") as tabs:
+                t_out = ui.tab("Output", icon="description")
+                t_review = ui.tab("Review", icon="rule")
+                t_insights = ui.tab("Insights", icon="insights") if not single_pass else None
+            refs["tabs"] = (tabs, [t for t in (t_out, t_review, t_insights) if t is not None])
+            with ui.tab_panels(tabs, value=t_out).classes("w-full").props("keep-alive"):
+                with ui.tab_panel(t_out).classes("px-0"):
+                    render_output(result, single_pass)
+                with ui.tab_panel(t_review).classes("px-0"):
+                    render_review(result, groups, single_pass)
+                if t_insights is not None:
+                    with ui.tab_panel(t_insights).classes("px-0"):
+                        render_insights()
+            if result.warnings:
+                ui.label("⚠ " + " | ".join(result.warnings)).classes("text-xs text-orange-600")
+
+    def render_trust_strip(result, single_pass: bool) -> None:
+        """The one-glance "can I trust this?" badges above the output."""
+        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("trust-strip"):
+            report = result.fact_check
+            if report is not None and not single_pass:
+                status = report.status
+                icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
+                               "alert": ("report", "red")}[status]
+                badge = ui.button(report.headline(), icon=icon,
+                                  on_click=lambda: show_tab(1)) \
+                    .props(f"unelevated no-caps color={color}").classes("text-sm")
+                badge.mark("fact-check")
+                badge.tooltip("Clinical values (numbers with units, labs, vitals, medications, "
+                              "allergies, code status) counted before and after every stage. "
+                              "Click to review.")
             audit = CLEAN_STATE.get("audit")
-            flagged: set[int] = set()
-            if audit is not None and not audit.skipped:
+            if audit is not None and not audit.skipped and not single_pass:
                 total = sum(audit.counts.values())
-                flagged = {f.line for f in audit.findings}
-                if total or audit.errors:
-                    with ui.expansion(
-                            f"Review — {total} finding(s) to double-check before sharing",
-                            icon="fact_check").classes("w-full"):
-                        if audit.errors:
-                            ui.label("Some checks could not run: " + " | ".join(audit.errors)) \
-                                .classes("text-xs text-orange-600")
-                        by_check: dict[str, list] = {}
-                        for f in audit.findings:
-                            by_check.setdefault(f.check, []).append(f)
-                        for cid, items in by_check.items():
-                            ui.label(f"{CHECK_LABELS.get(cid, cid)} — {audit.counts.get(cid, 0)}"
-                                     f" · {CHECK_DESCRIPTIONS.get(cid, '')}") \
-                                .classes("text-sm font-semibold mt-1")
-                            for f in items[:10]:
-                                with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
-                                    ui.badge(f"line {f.line}").props("outline color=orange")
-                                    ui.label(f.excerpt).classes("text-xs cc-mono flex-grow")
-                                    ui.button("Build rule", icon="rule",
-                                              on_click=lambda ff=f: start_pending_rule(
-                                                  ff.suggested_regex, ff.suggested_replacement,
-                                                  ff.suggested_stage)
-                                              ).props("flat dense")
-                            if len(items) > 10:
-                                ui.label(f"… {len(items) - 10} more of this type") \
-                                    .classes("text-xs opacity-60")
-                        ui.label("Findings are hints, not verdicts — confirm before acting on them.") \
-                            .classes("text-xs opacity-60 mt-1")
+                if total:
+                    ui.button(f"{total} possible PHI leftover(s)", icon="privacy_tip",
+                              on_click=lambda: show_tab(1)) \
+                        .props("outline no-caps color=orange").classes("text-sm")
                 else:
-                    ui.label("✓ Audit: no leftover PHI patterns flagged.").classes("text-xs text-green-600")
+                    ui.chip("No leftover PHI patterns", icon="shield", color="green-1",
+                            text_color="green-9").props("dense")
 
-            if result.fact_check is not None and not single_pass:
-                render_fact_check(result.fact_check)
+    def render_note_chip(result_mode: str | None) -> None:
+        note = CLEAN_STATE.get("note") or {}
+        if result_mode != "clean" or not note.get("label"):
+            return
+        text = f"Detected: {note['label']}"
+        if note.get("preset"):
+            text += f" → preset {note['preset']}"
+        ui.chip(text, icon="label", color="teal-1", text_color="teal-9",
+                on_click=open_note_type_dialog).props("dense clickable").mark("note-chip") \
+            .tooltip("Click to choose which preset this note type uses")
 
-            abbr_changes = next((st.details.get("changes") or [] for st in result.stages
-                                 if st.id == "medical_abbreviations"), [])
-            with ui.tabs() as tabs:
-                t_result = ui.tab("Result")
-                t_diff = ui.tab("Side-by-side diff")
-                t_stages = ui.tab("What each stage did")
-                t_abbr = ui.tab(f"Abbreviations ({len(abbr_changes)})") if abbr_changes else None
-                removed = removed_groups(result)
-                t_removed = (ui.tab(f"Removed ({sum(len(g['items']) for g in removed)})")
-                             if removed else None)
-                trends = CLEAN_STATE.get("trends")
-                t_trends = (ui.tab("Trends") if trends is not None and not trends.empty else None)
-                delta = CLEAN_STATE.get("delta")
-                t_delta = (ui.tab("Changes over time")
-                           if delta is not None and delta.notes_found > 1 else None)
-            with ui.tab_panels(tabs, value=t_result).classes("w-full"):
-                if t_trends is not None:
-                    with ui.tab_panel(t_trends):
-                        render_trends(trends)
-                if t_delta is not None:
-                    with ui.tab_panel(t_delta):
-                        render_delta(delta)
-                if t_removed is not None:
-                    with ui.tab_panel(t_removed):
-                        render_removed(removed)
-                if t_abbr is not None:
-                    with ui.tab_panel(t_abbr):
-                        render_abbreviation_changes(abbr_changes)
-                with ui.tab_panel(t_result):
-                    out = ui.textarea("", value=result.text)
-                    out.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
-                    with ui.row().classes("gap-2"):
-                        ui.button("Copy result", icon="content_copy",
-                                  on_click=lambda: copy_to_clipboard(result.text)).props("unelevated color=primary")
-                        with ui.dropdown_button("Download", icon="download", auto_close=True):
-                            ui.item("Text (.txt)", on_click=download_result)
-                            ui.item("Word (.docx)", on_click=lambda: ui.download.content(
-                                to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))
-                            ui.item("Markdown (.md)", on_click=lambda: ui.download.content(
-                                chart_markdown().encode("utf-8"), "cleaned_chart.md"))
-                        ui.button("Copy for Epic", icon="assignment",
-                                  on_click=lambda: copy_to_clipboard(
-                                      to_smartphrase(CLEAN_STATE["result_text"]),
-                                      "Copied as plain text that pastes cleanly into Epic")) \
-                            .props("flat").tooltip("Plain ASCII, no tabs, lines wrapped at 80 characters")
-                        if common.PREFS.get("notes_folder"):
-                            ui.button("Save to notes folder", icon="note_add",
-                                      on_click=save_to_notes_folder).props("flat")
-                        ui.button("Copy result + stats", icon="data_object",
-                                  on_click=lambda: copy_to_clipboard(
-                                      result.text + "\n\n<!-- " + result.summary() + " -->")).props("flat")
-                        with ui.dropdown_button("Copy as prompt", icon="smart_toy", auto_close=True) \
-                                .props("flat"):
-                            for tmpl in prompt_templates(load_config(common.CONFIG_PATH)):
-                                ui.item(tmpl["name"], on_click=lambda n=tmpl["name"]: copy_prompt(n))
-                with ui.tab_panel(t_diff):
-                    with ui.scroll_area().classes("w-full border rounded h-[420px] bg-grey-1 dark:bg-grey-10"):
-                        ui.html(diff_html(CLEAN_STATE["input"], result.text, flagged))
-                with ui.tab_panel(t_stages):
-                    cols = [
-                        {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
-                        {"name": "matches", "label": "Matches", "field": "matches"},
-                        {"name": "delta", "label": "Δ chars", "field": "delta"},
-                        {"name": "status", "label": "Status", "field": "status", "align": "left"},
-                    ]
-                    rows = []
-                    for s in result.stages:
-                        delta = s.chars_before - s.chars_after
-                        if s.skipped:
-                            status = "skipped"
-                        elif s.error:
-                            status = "error: " + s.error
-                        else:
-                            status = "ok"
-                        rows.append({"stage": s.label, "matches": s.matches,
-                                     "delta": f"{delta:+,}", "status": status})
-                    ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
-            if result_mode == "expand" and ambiguous:
+    def open_note_type_dialog() -> None:
+        note = CLEAN_STATE.get("note") or {}
+        kind = note.get("type")
+        if not kind:
+            ui.notify("The note type wasn't recognized, so there's nothing to map.", type="info")
+            return
+        presets = store.list_presets()
+        mapping = dict(common.PREFS.get("note_presets") or {})
+        with ui.dialog() as dlg, ui.card().classes("w-[440px] gap-2"):
+            ui.label(f"{note['label']} notes").classes("text-lg font-semibold")
+            ui.label("Pick the rule preset to clean this kind of note with.").classes("text-sm opacity-70")
+            sel = ui.select({"": "(current rules)", **{p: p for p in presets}},
+                            value=mapping.get(kind, ""), label="Preset").classes("w-full")
+            auto = ui.checkbox("Apply note-type presets automatically",
+                               value=bool(common.PREFS.get("note_auto_apply")))
+            if not presets:
+                ui.label("No presets yet — save one on the Pipeline page.").classes("text-xs text-orange-600")
+
+            async def save() -> None:
+                if sel.value:
+                    mapping[kind] = sel.value
+                else:
+                    mapping.pop(kind, None)
+                common.PREFS["note_presets"] = mapping
+                common.PREFS["note_auto_apply"] = bool(auto.value)
+                save_prefs()
+                dlg.close()
+                await run_clean()
+
+            with ui.row():
+                ui.button("Save & clean again", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def show_tab(index: int) -> None:
+        tabs = refs.get("tabs")
+        if tabs and index < len(tabs[1]):
+            tabs[0].set_value(tabs[1][index])
+
+    # ---- Output tab -----------------------------------------------------------
+    def copy_text(fmt: str) -> tuple[str, str] | None:
+        """(text, notice) for a "Copy as…" format; None when unavailable."""
+        text = CLEAN_STATE.get("result_text") or ""
+        result = CLEAN_STATE.get("result")
+        if fmt == "epic":
+            return to_smartphrase(text), "Copied as plain text that pastes cleanly into Epic"
+        if fmt == "markdown":
+            return chart_markdown(), "Copied as Markdown"
+        if fmt == "stats":
+            return text + "\n\n<!-- " + (result.summary() if result else "") + " -->", "Copied with stats"
+        if fmt == "trends":
+            trends = CLEAN_STATE.get("trends")
+            block = trends.to_text() if trends is not None and not trends.empty else ""
+            return (f"{block}\n\n{text}" if block else text), (
+                "Copied with trends on top" if block else "No trends in this chart — copied the text")
+        if fmt == "ai":
+            if not any(st.details.get("token_map") for st in (result.stages if result else [])):
+                ui.notify("Turn on Reversible tokenization (Pipeline page) so names become [[T1]]-style "
+                          "tokens you can restore after the AI replies.", type="warning", multi_line=True)
+                return None
+            return text, "Tokenized chart copied — use “Restore names in an AI reply” afterwards"
+        return text, "Copied to clipboard"
+
+    def copy_as(fmt: str | None = None) -> None:
+        if not CLEAN_STATE.get("result_text"):
+            ui.notify("Clean a chart first.", type="info")
+            return
+        fmt = fmt or common.PREFS.get("copy_default") or "text"
+        got = copy_text(fmt if fmt in COPY_FORMATS else "text")
+        if got:
+            copy_to_clipboard(*got)
+
+    def open_copy_default_dialog() -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
+            ui.label("The Copy button copies…").classes("text-lg font-semibold")
+            radio = ui.radio({k: v[0] for k, v in COPY_FORMATS.items()},
+                             value=common.PREFS.get("copy_default") or "text")
+
+            def save() -> None:
+                common.PREFS["copy_default"] = radio.value
+                save_prefs()
+                dlg.close()
+                render_results()
+
+            with ui.row():
+                ui.button("Save", on_click=save).props("unelevated")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def render_output(result, single_pass: bool) -> None:
+        timeline = CLEAN_STATE.get("timeline") or []
+        if timeline and not single_pass:
+            with ui.row().classes("w-full items-center gap-1 flex-wrap").mark("timeline"):
+                ui.icon("timeline").classes("opacity-60")
+                for n in timeline:
+                    label = n.date or f"Note {n.index}"
+                    if n.day:
+                        label += f" · {n.day}"
+                    ui.chip(label, on_click=lambda n=n: jump_to(n.start, n.end)) \
+                        .props("dense outline clickable").tooltip(n.title)
+        out = ui.textarea("", value=result.text)
+        out.props("outlined readonly input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
+        refs["output"] = out
+        default = common.PREFS.get("copy_default") or "text"
+        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+            with ui.dropdown_button(f"Copy · {COPY_FORMATS.get(default, COPY_FORMATS['text'])[0]}",
+                                    icon="content_copy", split=True, auto_close=True,
+                                    on_click=lambda: copy_as()) \
+                    .props("unelevated color=primary no-caps").mark("copy-as"):
+                for key, (label, icon) in COPY_FORMATS.items():
+                    with ui.item(on_click=lambda k=key: copy_as(k)).mark(f"copy-{key}"):
+                        with ui.item_section().props("avatar"):
+                            ui.icon(icon)
+                        with ui.item_section():
+                            ui.item_label(label)
+                if not single_pass:
+                    ui.separator()
+                    for tmpl in prompt_templates(load_config(common.CONFIG_PATH)):
+                        with ui.item(on_click=lambda n=tmpl["name"]: copy_prompt(n)):
+                            with ui.item_section().props("avatar"):
+                                ui.icon("smart_toy")
+                            with ui.item_section():
+                                ui.item_label(f"Prompt: {tmpl['name']}")
+                ui.separator()
+                ui.item("Change what the main button copies…", on_click=open_copy_default_dialog)
+            with ui.dropdown_button("Save", icon="download", auto_close=True).props("flat no-caps"):
+                ui.item("Text (.txt)", on_click=download_result)
+                ui.item("Word (.docx)", on_click=lambda: ui.download.content(
+                    to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))
+                ui.item("Markdown (.md)", on_click=lambda: ui.download.content(
+                    chart_markdown().encode("utf-8"), "cleaned_chart.md"))
+                if common.PREFS.get("notes_folder"):
+                    ui.item("To my notes folder", on_click=save_to_notes_folder)
+            with ui.button(icon="more_horiz").props("flat round").tooltip("More"):
+                with ui.menu():
+                    ui.menu_item("Restore names in an AI reply…", on_click=open_restore_dialog) \
+                        .mark("restore-reply")
+                    ui.menu_item("Mark as known good (re-check after rule changes)…",
+                                 on_click=open_known_good_dialog).mark("known-good")
+                    ui.menu_item("Clean again", on_click=run_clean)
+        if CLEAN_STATE.get("result_mode") == "expand":
+            ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
+            if ambiguous:
                 with ui.row().classes("items-center gap-2"):
                     ui.label("Not expanded because they have several meanings: "
-                             + ", ".join(f"{a} ×{n}" for a, n in sorted(ambiguous.items())))\
+                             + ", ".join(f"{a} ×{n}" for a, n in sorted(ambiguous.items()))) \
                         .classes("text-sm")
                     ui.button("Choose meanings", icon="rule",
                               on_click=lambda amb=ambiguous: open_meanings_dialog(amb)).props("flat dense")
-            if single_pass:
-                return
-            # ---- local AI summary (on-device via Ollama) ----
-            summary_refs.clear()
-            with ui.expansion("Local AI summary", icon="psychology").classes("w-full"):
-                try:
-                    opts = merge_llm_config(load_config(common.CONFIG_PATH))
-                except Exception:
-                    opts = merge_llm_config({})
-                try:
-                    probe = LocalLlmClient(str(opts["base_url"]), timeout=2.0)
-                    listed = probe.list_models() if probe.is_available() else []
-                except Exception:
-                    listed = []
-                model_val = str(opts["model"] or (listed[0] if listed else ""))
-                model_options = list(listed)
-                if model_val and model_val not in model_options:
-                    model_options.append(model_val)
-                if not listed:
-                    ui.label(
-                        f"No local LLM detected at {opts['base_url']} — install Ollama "
-                        "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`."
-                    ).classes("text-xs text-orange-600")
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    ui.select(model_options,
-                              value=model_val or None, label="Model", new_value_mode="add",
-                              on_change=lambda e: save_llm_pref("model", e.value)
-                              ).classes("min-w-[190px]")
-                    ui.select({"clinical": "Clinical sections", "brief": "Brief paragraph",
-                               "findings": "Key findings", "custom": "Custom prompt"},
-                              value=str(opts["prompt_preset"]), label="Prompt style",
-                              on_change=lambda e: (save_llm_pref("prompt_preset", e.value),
-                                                   custom_box.set_visibility(e.value == "custom"))
-                              ).classes("min-w-[190px]")
-                    summary_refs["button"] = ui.button("Summarize", icon="psychology",
-                                                       on_click=run_summarize
-                                                       ).props("unelevated color=primary")
-                    summary_refs["spinner"] = ui.spinner("dots", size="sm")
-                    summary_refs["spinner"].set_visibility(False)
-                custom_box = ui.textarea("Custom prompt (replaces the preset)",
-                                         value=str(opts["custom_prompt"]),
-                                         on_change=lambda e: save_llm_pref("custom_prompt", e.value)
-                                         ).props("outlined").classes("w-full cc-mono")
-                custom_box.set_visibility(str(opts["prompt_preset"]) == "custom")
-                summary_refs["output"] = ui.textarea("").props(
-                    "outlined readonly input-style='min-height: 140px'"
-                ).classes("w-full cc-mono")
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
-                    summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
-                render_summary_output()
 
-            # ---- ask this chart (grounded local Q&A; design: .specs/plans/chart-qa) ----
-            qa_refs.clear()
-            with ui.expansion("Ask this chart", icon="forum").classes("w-full"):
-                if not listed:
-                    ui.label(
-                        f"No local LLM detected at {opts['base_url']} — install Ollama "
-                        "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`."
-                    ).classes("text-xs text-orange-600")
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    qa_refs["question"] = ui.input(
-                        "Ask about this chart",
-                        placeholder="e.g. What are the active antibiotics?").classes("min-w-[320px] flex-grow")
-                    qa_refs["question"].on("keydown.enter", _ask_on_enter)
-                    qa_refs["button"] = ui.button("Ask", icon="send", on_click=run_ask
-                                                  ).props("unelevated color=primary")
-                    qa_refs["spinner"] = ui.spinner("dots", size="sm")
-                    qa_refs["spinner"].set_visibility(False)
-                if model_val:
-                    ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
-                             "verified against the chart").classes("text-xs opacity-60")
-                qa_refs["log"] = ui.column().classes("w-full gap-2")
-            render_qa_log()
+    def jump_to(start: int, end: int) -> None:
+        ui.run_javascript(
+            "(function(){const ta=document.querySelector('.cc-out textarea'); if(!ta) return;"
+            f"const s={int(start)}, e={int(end)}; ta.focus(); ta.setSelectionRange(s, s);"
+            "const lh=parseFloat(getComputedStyle(ta).lineHeight)||16;"
+            "ta.scrollTop=(ta.value.slice(0,s).split('\\n').length-1)*lh;"
+            "ta.setSelectionRange(s, Math.min(e, s+1));})()")
 
-            if result.warnings:
-                ui.label("⚠ " + " | ".join(result.warnings)).classes("text-xs text-orange-600")
+    def open_restore_dialog() -> None:
+        result = CLEAN_STATE.get("result")
+        mapping = None
+        for st in (result.stages if result else []):
+            if st.details.get("token_map"):
+                mapping = dict(st.details["token_map"])
+        with ui.dialog() as dlg, ui.card().classes("w-[680px] gap-2"):
+            ui.label("Restore names in an AI reply").classes("text-lg font-semibold")
+            ui.label("Paste what the AI wrote about the tokenized chart. Every [[T1]]-style token is "
+                     "replaced with the real value — " + (
+                         "using this chart's token map." if mapping else
+                         "using the newest saved token map.")).classes("text-sm opacity-70")
+            reply = ui.textarea("AI reply").props("outlined autofocus input-style='min-height: 140px'") \
+                .classes("w-full cc-mono")
+            restored = ui.textarea("With real values").props(
+                "outlined readonly input-style='min-height: 140px'").classes("w-full cc-mono")
+            note = ui.label("").classes("text-xs opacity-70")
+
+            def restore() -> None:
+                out = service_mod.restore(reply.value or "", mapping)
+                restored.set_value(out["text"])
+                note.set_text(out.get("error") or f"{out['restored']} token(s) restored.")
+
+            with ui.row():
+                ui.button("Restore", icon="settings_backup_restore", on_click=restore) \
+                    .props("unelevated").mark("restore-run")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(restored.value or "")).props("flat")
+                ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def open_known_good_dialog() -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-[460px] gap-2"):
+            ui.label("Mark as known good").classes("text-lg font-semibold")
+            ui.label("Keeps this chart and this exact output (encrypted). Settings → Known-good "
+                     "charts re-cleans it after you change rules and shows anything that "
+                     "came out differently.").classes("text-sm opacity-70")
+            label = ui.textarea("Label", value=(CLEAN_STATE.get("note") or {}).get("label", "")) \
+                .props("outlined autogrow").classes("w-full")
+
+            def save() -> None:
+                try:
+                    regression_set.add(CLEAN_STATE.get("input") or "", CLEAN_STATE.get("result_text") or "",
+                                       label.value or "", mode=CLEAN_STATE.get("result_mode") or "clean",
+                                       preset=common.PREFS.get("last_preset") or "")
+                except ValueError as ex:
+                    ui.notify(str(ex), type="warning")
+                    return
+                dlg.close()
+                ui.notify("Saved as a known-good chart.", type="positive")
+
+            with ui.row():
+                ui.button("Save", icon="verified", on_click=save).props("unelevated").mark("known-good-save")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    # ---- Review tab -----------------------------------------------------------
+    def render_review(result, groups: list[dict], single_pass: bool) -> None:
+        if result.fact_check is not None and not single_pass:
+            render_fact_check(result.fact_check)
+        audit = CLEAN_STATE.get("audit")
+        flagged: set[int] = set()
+        if audit is not None and not audit.skipped:
+            flagged = {f.line for f in audit.findings}
+            render_audit(audit)
+        ui.label("Click struck-through or highlighted text to see which rule changed it — and "
+                 "keep it, change it or switch the rule off.").classes("text-xs opacity-70")
+        with ui.scroll_area().classes("w-full border rounded h-[460px] bg-grey-1 dark:bg-grey-10"):
+            diff = ui.html(review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups))
+            diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
+            diff.mark("review-diff")
+        removed = removed_groups(result)
+        if removed:
+            with ui.expansion(f"Removed ({sum(len(g['items']) for g in removed)})", icon="delete_sweep") \
+                    .classes("w-full"):
+                render_removed(removed)
+        abbr_changes = next((st.details.get("changes") or [] for st in result.stages
+                             if st.id == "medical_abbreviations"), [])
+        if abbr_changes:
+            with ui.expansion(f"Abbreviations ({len(abbr_changes)})", icon="short_text").classes("w-full"):
+                render_abbreviation_changes(abbr_changes)
+        with ui.expansion("What each stage did", icon="account_tree").classes("w-full"):
+            cols = [
+                {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
+                {"name": "matches", "label": "Matches", "field": "matches"},
+                {"name": "delta", "label": "Δ chars", "field": "delta"},
+                {"name": "status", "label": "Status", "field": "status", "align": "left"},
+            ]
+            rows = []
+            for s in result.stages:
+                delta = s.chars_before - s.chars_after
+                status = "skipped" if s.skipped else ("error: " + s.error) if s.error else "ok"
+                rows.append({"stage": s.label, "matches": s.matches,
+                             "delta": f"{delta:+,}", "status": status})
+            ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
+
+    def render_audit(audit) -> None:
+        total = sum(audit.counts.values())
+        if not (total or audit.errors):
+            return
+        with ui.expansion(f"Possible PHI left — {total} finding(s) to double-check before sharing",
+                          icon="privacy_tip").classes("w-full"):
+            if audit.errors:
+                ui.label("Some checks could not run: " + " | ".join(audit.errors)) \
+                    .classes("text-xs text-orange-600")
+            by_check: dict[str, list] = {}
+            for f in audit.findings:
+                by_check.setdefault(f.check, []).append(f)
+            for cid, items in by_check.items():
+                ui.label(f"{CHECK_LABELS.get(cid, cid)} — {audit.counts.get(cid, 0)}"
+                         f" · {CHECK_DESCRIPTIONS.get(cid, '')}").classes("text-sm font-semibold mt-1")
+                for f in items[:10]:
+                    with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                        ui.badge(f"line {f.line}").props("outline color=orange")
+                        ui.label(f.excerpt).classes("text-xs cc-mono flex-grow")
+                        ui.button("Build rule", icon="rule",
+                                  on_click=lambda ff=f: start_pending_rule(
+                                      ff.suggested_regex, ff.suggested_replacement,
+                                      ff.suggested_stage)).props("flat dense")
+                if len(items) > 10:
+                    ui.label(f"… {len(items) - 10} more of this type").classes("text-xs opacity-60")
+            ui.label("Findings are hints, not verdicts — confirm before acting on them.") \
+                .classes("text-xs opacity-60 mt-1")
+
+    def inspect_change(key) -> None:
+        groups = refs.get("groups") or []
+        try:
+            g = groups[int(str(key).lstrip("g"))]
+        except (ValueError, IndexError):
+            return
+        if g["kind"] == "abbr":
+            with ui.dialog() as dlg, ui.card().classes("w-[460px] gap-2"):
+                ui.label("Abbreviation").classes("text-lg font-semibold")
+                with ui.row().classes("items-center gap-2"):
+                    ui.label(g["term"]).classes("font-medium")
+                    ui.label("→")
+                    ui.label(g["after"]).classes("font-medium")
+                    ui.badge(f"×{g['count']}").props("outline")
+                ui.label("From your dictionary" if g["source"] != "custom" else "One of your own rules") \
+                    .classes("text-xs opacity-70")
+                with ui.row():
+                    ui.button("Change", icon="edit",
+                              on_click=lambda: (dlg.close(), change_abbreviation(g))).props("flat")
+                    ui.button("Don't abbreviate this", icon="block",
+                              on_click=lambda: (dlg.close(), asyncio.get_running_loop().create_task(
+                                  disable_abbreviation(g)))).props("flat color=negative")
+                    ui.button("Close", on_click=dlg.close).props("flat")
+            dlg.open()
+            return
+        verb = "Removed" if g["kind"] == "removal" else "Changed"
+        with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("change-dialog"):
+            ui.label(f"{verb} by {g['stage']}").classes("text-lg font-semibold")
+            ui.label(f"Rule: {g['rule'][:300]}").classes("text-xs cc-mono opacity-70 break-all")
+            ui.label(f"{g['count']} change(s) in this chart").classes("text-xs opacity-70")
+            for before, after in list(zip(g["befores"], g["afters"]))[:6]:
+                with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                    ui.label(before.strip()[:240]).classes("text-xs cc-mono cc-gone flex-grow break-all")
+                    if after:
+                        ui.label(f"→ {after[:80]}").classes("text-xs cc-mono")
+            with ui.row().classes("gap-1 flex-wrap"):
+                if g["sid"] in EXCEPTION_STAGES:
+                    ui.button("Never remove this", icon="shield",
+                              on_click=lambda: (dlg.close(), asyncio.get_running_loop().create_task(
+                                  keep_text(g["sid"], g["befores"][0])))).props("flat")
+                if g["sid"] in RULE_LISTS:
+                    ui.button("Delete this rule", icon="delete",
+                              on_click=lambda: confirm_dialog(
+                                  "Delete this rule? A backup of your rules is kept.",
+                                  lambda: (dlg.close(), asyncio.get_running_loop().create_task(
+                                      delete_rule(g))))).props("flat color=negative")
+                ui.button("Edit on Pipeline page", icon="tune",
+                          on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(g["befores"][0])).props("flat")
+                ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    async def delete_rule(g: dict) -> None:
+        key = RULE_LISTS[g["sid"]]
+        cfg = load_config(common.CONFIG_PATH)
+        entries = cfg.get(key) or []
+        patterns = [e[0] if isinstance(e, list) else e for e in entries]
+        if g["rule"] not in patterns:
+            ui.notify("That rule changed since this clean; nothing deleted.", type="warning")
+            return
+        entries.pop(patterns.index(g["rule"]))
+        save_config_with_backup(cfg)
+        ui.notify("Rule deleted (a backup of the previous rules was kept).", type="positive")
+        await run_clean()
+
+    # ---- Insights tab ---------------------------------------------------------
+    def render_insights() -> None:
+        trends = CLEAN_STATE.get("trends")
+        delta = CLEAN_STATE.get("delta")
+        timeline = CLEAN_STATE.get("timeline") or []
+        shown = False
+        if timeline:
+            shown = True
+            ui.label(f"{len(timeline)} notes in this chart").classes("text-sm font-semibold")
+            for n in timeline:
+                with ui.row().classes("w-full items-center gap-2 no-wrap cursor-pointer") \
+                        .on("click", lambda n=n: (show_tab(0), jump_to(n.start, n.end))):
+                    ui.badge(n.date or f"Note {n.index}").props("outline")
+                    if n.day:
+                        ui.badge(n.day, color="teal").props("outline")
+                    ui.label(n.preview or n.title).classes("text-xs opacity-80 truncate flex-grow")
+                    ui.label(f"{n.chars:,} chars").classes("text-xs opacity-50")
+        if trends is not None and not trends.empty:
+            shown = True
+            render_trends(trends)
+        if delta is not None and delta.notes_found > 1:
+            shown = True
+            with ui.expansion("Changes over time (copied-forward text removed)", icon="difference") \
+                    .classes("w-full"):
+                render_delta(delta)
+        if not shown:
+            ui.label("Trends, a note timeline and changes over time appear here when the chart "
+                     "holds several dated notes.").classes("text-sm opacity-60")
+
+    def render_trends(trends) -> None:
+        ui.label(f"Lab trends across {len(trends.notes)} notes").classes("text-sm font-semibold")
+        ui.label("Shaded band = typical adult reference range; red points are outside it. "
+                 "Your lab's ranges may differ.").classes("text-xs opacity-60")
+        if trends.labs:
+            with ui.element("div").classes("grid grid-cols-1 md:grid-cols-2 gap-2 w-full") \
+                    .mark("trends-table"):
+                for t in trends.labs[:16]:
+                    flags = t.flags()
+                    with ui.card().classes("p-2 gap-0"):
+                        with ui.row().classes("w-full items-center justify-between no-wrap"):
+                            ui.label(t.name).classes("font-semibold")
+                            ui.label(" → ".join(
+                                (v or "—") + (f" ({f})" if f else "") for v, f in zip(t.values, flags))
+                                + (f"  {t.direction()}" if t.direction() else "")) \
+                                .classes("text-xs cc-mono")
+                        ui.echart(sparkline_options(t, trends.notes)).classes("w-full h-16")
+            for t in trends.labs[16:]:
+                ui.label(t.to_text()).classes("text-xs cc-mono")
+        rows = trends.med_rows()
+        if rows:
+            ui.label("Medication changes").classes("text-sm font-semibold mt-2")
+            cols = [{"name": "when", "label": "Between", "field": "when", "align": "left"},
+                    {"name": "change", "label": "Change", "field": "change", "align": "left"},
+                    {"name": "before", "label": "Before", "field": "before", "align": "left"},
+                    {"name": "after", "label": "After", "field": "after", "align": "left"}]
+            ui.table(columns=cols, rows=[dict(r, id=i) for i, r in enumerate(rows)], row_key="id") \
+                .classes("w-full").props("flat dense wrap-cells")
+        block = trends.to_text()
+        with ui.row().classes("gap-2"):
+            ui.button("Copy trends", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(block)).props("flat")
+            ui.button("Copy result with trends on top", icon="vertical_align_top",
+                      on_click=lambda: copy_as("trends")).props("flat")
+
+    def sparkline_options(t, notes: list[str]) -> dict:
+        nums = t.numbers()
+        flags = t.flags()
+        data = [None if n is None else {"value": n, "itemStyle": {
+            "color": "#dc2626" if f else "#2563eb"}} for n, f in zip(nums, flags)]
+        series = {"type": "line", "data": data, "connectNulls": True, "symbolSize": 7,
+                  "lineStyle": {"width": 2, "color": "#64748b"}}
+        rng = REFERENCE_RANGES.get(t.name)
+        if rng:
+            series["markArea"] = {"silent": True, "itemStyle": {"color": "rgba(34,197,94,0.12)"},
+                                  "data": [[{"yAxis": rng[0]}, {"yAxis": rng[1]}]]}
+        return {"backgroundColor": "transparent", "animation": False,
+                "grid": {"left": 4, "right": 4, "top": 6, "bottom": 4},
+                "tooltip": {"trigger": "axis"},
+                "xAxis": {"type": "category", "data": list(notes), "show": False},
+                "yAxis": {"type": "value", "scale": True, "show": False},
+                "series": [series]}
+
+    def render_delta(delta) -> None:
+        ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
+                 "removed. The first note is kept in full; later notes show only sentences that are "
+                 "new or changed.").classes("text-sm opacity-70")
+        box = ui.textarea("", value=delta.compact_text)
+        box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
+
+        def use_for_ai() -> None:
+            CLEAN_STATE["result_text"] = delta.compact_text
+            ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
+                      type="positive")
+
+        with ui.row().classes("gap-2"):
+            ui.button("Copy", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(delta.compact_text)).props("unelevated")
+            ui.button("Use for AI summary & questions", icon="psychology",
+                      on_click=use_for_ai).props("flat")
 
     def download_result() -> None:
         name = store.save_export(CLEAN_STATE["result_text"], "cleaned_chart")
         download_file(f"/exports/{name}", name)
 
-    # ---- local AI summary (Ollama on-device; design: .specs/plans/local-ai-summarizer) ----
+    # ---- AI drawer: local summary + ask this chart ------------------------------
     summary_state = {"running": False}
-    summary_refs: dict = {}  # panel widgets, repopulated by render_results
+    summary_refs: dict = {}  # panel widgets, repopulated by render_ai
+    qa_state = {"running": False}
+    qa_refs: dict = {}
+
+    def render_ai() -> None:
+        ai_col.clear()
+        summary_refs.clear()
+        qa_refs.clear()
+        result = CLEAN_STATE.get("result")
+        with ai_col:
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label("Local AI").classes("text-lg font-semibold")
+                ui.button(icon="close", on_click=lambda: toggle_ai(False)).props("flat round dense")
+            if not result or CLEAN_STATE.get("result_mode") in ("abbreviations", "expand"):
+                ui.label("Do a full clean, then summarize the chart or ask questions about it — "
+                         "on this computer, through Ollama.").classes("text-sm opacity-70")
+                return
+            try:
+                opts = merge_llm_config(load_config(common.CONFIG_PATH))
+            except Exception:
+                opts = merge_llm_config({})
+            try:
+                probe = LocalLlmClient(str(opts["base_url"]), timeout=2.0)
+                listed = probe.list_models() if probe.is_available() else []
+            except Exception:
+                listed = []
+            model_val = str(opts["model"] or (listed[0] if listed else ""))
+            model_options = list(listed)
+            if model_val and model_val not in model_options:
+                model_options.append(model_val)
+            if not listed:
+                ui.label(f"No local LLM detected at {opts['base_url']} — install Ollama "
+                         "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`.") \
+                    .classes("text-xs text-orange-600")
+            ui.select(model_options, value=model_val or None, label="Model", new_value_mode="add",
+                      on_change=lambda e: save_llm_pref("model", e.value)).classes("w-full")
+
+            ui.label("Summary").classes("text-sm font-semibold mt-2")
+            preset_key = str(opts["prompt_preset"])
+            if preset_key not in PRESET_LABELS:
+                preset_key = "clinical"
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.select(dict(PRESET_LABELS), value=preset_key, label="Write",
+                          on_change=lambda e: (save_llm_pref("prompt_preset", e.value),
+                                               custom_box.set_visibility(e.value == "custom"))
+                          ).classes("flex-grow")
+                summary_refs["button"] = ui.button("Summarize", icon="psychology",
+                                                   on_click=run_summarize).props("unelevated color=primary")
+                summary_refs["spinner"] = ui.spinner("dots", size="sm")
+                summary_refs["spinner"].set_visibility(False)
+            custom_box = ui.textarea("Custom prompt (replaces the preset)",
+                                     value=str(opts["custom_prompt"]),
+                                     on_change=lambda e: save_llm_pref("custom_prompt", e.value)
+                                     ).props("outlined").classes("w-full cc-mono")
+            custom_box.set_visibility(preset_key == "custom")
+            summary_refs["output"] = ui.textarea("").props(
+                "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
+            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
+                summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
+            ui.button("Copy summary", icon="content_copy",
+                      on_click=lambda: copy_to_clipboard(summary_refs["output"].value or "")) \
+                .props("flat dense")
+            render_summary_output()
+
+            ui.separator().classes("my-2")
+            ui.label("Ask this chart").classes("text-sm font-semibold")
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                qa_refs["question"] = ui.input(
+                    "Ask about this chart",
+                    placeholder="e.g. What are the active antibiotics?").classes("flex-grow")
+                qa_refs["question"].on("keydown.enter", _ask_on_enter)
+                qa_refs["button"] = ui.button("Ask", icon="send", on_click=run_ask
+                                              ).props("unelevated color=primary")
+                qa_refs["spinner"] = ui.spinner("dots", size="sm")
+                qa_refs["spinner"].set_visibility(False)
+            if model_val:
+                ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
+                         "verified against the chart").classes("text-xs opacity-60")
+            qa_refs["log"] = ui.column().classes("w-full gap-2")
+            render_qa_log()
+
+    def toggle_ai(open_: bool | None = None) -> None:
+        value = (not ai_drawer.value) if open_ is None else bool(open_)
+        ai_drawer.set_value(value)
+        common.PREFS["ai_drawer"] = value
+        save_prefs()
 
     def save_llm_pref(key: str, value) -> None:
         try:
@@ -356,6 +812,16 @@ async def clean_page():
             save_config_with_backup(cfg)
         except Exception:
             pass  # preference saving must never break the panel
+
+    def grounding_badge(score: float, safe: bool, total: int) -> None:
+        if not total:
+            ui.badge("No checkable facts (no numbers/dates)", color="grey").props("outline")
+        elif not safe:
+            ui.badge(f"UNGROUNDED — only {score}% of numbers/dates found in chart", color="red")
+        elif score >= 100.0:
+            ui.badge("Grounded 100%", color="green")
+        else:
+            ui.badge(f"Grounded {score}%", color="amber")
 
     def render_summary_output() -> None:
         res = CLEAN_STATE.get("summary")
@@ -367,16 +833,7 @@ async def clean_page():
         row = summary_refs["grounding_row"]
         row.clear()
         with row:
-            if not g.total_entities:
-                ui.badge("No checkable facts (no numbers/dates in output)", color="grey") \
-                    .props("outline")
-            elif not g.is_safe:
-                ui.badge(f"UNGROUNDED — only {g.grounding_score}% of numbers/dates found in chart",
-                         color="red")
-            elif g.grounding_score >= 100.0:
-                ui.badge(f"Grounded 100%", color="green")
-            else:
-                ui.badge(f"Grounded {g.grounding_score}%", color="amber")
+            grounding_badge(g.grounding_score, g.is_safe, g.total_entities)
             for item in g.ungrounded_entities:
                 ui.button(item, icon="content_copy",
                           on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
@@ -405,10 +862,8 @@ async def clean_page():
             CLEAN_STATE["summary"] = result
             render_summary_output()
         except LlmUnavailableError as e:
-            ui.notify(
-                f"{e} — install Ollama from ollama.com, pull a model "
-                "(e.g. `ollama pull llama3.1`), then retry.",
-                type="warning", multi_line=True)
+            ui.notify(f"{e} — install Ollama from ollama.com, pull a model "
+                      "(e.g. `ollama pull llama3.1`), then retry.", type="warning", multi_line=True)
         except NoModelError as e:
             ui.notify(str(e), type="warning", multi_line=True)
         except ConfigError as e:
@@ -425,37 +880,21 @@ async def clean_page():
             except Exception:
                 pass  # the panel may have been re-rendered mid-run
 
-    # ---- ask this chart (grounded Q&A over the cleaned text) ----
-    qa_state = {"running": False}
-    qa_refs: dict = {}  # panel widgets, repopulated by render_results
-
     def render_qa_log() -> None:
         if "log" not in qa_refs:
             return
         log_col = qa_refs["log"]
         log_col.clear()
         turns = CLEAN_STATE.get("qa") or []
-        if not turns:
-            return
         with log_col:
             for t in turns:
                 ui.label("Q: " + t["q"]).classes("text-sm font-semibold")
                 ui.markdown(t["a"]).classes("w-full")
                 g = t["g"]
                 with ui.row().classes("items-center gap-1 flex-wrap"):
-                    if not g["total"]:
-                        ui.badge("No checkable facts (no numbers/dates in answer)",
-                                 color="grey").props("outline")
-                    elif not g["safe"]:
-                        ui.badge(f"UNGROUNDED — only {g['score']}% of numbers/dates found in chart",
-                                 color="red")
-                    elif g["score"] >= 100.0:
-                        ui.badge("Grounded 100%", color="green")
-                    else:
-                        ui.badge(f"Grounded {g['score']}%", color="amber")
+                    grounding_badge(g["score"], g["safe"], g["total"])
                     ui.button("Copy answer", icon="content_copy",
-                              on_click=lambda _, a=t["a"]: copy_to_clipboard(a)
-                              ).props("flat dense")
+                              on_click=lambda _, a=t["a"]: copy_to_clipboard(a)).props("flat dense")
                     ui.label(f"{t['model']} · {t['ms']:,} ms").classes("text-xs opacity-60")
                 ui.separator().classes("w-full opacity-30")
 
@@ -482,8 +921,7 @@ async def clean_page():
             history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
 
             def work():
-                return ask_chart(question, chart_text,
-                                 load_config(common.CONFIG_PATH), history=history)
+                return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history)
 
             res = await run.io_bound(work)
             if (CLEAN_STATE.get("result") is not chart_result
@@ -491,18 +929,15 @@ async def clean_page():
                 return
             CLEAN_STATE.setdefault("qa", []).append({
                 "q": res.question, "a": res.answer,
-                "g": {"score": res.grounding.grounding_score,
-                      "safe": res.grounding.is_safe,
+                "g": {"score": res.grounding.grounding_score, "safe": res.grounding.is_safe,
                       "total": res.grounding.total_entities},
                 "model": res.model, "ms": res.duration_ms})
             if q_box:
                 q_box.set_value("")
             render_qa_log()
         except LlmUnavailableError as e:
-            ui.notify(
-                f"{e} — install Ollama from ollama.com, pull a model "
-                "(e.g. `ollama pull llama3.1`), then retry.",
-                type="warning", multi_line=True)
+            ui.notify(f"{e} — install Ollama from ollama.com, pull a model "
+                      "(e.g. `ollama pull llama3.1`), then retry.", type="warning", multi_line=True)
         except NoModelError as e:
             ui.notify(str(e), type="warning", multi_line=True)
         except ConfigError as e:
@@ -519,6 +954,7 @@ async def clean_page():
             except Exception:
                 pass  # the panel may have been re-rendered mid-run
 
+    # ---- input helpers --------------------------------------------------------
     async def paste_clipboard() -> None:
         try:
             import pyperclip
@@ -535,7 +971,8 @@ async def clean_page():
         CLEAN_STATE.update(input="", result=None, result_text="", summary=None, qa=[])
         AUTO_LAST["text"] = None
         input_area.set_value("")
-        results_col.clear()
+        hide_selection_bar()
+        render_results()
 
     def load_sample() -> None:
         sample = BASE_DIR / "sample_chart.txt"
@@ -591,31 +1028,18 @@ async def clean_page():
         name = e.value
         common.PREFS.update(last_preset=name)
         save_prefs()
-        if not name:
-            return
-        try:
-            cfg = store.load_preset(name)
-            perrs, _ = validate_config(cfg)
-            if perrs:
-                ui.notify("Preset has invalid rules: " + "; ".join(perrs[:3]), type="negative")
-                return
-            save_config(cfg, common.CONFIG_PATH)
-            ui.notify(f"Preset '{name}' applied.", type="positive")
-        except Exception as ex:
-            ui.notify(f"Could not apply preset: {ex}", type="negative")
+        if name:
+            apply_preset(name)
 
-    def on_key(e) -> None:
-        try:
-            mods = set(e.modifiers or [])
-            if e.key == "Enter" and mods & {"Control", "Meta"}:
-                asyncio.get_running_loop().create_task(run_clean())
-        except Exception:
-            pass
+    def on_input_change(e) -> None:
+        CLEAN_STATE.update(input=e.value)
+        state["edited"] = time.monotonic()
 
     async def auto_tick() -> None:
-        if (not common.PREFS.get("auto_clean") or state["running"]
-                or highlight["mode"] != "off" or highlight["pending"]):
+        if (not common.PREFS.get("auto_clean") or state["running"] or highlight["pending"]):
             return
+        if time.monotonic() - state["edited"] < AUTO_CLEAN_PAUSE:
+            return  # still typing
         text = input_area.value or ""
         if text.strip() and text != AUTO_LAST["text"]:
             AUTO_LAST["text"] = text
@@ -623,34 +1047,74 @@ async def clean_page():
         elif not text.strip():
             AUTO_LAST["text"] = None
 
-    # ---- learn a rule from highlighted text ---------------------------------
-
+    # ---- teach from a selection (the selection toolbar) -----------------------
     def invalidate_output() -> None:
         CLEAN_STATE.update(input=input_area.value, result=None, result_text="", audit=None,
                            summary=None, qa=[], result_mode=None)
         AUTO_LAST["text"] = None
-        results_col.clear()
+        render_results()
 
-    def set_highlight_mode(mode: str, checked: bool) -> None:
-        if highlight.get("syncing"):
+    def hide_selection_bar() -> None:
+        highlight["selection"] = None
+        sel_bar.set_visibility(False)
+
+    def on_highlight(e) -> None:
+        if highlight["pending"] or state["running"]:
             return
-        if checked:
-            highlight["mode"] = mode
-        elif highlight["mode"] == mode:
-            highlight["mode"] = "off"
-        highlight["syncing"] = True
+        selection = e.args
+        if not isinstance(selection, dict) or not str(selection.get("text", "")).strip():
+            return
+        highlight["selection"] = selection
+        shown = " ".join(selection["text"].split())
+        sel_text.set_text(f"“{shown[:70]}{'…' if len(shown) > 70 else ''}”")
+        sel_bar.set_visibility(True)
+
+    def current_selection() -> dict | None:
+        selection = highlight.get("selection")
+        if not selection:
+            ui.notify("Select some text in the chart first.", type="info")
+            return None
         try:
-            remove_check.set_value(highlight["mode"] == "remove")
-            replace_check.set_value(highlight["mode"] == "replace")
-            abbreviate_check.set_value(highlight["mode"] == "abbreviate")
-        finally:
-            highlight["syncing"] = False
-        highlight_note.set_text({
-            "off": "Select text normally, or check a mode to teach a rule.",
-            "remove": "Highlight text to remove that selection immediately and remember it for future full cleans.",
-            "replace": "Highlight text to enter a replacement and remember it for future full cleans.",
-            "abbreviate": "Highlight a term to choose its abbreviation; it is added to your abbreviation dictionary.",
-        }[highlight["mode"]])
+            replace_selection(input_area.value or "", selection, "")
+        except ValueError as ex:
+            ui.notify(str(ex), type="warning")
+            hide_selection_bar()
+            return None
+        return selection
+
+    def sel_remove() -> None:
+        selection = current_selection()
+        if selection and apply_highlight(selection, ""):
+            hide_selection_bar()
+
+    def sel_replace() -> None:
+        selection = current_selection()
+        if selection:
+            open_replace_dialog(selection)
+
+    def sel_abbreviate() -> None:
+        selection = current_selection()
+        if selection:
+            open_abbreviate_dialog(selection)
+
+    def sel_more() -> None:
+        selection = current_selection()
+        if selection:
+            open_learn_dialog(selection["text"])
+
+    async def sel_keep() -> None:
+        selection = current_selection()
+        if not selection:
+            return
+        cfg = load_config(common.CONFIG_PATH)
+        snippet = selection["text"].strip()[:200]
+        for sid in EXCEPTION_STAGES:
+            keep = cfg.setdefault("stage_options", {}).setdefault(sid, {}).setdefault("exceptions", [])
+            if snippet not in keep:
+                keep.append(snippet)
+        save_config_with_backup(cfg)
+        hide_selection_bar()
+        highlight_status.set_text("Saved — rules will never remove text containing this selection.")
 
     def apply_highlight(selection: dict, replacement: str) -> bool:
         if state["running"]:
@@ -687,10 +1151,31 @@ async def clean_page():
             undo_btn.enable()
             highlight_status.set_text("Selection updated. Rule saved for future full cleans."
                                       + (" Learned rules enabled." if old_enabled is False else ""))
+            if added:
+                asyncio.get_running_loop().create_task(report_impact("learned_rules", pair, before))
             return True
         except Exception as ex:
             ui.notify(str(ex), type="negative")
             return False
+
+    async def report_impact(sid: str, entry, taught_on: str) -> None:
+        """After a rule is saved: say what it does to the other recent charts."""
+        def work():
+            return preview_rule(load_config(common.CONFIG_PATH), sid, entry,
+                                recent_charts.texts(20), skip_text=taught_on,
+                                examples=rule_examples.load())
+        try:
+            impact = await run.io_bound(work)
+        except Exception:
+            return
+        if impact.charts_checked:
+            msg = impact.headline
+            if impact.example_failures:
+                msg += f" It changes {len(impact.example_failures)} earlier lesson(s) — check My text rules."
+            try:
+                highlight_status.set_text(highlight_status.text + " " + msg)
+            except Exception:
+                pass
 
     def apply_abbreviation(selection: dict, term: str, abbreviation: str, acknowledged: bool) -> bool:
         if state["running"]:
@@ -717,6 +1202,7 @@ async def clean_page():
             input_area.set_value(after)
             invalidate_output()
             undo_btn.enable()
+            hide_selection_bar()
             highlight_status.set_text(
                 f"“{term}” → “{abbreviation}” added to your abbreviations."
                 + (" Medical abbreviations stage enabled." if old_enabled is False else ""))
@@ -795,6 +1281,7 @@ async def clean_page():
                     return
                 input_area.set_value(after)
                 invalidate_output()
+                hide_selection_bar()
                 highlight_status.set_text(f"“{term}” expanded to “{expanded}” in this chart (no rule saved).")
                 dlg.close()
 
@@ -804,6 +1291,26 @@ async def clean_page():
                 ui.button("Abbreviate & remember", on_click=save).props("unelevated")
                 if can_expand:
                     ui.button(f"Expand instead → {expanded}", on_click=expand_instead).props("flat")
+                ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
+        dlg.open()
+
+    def open_replace_dialog(selection: dict) -> None:
+        highlight["pending"] = True
+        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
+            ui.label("Replace highlighted text").classes("text-lg font-semibold")
+            ui.label(selection["text"]).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto")
+            replacement = ui.textarea("Replace with").props("outlined autofocus").classes("w-full")
+            ui.label("Updates this selection now and saves a rule for future full cleans. "
+                     "An empty replacement removes the selection.").classes("text-sm opacity-70")
+
+            def save_replacement() -> None:
+                if apply_highlight(selection, replacement.value or ""):
+                    hide_selection_bar()
+                    dlg.close()
+
+            with ui.row():
+                ui.button("Replace & remember", on_click=save_replacement).props("unelevated")
                 ui.button("Cancel", on_click=dlg.close).props("flat")
         dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
         dlg.open()
@@ -847,41 +1354,6 @@ async def clean_page():
         except Exception as ex:
             ui.notify(str(ex), type="negative")
 
-    def on_highlight(e) -> None:
-        if highlight["mode"] == "off" or highlight["pending"] or state["running"]:
-            return
-        selection = e.args
-        if not isinstance(selection, dict):
-            return
-        try:
-            replace_selection(input_area.value or "", selection, "")
-        except ValueError as ex:
-            ui.notify(str(ex), type="warning")
-            return
-        if highlight["mode"] == "remove":
-            apply_highlight(selection, "")
-            return
-        if highlight["mode"] == "abbreviate":
-            open_abbreviate_dialog(selection)
-            return
-        highlight["pending"] = True
-        with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
-            ui.label("Replace highlighted text").classes("text-lg font-semibold")
-            ui.label(selection["text"]).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto")
-            replacement = ui.textarea("Replace with").props("outlined autofocus").classes("w-full")
-            ui.label("Updates this selection now and saves a rule for future full cleans. "
-                     "An empty replacement removes the selection.").classes("text-sm opacity-70")
-
-            def save_replacement() -> None:
-                if apply_highlight(selection, replacement.value or ""):
-                    dlg.close()
-
-            with ui.row():
-                ui.button("Replace & remember", on_click=save_replacement).props("unelevated")
-                ui.button("Cancel", on_click=dlg.close).props("flat")
-        dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
-        dlg.open()
-
     def open_learn_dialog(selected: str) -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
             ui.label("Learn a rule from highlighted text").classes("font-semibold text-blue-600")
@@ -896,9 +1368,11 @@ async def clean_page():
                  LEARN_REMOVE_LINES: "Remove whole line(s) that are exactly this text",
                  LEARN_REPLACE: "Replace this text with…"},
                 value=LEARN_REMOVE_TEXT).props("dense")
-            repl = ui.input("Replace with (used by the last option only)",
-                            value="").props("outlined dense").classes("w-full")
+            repl = ui.textarea("Replace with (used by the last option only)",
+                               value="").props("outlined dense autogrow").classes("w-full")
             hit_lbl = ui.label("").classes("text-xs opacity-80")
+            impact_lbl = ui.label("").classes("text-xs opacity-80")
+            impact_box = ui.column().classes("w-full gap-0")
 
             def sync_hits() -> None:
                 m = mode.value or LEARN_REMOVE_TEXT
@@ -907,6 +1381,33 @@ async def clean_page():
                 hit_lbl.set_text(
                     f"Preview: matches {n} time(s) in your current chart" if n >= 0
                     else "Preview: pattern problem — adjust the highlighted text")
+
+            async def check_impact() -> None:
+                m = mode.value or LEARN_REMOVE_TEXT
+                pat = learned_pattern((txt.value or "").replace("\r\n", "\n").strip(), m)
+                if not pat:
+                    return
+                pair = [pat, (repl.value or "").replace("\\", "\\\\") if m == LEARN_REPLACE else ""]
+                impact_lbl.set_text("Checking your recent charts…")
+
+                def work():
+                    return preview_rule(load_config(common.CONFIG_PATH), "learned_rules", pair,
+                                        recent_charts.texts(20), skip_text=input_area.value or "",
+                                        examples=rule_examples.load())
+                try:
+                    impact = await run.io_bound(work)
+                except Exception as ex:
+                    impact_lbl.set_text(f"Could not check: {ex}")
+                    return
+                impact_lbl.set_text(impact.headline)
+                impact_box.clear()
+                with impact_box:
+                    for smp in impact.samples[:5]:
+                        ui.label(f"− {smp['before'][:160]}" + (f"   → {smp['after'][:80]}" if smp["after"] else "")) \
+                            .classes("text-xs cc-mono opacity-80")
+                    if impact.example_failures:
+                        ui.label(f"⚠ Changes {len(impact.example_failures)} earlier lesson(s).") \
+                            .classes("text-xs text-orange-600")
 
             txt.on_value_change(lambda e: sync_hits())
             mode.on_value_change(lambda e: sync_hits())
@@ -939,6 +1440,7 @@ async def clean_page():
                     report_error("Could not save the learned rule", ex)
                     return
                 dlg.close()
+                hide_selection_bar()
                 verb = "replace" if m == LEARN_REPLACE else "remove"
                 ui.notify(f"Rule saved — matches will be {verb}d every time you Clean "
                           "(manage them on the Pipeline page → Learned rules).", type="positive")
@@ -946,23 +1448,10 @@ async def clean_page():
             with ui.row().classes("gap-2"):
                 ui.button("Save rule", icon="school", on_click=save_learned) \
                     .props("unelevated color=primary")
+                ui.button("Check my recent charts", icon="travel_explore", on_click=check_impact) \
+                    .props("flat")
                 ui.button("Cancel", on_click=dlg.close).props("flat")
         dlg.open()
-
-    async def learn_from_selection() -> None:
-        try:
-            sel = await ui.run_javascript(
-                "(function(){var ta=document.querySelector('.cc-learn-src textarea');"
-                "if(!ta)return '';"
-                "var s=ta.selectionStart,e=ta.selectionEnd;"
-                "return (s===e)?'':ta.value.substring(s,e);})()")
-        except Exception:
-            sel = None
-        if not sel or not str(sel).strip():
-            ui.notify("Highlight some text in the chart above first, then click Learn.",
-                      type="info")
-            return
-        open_learn_dialog(str(sel))
 
     def removed_groups(result) -> list[dict]:
         """Text deleted by the line, block and learned-rule stages, grouped by rule."""
@@ -1002,20 +1491,17 @@ async def clean_page():
                     ui.label(f"… {len(seen) - 12} more").classes("text-xs opacity-60")
 
     def render_fact_check(report) -> None:
-        """The "Nothing clinical lost" badge and, when something went, the list."""
+        """Details behind the trust badge: which clinical values went, and where."""
+        if not report.losses:
+            return
         status = report.status
         icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
                        "alert": ("report", "red")}[status]
-        if not report.losses:
-            with ui.row().classes("items-center gap-1").mark("fact-check"):
-                ui.icon(icon, color=color)
-                ui.label(report.headline()).classes(f"text-sm text-{color}")
-            return
         titles = {"unexpected": "Lost by a stage that should only reformat",
                   "rule": "Removed by a removal rule",
                   "by_design": "Dropped by a section or summary setting"}
         with ui.expansion(report.headline(), icon=icon, value=status == "alert") \
-                .classes(f"w-full text-{color}").mark("fact-check"):
+                .classes(f"w-full text-{color}"):
             ui.label("Numbers with units, lab and vital values, medications and safety words "
                      "(allergies, code status) are counted before and after every stage.") \
                 .classes("text-xs opacity-70")
@@ -1072,57 +1558,6 @@ async def clean_page():
             return
         copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
 
-    def render_trends(trends) -> None:
-        ui.label(f"Across {len(trends.notes)} notes: each lab's last value per note "
-                 "(— = not in that note) and medication-list changes between notes.") \
-            .classes("text-sm opacity-70")
-        if trends.labs:
-            cols = [{"name": "lab", "label": "Lab", "field": "lab", "align": "left"}] + [
-                {"name": f"n{i}", "label": label, "field": f"n{i}"}
-                for i, label in enumerate(trends.notes)] + [
-                {"name": "dir", "label": "", "field": "dir"}]
-            rows = [{"lab": t.name, "dir": t.direction(),
-                     **{f"n{i}": v or "—" for i, v in enumerate(t.values)}} for t in trends.labs]
-            ui.table(columns=cols, rows=rows, row_key="lab").classes("w-full").props("flat dense") \
-                .mark("trends-table")
-        for change in trends.meds:
-            with ui.column().classes("gap-0 mt-1"):
-                ui.label(f"{change.before} → {change.after}").classes("text-sm font-semibold")
-                for m in change.started:
-                    ui.label(f"+ started {m}").classes("text-xs cc-mono text-green-700")
-                for m in change.stopped:
-                    ui.label(f"− stopped {m}").classes("text-xs cc-mono text-red-700")
-                for a, b in change.changed:
-                    ui.label(f"~ {a} → {b}").classes("text-xs cc-mono text-orange-700")
-        block = trends.to_text()
-
-        def prepend() -> None:
-            copy_to_clipboard(f"{block}\n\n{CLEAN_STATE['result_text']}", "Result with trends copied")
-
-        with ui.row().classes("gap-2"):
-            ui.button("Copy trends", icon="content_copy",
-                      on_click=lambda: copy_to_clipboard(block)).props("unelevated")
-            ui.button("Copy result with trends on top", icon="vertical_align_top",
-                      on_click=prepend).props("flat")
-
-    def render_delta(delta) -> None:
-        ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
-                 "removed. The first note is kept in full; later notes show only sentences that are "
-                 "new or changed.").classes("text-sm opacity-70")
-        box = ui.textarea("", value=delta.compact_text)
-        box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
-
-        def use_for_ai() -> None:
-            CLEAN_STATE["result_text"] = delta.compact_text
-            ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
-                      type="positive")
-
-        with ui.row().classes("gap-2"):
-            ui.button("Copy", icon="content_copy",
-                      on_click=lambda: copy_to_clipboard(delta.compact_text)).props("unelevated")
-            ui.button("Use for AI summary & questions", icon="psychology",
-                      on_click=use_for_ai).props("flat")
-
     def render_abbreviation_changes(changes: list[dict]) -> None:
         """Every abbreviation applied in this result, with quick fixes."""
         cfg = load_config(common.CONFIG_PATH)
@@ -1141,7 +1576,7 @@ async def clean_page():
             source = (f"pack: {entry['pack']}" if entry and entry.get("pack")
                       else "my rule" if g["source"] == "custom" else "dictionary")
             with ui.row().classes("w-full items-center gap-2 border-b pb-1"):
-                ui.label(g["term"]).classes("font-medium min-w-[240px]")
+                ui.label(g["term"]).classes("font-medium min-w-[200px]")
                 ui.label("→")
                 ui.label(g["after"]).classes("min-w-[80px]")
                 ui.badge(f"×{g['count']}").props("outline")
@@ -1227,12 +1662,126 @@ async def clean_page():
                 ui.button("Cancel", on_click=dlg.close).props("flat")
         dlg.open()
 
+    # ---- rule inbox -------------------------------------------------------------
+    async def refresh_inbox() -> None:
+        def work():
+            return rule_inbox.suggestions(load_config(common.CONFIG_PATH), recent_charts.texts(20))
+        try:
+            items = await run.io_bound(work)
+        except Exception:
+            items = []
+        inbox["items"] = items
+        try:
+            inbox_btn.set_text(f"Suggestions ({len(items)})" if items else "Suggestions")
+            inbox_btn.props(f"color={'amber-9' if items else 'grey'}")
+        except Exception:
+            pass  # the page may be gone
+
+    def open_inbox() -> None:
+        with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2").mark("inbox-dialog"):
+            ui.label("Rule suggestions").classes("text-lg font-semibold")
+            ui.label("From your recent charts (kept encrypted on this computer — see Settings → "
+                     "Stored chart data). Lines with clinical values are never suggested for removal.") \
+                .classes("text-xs opacity-70")
+            body = ui.column().classes("w-full gap-2")
+
+            def draw() -> None:
+                body.clear()
+                with body:
+                    if not inbox["items"]:
+                        n = recent_charts.count()
+                        ui.label("Nothing to suggest right now." if n >= rule_inbox.MIN_CHARTS else
+                                 f"Suggestions start after {rule_inbox.MIN_CHARTS} cleaned charts "
+                                 f"({n} so far).").classes("text-sm")
+                    for item in list(inbox["items"]):
+                        with ui.card().classes("w-full p-3 gap-1"):
+                            ui.label(item.title).classes("text-sm font-semibold break-all")
+                            ui.label(item.detail).classes("text-sm")
+                            for smp in item.samples[:3]:
+                                ui.label(smp[:200]).classes("text-xs cc-mono opacity-70 break-all")
+                            short = None
+                            impact = ui.label("").classes("text-xs opacity-80")
+                            with ui.row().classes("items-center gap-2"):
+                                if item.kind == "abbreviation":
+                                    short = ui.input("Abbreviation", value=item.suggestion) \
+                                        .props("dense outlined").classes("w-32")
+                                ui.button("Accept", icon="check",
+                                          on_click=lambda i=item, s=short: accept(i, s)) \
+                                    .props("unelevated dense")
+                                if item.kind == "remove_line":
+                                    ui.button("Check impact", icon="travel_explore",
+                                              on_click=lambda i=item, lbl=impact: check(i, lbl)) \
+                                        .props("flat dense")
+                                ui.button("Dismiss", icon="close",
+                                          on_click=lambda i=item: dismiss(i)).props("flat dense color=grey")
+
+            async def check(item, label) -> None:
+                def work():
+                    return preview_rule(load_config(common.CONFIG_PATH), "metadata_lines",
+                                        item.pattern, recent_charts.texts(20))
+                impact = await run.io_bound(work)
+                label.set_text(impact.headline.replace("Would also change", "Would change"))
+
+            def accept(item, short) -> None:
+                if item.kind == "abbreviation":
+                    value = ((short.value if short else "") or item.suggestion).strip()
+
+                    def persist(acknowledged: bool) -> None:
+                        cfg = rule_inbox.accept(load_config(common.CONFIG_PATH), item,
+                                                replacement=value, acknowledged=acknowledged)
+                        save_config_with_backup(cfg)
+                        done(item, f"“{item.phrase}” → “{value}” added to your abbreviations.")
+
+                    save_abbreviation_with_safety(item.phrase, value, load_config(common.CONFIG_PATH), persist)
+                    return
+                try:
+                    save_config_with_backup(rule_inbox.accept(load_config(common.CONFIG_PATH), item))
+                except Exception as ex:
+                    ui.notify(str(ex), type="negative")
+                    return
+                done(item, "Rule added — lines like this are removed on every clean.")
+
+            def dismiss(item) -> None:
+                rule_inbox.dismiss(item.id)
+                if item.kind == "abbreviation":
+                    try:
+                        save_config_with_backup(rule_inbox.reject_phrase(
+                            load_config(common.CONFIG_PATH), item.phrase))
+                    except Exception:
+                        pass
+                done(item, "")
+
+            def done(item, message: str) -> None:
+                inbox["items"] = [i for i in inbox["items"] if i.id != item.id]
+                if message:
+                    ui.notify(message, type="positive")
+                inbox_btn.set_text(f"Suggestions ({len(inbox['items'])})" if inbox["items"] else "Suggestions")
+                draw()
+
+            draw()
+            ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    # ---- first run ------------------------------------------------------------
+    async def try_sample() -> None:
+        finish_onboarding()
+        load_sample()
+        await run_clean()
+
+    def finish_onboarding() -> None:
+        common.PREFS["onboarded"] = True
+        save_prefs()
+        try:
+            onboarding.set_visibility(False)
+        except Exception:
+            pass
+
     # ---- UI ------------------------------------------------------------------
     def on_mode_change(e) -> None:
         CLEAN_STATE.update(mode=e.value, result=None, result_text="", audit=None,
                            summary=None, qa=[], result_mode=None)
         AUTO_LAST["text"] = None
-        results_col.clear()
+        render_results()
         sync_mode_controls()
 
     def sync_mode_controls() -> None:
@@ -1248,7 +1797,40 @@ async def clean_page():
                       "PHI is not removed.",
         }.get(mode, "Runs your cleaning pipeline, including your medical abbreviation dictionary."))
 
-    with shell("Clean a chart", "clean"):
+    commands = [
+        {"label": "Clean the chart", "icon": "auto_fix_high", "group": "Clean", "run": run_clean},
+        {"label": "Paste from clipboard", "icon": "content_paste", "group": "Clean", "run": paste_clipboard},
+        {"label": "Load the sample chart", "icon": "science", "group": "Clean", "run": load_sample},
+        {"label": "Clear the chart", "icon": "delete_sweep", "group": "Clean", "run": clear_all},
+        {"label": "Toggle the AI panel", "icon": "psychology", "group": "Clean", "run": lambda: toggle_ai()},
+        {"label": "Show rule suggestions", "icon": "lightbulb", "group": "Clean", "run": open_inbox},
+        {"label": "Restore names in an AI reply", "icon": "settings_backup_restore", "group": "Clean",
+         "run": open_restore_dialog},
+        *[{"label": f"Copy as {label}", "icon": icon, "group": "Copy", "run": lambda k=key: copy_as(k)}
+          for key, (label, icon) in COPY_FORMATS.items()],
+        {"label": "Review changes", "icon": "rule", "group": "Clean", "run": lambda: show_tab(1)},
+        {"label": "Show insights (trends, timeline)", "icon": "insights", "group": "Clean",
+         "run": lambda: show_tab(2)},
+    ]
+    shortcuts = [
+        ("mod+enter", "Clean the chart", run_clean),
+        ("mod+shift+c", "Copy the result (main Copy format)", lambda: copy_as()),
+        ("alt+1", "Output tab", lambda: show_tab(0)),
+        ("alt+2", "Review tab", lambda: show_tab(1)),
+        ("alt+3", "Insights tab", lambda: show_tab(2)),
+        ("alt+a", "Open or close the AI panel", lambda: toggle_ai()),
+    ]
+
+    with ui.right_drawer(value=bool(common.PREFS.get("ai_drawer")), fixed=False) \
+            .props("width=440 bordered").classes("bg-grey-1 dark:bg-grey-10 p-4") as ai_drawer:
+        ai_col = ui.column().classes("w-full gap-2").mark("ai-panel")
+
+    def header_actions() -> None:
+        ui.button(icon="psychology", on_click=lambda: toggle_ai()) \
+            .props("flat round aria-label='Local AI panel'").tooltip("Local AI panel (Alt+A)")
+
+    with shell("Clean a chart", "clean", wide=True, commands=commands, shortcuts=shortcuts,
+               actions=header_actions):
         errs, _warns = validate_config(load_config(common.CONFIG_PATH))
         if errs:
             with ui.card().classes("w-full border-red-400"):
@@ -1256,98 +1838,119 @@ async def clean_page():
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs text-red-500")
 
-        mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
-                              "expand": "Expand abbreviations"},
-                             value=CLEAN_STATE.get("mode", "clean"),
-                             on_change=on_mode_change)
-        mode_note = ui.label("").classes("text-sm opacity-70")
-        presets = store.list_presets()
-        preset_sel = ui.select(
-            options={**{p: f"📦 {p}" for p in presets}, "": "(config.json — current rules)"},
-            value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
-            label="Rule preset",
-        ).classes("w-60")
+        with ui.card().classes("w-full gap-2 bg-blue-50 dark:bg-slate-900").mark("onboarding") as onboarding:
+            ui.label("New here? Four steps").classes("font-semibold")
+            with ui.row().classes("w-full gap-6 flex-wrap text-sm"):
+                ui.label("① Paste or drop a chart on the left")
+                ui.label(f"② Clean ({MOD}+Enter)")
+                ui.label("③ Review — click any struck-out text to see the rule")
+                ui.label("④ Copy as… Epic-safe, Markdown or an AI prompt")
+            with ui.row().classes("gap-2"):
+                ui.button("Try it on the sample chart", icon="science", on_click=try_sample) \
+                    .props("unelevated no-caps")
+                ui.button("Got it", on_click=finish_onboarding).props("flat no-caps")
+        onboarding.set_visibility(not common.PREFS.get("onboarded"))
 
-        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-            clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
-            clean_btn.mark("run-clean")
-            clean_btn.props("unelevated color=primary")
-            spinner = ui.spinner("dots", size="lg")
-            spinner.set_visibility(False)
-            ui.button("Paste from clipboard", icon="content_paste", on_click=paste_clipboard).props("outline")
-            ui.button("Learn rule from selection", icon="highlight", on_click=learn_from_selection) \
-                .props("flat").tooltip("Advanced: remove text, whole lines, or save a replacement")
-            ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
-        with ui.row().classes("w-full items-center gap-2"):
-            ui.switch("Auto-clean as I type", value=bool(common.PREFS.get("auto_clean")),
-                      on_change=lambda e: (common.PREFS.update(auto_clean=e.value), save_prefs()))
-            ui.label("Tip: Ctrl/⌘+Enter cleans.").classes("text-xs opacity-60 ml-auto")
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
+                                  "expand": "Expand abbreviations"},
+                                 value=CLEAN_STATE.get("mode", "clean"),
+                                 on_change=on_mode_change)
+            presets = store.list_presets()
+            preset_sel = ui.select(
+                options={**{p: f"📦 {p}" for p in presets}, "": "(config.json — current rules)"},
+                value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
+                label="Rule preset",
+            ).props("dense outlined").classes("w-60")
+            ui.space()
+            inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
+                .props("flat no-caps color=grey").mark("inbox")
+            ui.button("AI panel", icon="psychology", on_click=lambda: toggle_ai()).props("flat no-caps")
+        mode_note = ui.label("").classes("text-sm opacity-70 -mt-2")
 
-        with ui.card().classes("w-full gap-2 bg-blue-50 dark:bg-slate-900"):
-            with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-                ui.icon("highlight").classes("text-primary")
-                ui.label("Highlight to teach").classes("font-semibold")
-                remove_check = ui.checkbox("Remove mode", value=False,
-                    on_change=lambda e: set_highlight_mode("remove", e.value))
-                replace_check = ui.checkbox("Replace mode", value=False,
-                    on_change=lambda e: set_highlight_mode("replace", e.value))
-                abbreviate_check = ui.checkbox("Abbreviate mode", value=False,
-                    on_change=lambda e: set_highlight_mode("abbreviate", e.value))
-                undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight).props("flat dense")
-                undo_btn.disable()
-            highlight_note = ui.label("Select text normally, or check a mode to teach a rule.").classes("text-sm")
-            with ui.row().classes("items-center gap-3 flex-wrap"):
-                word_check = ui.checkbox("Whole words only", value=True)
-                case_check = ui.checkbox("Match case", value=False)
-                ui.button("Manage & share rules", icon="tune",
-                          on_click=lambda: ui.navigate.to("/rules")).props("flat dense")
-            ui.label("Auto-clean pauses while a highlighting mode is checked. Undo restores the last edit and its rule.") \
-                .classes("text-xs opacity-70")
-            highlight_status = ui.label("").classes("text-sm text-primary").props("role=status aria-live=polite")
+        with ui.element("div").classes("grid grid-cols-1 xl:grid-cols-2 gap-6 w-full items-start"):
+            # ---- left: the chart ----
+            with ui.column().classes("w-full gap-2 min-w-0"):
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
+                    clean_btn.mark("run-clean")
+                    clean_btn.props("unelevated color=primary").tooltip(f"{MOD}+Enter")
+                    spinner = ui.spinner("dots", size="lg")
+                    spinner.set_visibility(False)
+                    ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
+                    ui.button("Sample", icon="science", on_click=load_sample).props("flat no-caps") \
+                        .tooltip("Load the sample chart")
+                    ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
+                    ui.space()
+                    ui.switch("Auto-clean", value=bool(common.PREFS.get("auto_clean")),
+                              on_change=lambda e: (common.PREFS.update(auto_clean=e.value), save_prefs())) \
+                        .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
 
-        if HAS_EX4:
-            # ex4nicegui gives the textarea a reactive value signal; the plain
-            # NiceGUI element underneath keeps every existing code path intact.
-            _rx_input = rxui.textarea(
-                "Chart text (paste an Epic export, drop a file, or load the sample)",
-                value=CLEAN_STATE["input"],
-                on_change=lambda e: CLEAN_STATE.update(input=e.value))
-            input_area = _rx_input.element
-            input_area.props("outlined input-style='min-height: 220px'") \
-                .classes("w-full cc-mono cc-learn-src")
-        else:
-            input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
-                                     value=CLEAN_STATE["input"],
-                                     on_change=lambda e: CLEAN_STATE.update(input=e.value))
-            input_area.props("outlined input-style='min-height: 220px'") \
-                .classes("w-full cc-mono cc-learn-src")
+                with ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
+                                      "bg-amber-50 dark:bg-slate-800").mark("selection-bar") as sel_bar:
+                    ui.icon("highlight").classes("text-amber-700")
+                    sel_text = ui.label("").classes("text-xs cc-mono max-w-[220px] truncate")
+                    ui.button("Remove", icon="backspace", on_click=sel_remove) \
+                        .props("flat dense no-caps").mark("sel-remove") \
+                        .tooltip("Remove this selection now and on every future clean")
+                    ui.button("Replace…", icon="find_replace", on_click=sel_replace) \
+                        .props("flat dense no-caps").mark("sel-replace")
+                    ui.button("Abbreviate…", icon="short_text", on_click=sel_abbreviate) \
+                        .props("flat dense no-caps").mark("sel-abbreviate")
+                    ui.button("Never remove", icon="shield", on_click=sel_keep) \
+                        .props("flat dense no-caps").mark("sel-keep") \
+                        .tooltip("Rules will never remove text containing this")
+                    ui.button("More…", icon="school", on_click=sel_more) \
+                        .props("flat dense no-caps").mark("sel-more") \
+                        .tooltip("Advanced: remove whole lines, edit the text, check your recent charts")
+                    with ui.button(icon="tune").props("flat dense round").tooltip("Matching options"):
+                        with ui.menu().classes("p-2"):
+                            word_check = ui.checkbox("Whole words only", value=True)
+                            case_check = ui.checkbox("Match case", value=False)
+                    ui.button(icon="close", on_click=hide_selection_bar).props("flat dense round")
+                sel_bar.set_visibility(False)
+                with ui.row().classes("w-full items-center gap-2 -mt-1"):
+                    highlight_status = ui.label("Select text in the chart to remove, replace or "
+                                                "abbreviate it — and remember that for next time.") \
+                        .classes("text-xs opacity-70 flex-grow").props("role=status aria-live=polite")
+                    undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
+                        .props("flat dense no-caps")
+                    undo_btn.disable()
 
-        ui.label().bind_text_from(input_area, "value", lambda t:
-            f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                if HAS_EX4:
+                    # ex4nicegui gives the textarea a reactive value signal; the plain
+                    # NiceGUI element underneath keeps every existing code path intact.
+                    _rx_input = rxui.textarea(
+                        "Chart text (paste an Epic export, drop a file, or load the sample)",
+                        value=CLEAN_STATE["input"], on_change=on_input_change)
+                    input_area = _rx_input.element
+                else:
+                    input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
+                                             value=CLEAN_STATE["input"], on_change=on_input_change)
+                input_area.props("outlined input-style='min-height: 420px'") \
+                    .classes("w-full cc-mono cc-learn-src")
+                input_area.mark("highlight-source")
+                for event_name in ("mouseup", "keyup", "touchend"):
+                    input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
 
-        input_area.mark("highlight-source")
-        for event_name in ("mouseup", "keyup", "touchend"):
-            input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                    ui.label().bind_text_from(input_area, "value", lambda t:
+                        f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                    ui.space()
+                    ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
+                              label="Drop .txt / .docx / .pdf") \
+                        .props("accept=.txt,.md,.docx,.pdf,text/plain flat dense").classes("max-w-[260px]")
+                    ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
+                        .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
-        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-            ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True) \
-                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("max-w-xs")
-            ui.button("Load sample chart", icon="science", on_click=load_sample).props("flat")
-
-        results_col = ui.column().classes("w-full gap-3")
-        sync_mode_controls()
-
-        with ui.row().classes("w-full items-center gap-2"):
-            ui.label("Many files to clean?").classes("text-xs opacity-60")
-            ui.button("Open Batch page", icon="layers",
-                      on_click=lambda: ui.navigate.to("/batch")).props("flat dense")
+            # ---- right: the result ----
+            results_col = ui.column().classes("w-full gap-2 min-w-0").mark("results")
 
         preset_sel.on_value_change(on_preset_change)
-        ui.keyboard(on_key=on_key)
-        ui.timer(1.2, auto_tick)
-
-        if CLEAN_STATE.get("result"):
-            render_results()
+        sync_mode_controls()
+        ui.timer(0.5, auto_tick)
+        ui.timer(0.3, refresh_inbox, once=True)
+        render_results()
 
 
 # ===========================================================================

@@ -22,6 +22,7 @@ from chartcleaner.local_llm import (
 __all__ = [
     "DEFAULT_LLM",
     "SUMMARY_PRESETS",
+    "PRESET_LABELS",
     "LlmUnavailableError",
     "NoModelError",
     "SummaryResult",
@@ -58,6 +59,28 @@ SUMMARY_PRESETS: dict[str, str] = {
         f"{PRESET_INSTRUCTION}\n\nList the key findings from the chart below "
         "as bullets, one finding per bullet, most important first"
     ),
+    "one_liner": (
+        f"{PRESET_INSTRUCTION}\n\nWrite a single-sentence clinical one-liner for the "
+        "chart below: age and sex if stated, key history, presenting problem and "
+        "current status. One sentence only"
+    ),
+    "problem_list": (
+        f"{PRESET_INSTRUCTION}\n\nWrite an active problem list for the chart below. "
+        "One line per problem, most acute first, formatted as "
+        "'# Problem — current status; plan' using only what the chart states"
+    ),
+    "handoff": (
+        f"{PRESET_INSTRUCTION}\n\nWrite a short handoff for the next shift from the chart "
+        "below, with these exact headings:\n## What changed\n## Watch for\n## To do\n"
+        "Under 'What changed', compare the most recent note with the earlier ones"
+    ),
+}
+
+# Labels the app shows for each preset (keys of SUMMARY_PRESETS plus "custom").
+PRESET_LABELS: dict[str, str] = {
+    "clinical": "Clinical sections", "brief": "Brief paragraph", "findings": "Key findings",
+    "one_liner": "One-liner", "problem_list": "Problem list", "handoff": "Handoff: what changed",
+    "custom": "Custom prompt",
 }
 
 

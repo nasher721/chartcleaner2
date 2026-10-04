@@ -498,7 +498,8 @@ class Pipeline:
     # -- execution -----------------------------------------------------------
 
     def run(self, text: str, wrap: bool | None = None, *,
-            track_changes: bool = False, fact_check: bool | None = None) -> RunResult:
+            track_changes: bool = False, fact_check: bool | None = None,
+            cache: Any = None) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
@@ -506,9 +507,12 @@ class Pipeline:
         ``fact_check`` (default: config ``fact_check.enabled``, clean mode
         only) compares clinical facts before and after every stage and puts a
         :class:`~chartcleaner.fact_check.FactReport` in ``result.fact_check``.
+        ``cache`` (a :class:`~chartcleaner.stage_cache.StageCache`) reuses a
+        builtin stage's output when its input text and own settings are unchanged.
         """
         started = time.perf_counter()
         ctx = CleanContext(self.config, track_changes=track_changes)
+        self._cache = cache
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
@@ -584,7 +588,17 @@ class Pipeline:
                 else:
                     st.matches, st.details = n, details
             else:
-                text, n, details = RUNNERS[spec.kind](text, self.config, ctx)
+                cache = getattr(self, "_cache", None)
+                use = cache is not None
+                key = cache.key(spec.id, text, self.config, ctx.track_changes) if use else None
+                hit = cache.get(key) if use else None
+                if hit is not None:
+                    text, n, details = hit
+                else:
+                    out, n, details = RUNNERS[spec.kind](text, self.config, ctx)
+                    if use:
+                        cache.put(key, out, n, details)
+                    text = out
                 st.matches, st.details = n, details
         except NlpUnavailable as e:
             st.skipped = True

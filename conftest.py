@@ -16,7 +16,9 @@ def _isolate_user_data(tmp_path, monkeypatch):
                        "AUDIT_HITS_FILE": data / "audit_hits.jsonl",
                        "SUGGESTIONS_STATE_FILE": data / "suggestions_state.json",
                        "WATCHED_OUT_DIR": data / "watched_out",
-                       "PREFS_FILE": data / "prefs.json"}.items():
+                       "PREFS_FILE": data / "prefs.json",
+                       "RECENT_DIR": data / "recent", "KNOWN_GOOD_DIR": data / "known_good",
+                       "INBOX_STATE_FILE": data / "inbox_state.json"}.items():
         monkeypatch.setattr(store, name, path)
     # Encryption keys go to a private file in tmp, never the real Keychain/DPAPI.
     from chartcleaner import secure_store

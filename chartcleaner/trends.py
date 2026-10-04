@@ -34,7 +34,18 @@ from .compactors.meds import _STRENGTH, medication_list
 from .delta_engine import _split_into_notes
 from .fact_check import _is_drug, _mask
 
-__all__ = ["LabTrend", "MedChange", "TrendReport", "build"]
+__all__ = ["LabTrend", "MedChange", "TrendReport", "build", "REFERENCE_RANGES"]
+
+# Typical adult reference ranges, only to shade out-of-range points in the
+# Trends view (each lab's own range may differ; the values are never changed).
+REFERENCE_RANGES: dict[str, tuple[float, float]] = {
+    "Na": (135, 145), "K": (3.5, 5.1), "Cl": (98, 107), "CO2": (22, 29), "BUN": (7, 20),
+    "Cr": (0.6, 1.3), "Glu": (70, 140), "Ca": (8.5, 10.5), "AG": (3, 12), "Mg": (1.7, 2.4),
+    "Phos": (2.5, 4.5), "WBC": (4.0, 11.0), "Hgb": (12.0, 17.5), "Hct": (36, 52),
+    "Plt": (150, 400), "MCV": (80, 100), "AST": (0, 40), "ALT": (0, 45), "ALP": (40, 130),
+    "TBili": (0.1, 1.2), "Alb": (3.5, 5.0), "INR": (0.8, 1.2), "PT": (11, 13.5),
+    "PTT": (25, 35), "Lactate": (0.5, 2.0),
+}
 
 # alias (lowercase) -> canonical short name
 _ALIASES: dict[str, str] = {alias: short for short, (_, names) in LABS.items() for alias in names}
@@ -112,6 +123,25 @@ class LabTrend:
         change = (nums[-1] - nums[0]) / abs(nums[0])
         return "↑" if change > 0.05 else "↓" if change < -0.05 else ""
 
+    def numbers(self) -> list[float | None]:
+        """Each value as a number (None where the note had none)."""
+        out: list[float | None] = []
+        for v in self.values:
+            try:
+                out.append(float(v.lstrip("<>")) if v is not None else None)
+            except ValueError:
+                out.append(None)
+        return out
+
+    def flags(self) -> list[str]:
+        """"H"/"L"/"" per value against :data:`REFERENCE_RANGES` ("" when unknown)."""
+        rng = REFERENCE_RANGES.get(self.name)
+        if not rng:
+            return ["" for _ in self.values]
+        low, high = rng
+        return ["" if n is None else "H" if n > high else "L" if n < low else ""
+                for n in self.numbers()]
+
     def to_text(self) -> str:
         arrow = self.direction()
         return f"{self.name}: " + " → ".join(v or "—" for v in self.values) + (f" {arrow}" if arrow else "")
@@ -155,10 +185,25 @@ class TrendReport:
             out.extend(c.to_text() for c in self.meds)
         return "\n".join(out)
 
+    def med_rows(self) -> list[dict]:
+        """One row per medication event: ``{"when", "drug", "change", "before", "after"}``."""
+        rows: list[dict] = []
+        for c in self.meds:
+            when = f"{c.before} → {c.after}"
+            rows += [{"when": when, "drug": _drug_key(m), "change": "started", "before": "", "after": m}
+                     for m in c.started]
+            rows += [{"when": when, "drug": _drug_key(m), "change": "stopped", "before": m, "after": ""}
+                     for m in c.stopped]
+            rows += [{"when": when, "drug": _drug_key(b), "change": "dose changed", "before": a, "after": b}
+                     for a, b in c.changed]
+        return rows
+
     def to_dict(self) -> dict:
         return {"notes": list(self.notes),
-                "labs": [{"name": t.name, "values": list(t.values), "direction": t.direction()}
+                "labs": [{"name": t.name, "values": list(t.values), "direction": t.direction(),
+                          "flags": t.flags()}
                          for t in self.labs],
+                "med_rows": self.med_rows(),
                 "meds": [{"before": c.before, "after": c.after, "started": c.started,
                           "stopped": c.stopped, "changed": [list(p) for p in c.changed]}
                          for c in self.meds],

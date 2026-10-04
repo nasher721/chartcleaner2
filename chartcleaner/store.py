@@ -46,6 +46,9 @@ EXPORTS_DIR = DATA_DIR / "exports"
 AUDIT_HITS_FILE = DATA_DIR / "audit_hits.jsonl"
 SUGGESTIONS_STATE_FILE = DATA_DIR / "suggestions_state.json"
 BACKUPS_DIR = DATA_DIR / "backups"
+RECENT_DIR = DATA_DIR / "recent"            # encrypted recent inputs (recent_charts.py)
+KNOWN_GOOD_DIR = DATA_DIR / "known_good"    # encrypted regression charts (regression_set.py)
+INBOX_STATE_FILE = DATA_DIR / "inbox_state.json"  # dismissed rule-inbox ids (no chart text)
 _MIGRATION_CHECKED = False
 
 
@@ -70,6 +73,12 @@ DEFAULT_PREFS = {
     "note_auto_apply": False,
     # Delete token maps and batch/watcher output older than this (0 = keep).
     "retention_days": 14,
+    # Encrypted copies of recent inputs for the rule inbox (recent_charts.py).
+    "recent_charts": {"enabled": True, "keep": 20},
+    # Clean page: layout and the main "Copy as…" format.
+    "copy_default": "text",
+    "ai_drawer": False,
+    "onboarded": False,
 }
 
 
@@ -538,6 +547,8 @@ WATCHED_OUT_DIR = DATA_DIR / "watched_out"
 def _chart_data_paths() -> list[Path]:
     """Files and folders under data/ that hold chart text or PHI."""
     paths: list[Path] = _token_map_files()
+    if RECENT_DIR.exists():
+        paths += list(RECENT_DIR.glob("chart-*.enc"))
     if EXPORTS_DIR.exists():
         paths += [p for p in EXPORTS_DIR.iterdir() if p.name != ".gitkeep"]
     if WATCHED_OUT_DIR.exists():
@@ -599,8 +610,10 @@ def maybe_purge_old_data(every_seconds: float = 3600.0) -> None:
 
 
 def delete_all_chart_data() -> int:
-    """"Delete stored chart data now": token maps, exports and watcher output."""
-    return sum(_remove(p) for p in _chart_data_paths())
+    """"Delete stored chart data now": token maps, recent charts, known-good
+    charts, exports and watcher output."""
+    known_good = list(KNOWN_GOOD_DIR.glob("*.enc")) if KNOWN_GOOD_DIR.exists() else []
+    return sum(_remove(p) for p in _chart_data_paths() + known_good)
 
 
 # ---------------------------------------------------------------------------
