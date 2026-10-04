@@ -250,7 +250,10 @@ def summarize(runs: list[dict]) -> dict:
         "words_after": 0,
         "phi": 0,
         "duration_ms": 0.0,
+        "fact_runs": 0,
+        "fact_flagged": 0,
     }
+    fact_losses: dict[str, int] = {}
     phi_by_type: dict[str, int] = {}
     stage_totals: dict[str, int] = {}
     by_day: dict[str, dict[str, float]] = {}
@@ -275,9 +278,17 @@ def summarize(runs: list[dict]) -> dict:
 
         day = (r.get("ts") or "")[:10]
         if day:
-            bucket = by_day.setdefault(day, {"runs": 0, "chars_removed": 0})
+            bucket = by_day.setdefault(day, {"runs": 0, "chars_removed": 0, "chars_before": 0})
             bucket["runs"] += 1
+            bucket["chars_before"] += r.get("chars_before", 0) or 0
             bucket["chars_removed"] += max(0, (r.get("chars_before", 0) or 0) - (r.get("chars_after", 0) or 0))
+        fc = r.get("fact_check") or {}
+        for sid, n in (fc.get("lost_by_stage") or {}).items():
+            fact_losses[sid] = fact_losses.get(sid, 0) + int(n)
+        if fc:
+            totals["fact_runs"] += 1
+            if fc.get("status") != "ok":
+                totals["fact_flagged"] += 1
 
     totals["chars_removed"] = max(0, totals["chars_before"] - totals["chars_after"])
     totals["avg_reduction"] = (
@@ -294,7 +305,10 @@ def summarize(runs: list[dict]) -> dict:
         "phi_by_type": dict(sorted(phi_by_type.items(), key=lambda kv: kv[1], reverse=True)),
         "top_stages": top_stages,
         "days": days,
-        "by_day": {d: by_day[d] for d in days},
+        "by_day": {d: {**by_day[d], "reduction": round(100.0 * by_day[d]["chars_removed"]
+                                                       / by_day[d]["chars_before"], 1)
+                       if by_day[d]["chars_before"] else 0.0} for d in days},
+        "fact_losses_by_stage": dict(sorted(fact_losses.items(), key=lambda kv: -kv[1])),
     }
 
 

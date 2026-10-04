@@ -553,6 +553,24 @@ class Pipeline:
             fact_check=report,
         )
 
+    def stage_io(self, text: str, sid: str, *, cache: Any = None) -> tuple[str, str, StageStat]:
+        """Run stages up to and including ``sid``: ``(text_before, text_after, stat)``.
+
+        Powers the Pipeline page's "show what this stage does" preview. Stages
+        after ``sid`` don't run; ``cache`` makes repeated previews cheap.
+        """
+        ctx = CleanContext(self.config, track_changes=True)
+        self._cache = cache
+        for spec in self.stages:
+            st = StageStat(id=spec.id, label=spec.label, kind=spec.kind, enabled=spec.enabled)
+            st.chars_before = len(text)
+            before = text
+            text, st, _warning = self._execute_single_stage(spec, text, ctx, st)
+            st.chars_after = len(text)
+            if spec.id == sid:
+                return before, text, st
+        raise KeyError(f"Stage {sid!r} is not in this pipeline")
+
     def _execute_stages(
         self, text: str, ctx: CleanContext, tracker: Any = None
     ) -> tuple[str, list[StageStat], list[str]]:

@@ -488,7 +488,7 @@ async def clean_page():
             render_audit(audit)
         ui.label("Click struck-through or highlighted text to see which rule changed it — and "
                  "keep it, change it or switch the rule off.").classes("text-xs opacity-70")
-        with ui.scroll_area().classes("w-full border rounded h-[460px] bg-grey-1 dark:bg-grey-10"):
+        with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
             diff = ui.html(review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups))
             diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
             diff.mark("review-diff")
@@ -804,6 +804,12 @@ async def clean_page():
         ai_drawer.set_value(value)
         common.PREFS["ai_drawer"] = value
         save_prefs()
+        sync_layout()
+
+    def sync_layout() -> None:
+        """Side by side on wide windows; with the AI drawer open, only on very wide ones."""
+        wide = "2xl:grid-cols-2" if ai_drawer.value else "xl:grid-cols-2"
+        layout.classes(remove="xl:grid-cols-2 2xl:grid-cols-2", add=wide)
 
     def save_llm_pref(key: str, value) -> None:
         try:
@@ -1822,12 +1828,12 @@ async def clean_page():
     ]
 
     with ui.right_drawer(value=bool(common.PREFS.get("ai_drawer")), fixed=False) \
-            .props("width=440 bordered").classes("bg-grey-1 dark:bg-grey-10 p-4") as ai_drawer:
+            .props("width=440 bordered").classes("cc-panel p-4") as ai_drawer:
         ai_col = ui.column().classes("w-full gap-2").mark("ai-panel")
 
     def header_actions() -> None:
         ui.button(icon="psychology", on_click=lambda: toggle_ai()) \
-            .props("flat round aria-label='Local AI panel'").tooltip("Local AI panel (Alt+A)")
+            .props("flat round color=white aria-label='Local AI panel'").tooltip("Local AI panel (Alt+A)")
 
     with shell("Clean a chart", "clean", wide=True, commands=commands, shortcuts=shortcuts,
                actions=header_actions):
@@ -1868,19 +1874,20 @@ async def clean_page():
             ui.button("AI panel", icon="psychology", on_click=lambda: toggle_ai()).props("flat no-caps")
         mode_note = ui.label("").classes("text-sm opacity-70 -mt-2")
 
-        with ui.element("div").classes("grid grid-cols-1 xl:grid-cols-2 gap-6 w-full items-start"):
+        layout = ui.element("div").classes("grid grid-cols-1 gap-6 w-full items-start")
+        with layout:
             # ---- left: the chart ----
             with ui.column().classes("w-full gap-2 min-w-0"):
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
-                    clean_btn.props("unelevated color=primary").tooltip(f"{MOD}+Enter")
+                    clean_btn.props("unelevated color=primary no-caps").tooltip(f"{MOD}+Enter")
                     spinner = ui.spinner("dots", size="lg")
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
                     ui.button("Sample", icon="science", on_click=load_sample).props("flat no-caps") \
                         .tooltip("Load the sample chart")
-                    ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat")
+                    ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat no-caps")
                     ui.space()
                     ui.switch("Auto-clean", value=bool(common.PREFS.get("auto_clean")),
                               on_change=lambda e: (common.PREFS.update(auto_clean=e.value), save_prefs())) \
@@ -1939,7 +1946,8 @@ async def clean_page():
                     ui.space()
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \
-                        .props("accept=.txt,.md,.docx,.pdf,text/plain flat dense").classes("max-w-[260px]")
+                        .props("accept=.txt,.md,.docx,.pdf,text/plain flat bordered dense hide-upload-btn") \
+                        .classes("w-[240px]").style("max-height: 72px")
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
@@ -1948,6 +1956,7 @@ async def clean_page():
 
         preset_sel.on_value_change(on_preset_change)
         sync_mode_controls()
+        sync_layout()
         ui.timer(0.5, auto_tick)
         ui.timer(0.3, refresh_inbox, once=True)
         render_results()

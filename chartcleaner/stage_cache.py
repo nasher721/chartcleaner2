@@ -65,7 +65,14 @@ def _digest(value: Any) -> str:
 
 
 def fingerprint(cfg: dict, sid: str) -> str:
-    """Hash of everything in ``cfg`` stage ``sid`` could read."""
+    """Hash of everything in ``cfg`` stage ``sid`` could read.
+
+    Only stages listed in ``OWNED_KEYS`` get the narrowed view; any other stage
+    (e.g. the ``expand_abbreviations`` single pass, which reads the abbreviations
+    group) is keyed on the whole config.
+    """
+    if sid not in OWNED_KEYS:
+        return _digest({k: v for k, v in cfg.items() if k not in IGNORED_KEYS})
     foreign = {k for other, keys in OWNED_KEYS.items() if other != sid for k in keys}
     view = {k: v for k, v in cfg.items() if k not in foreign and k not in IGNORED_KEYS}
     opts = view.get("stage_options")

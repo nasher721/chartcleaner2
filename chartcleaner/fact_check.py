@@ -270,8 +270,13 @@ class FactReport:
 
     def summary(self) -> dict:
         """Counts only — no chart text — safe for run history."""
+        by_stage: dict[str, int] = {}
+        for x in self.losses:
+            if x.category != "by_design":
+                by_stage[x.stage_id] = by_stage.get(x.stage_id, 0) + x.count
         return {"status": self.status, "total": self.total, "kept": self.kept,
-                **{f"lost_{c}": self.lost(c) for c in CATEGORY_ORDER}}
+                **{f"lost_{c}": self.lost(c) for c in CATEGORY_ORDER},
+                "lost_by_stage": by_stage}
 
     def to_dict(self) -> dict:
         return {**self.summary(), "headline": self.headline(),

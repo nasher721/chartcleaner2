@@ -5,6 +5,7 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages import updates
+from chartcleaner import recent_charts, regression_set
 
 
 def settings_page():
@@ -16,6 +17,12 @@ def settings_page():
 
     with shell("Settings", "settings"):
         draft = dict(load_config(common.CONFIG_PATH))
+        page_col = ui.context.slot.parent
+        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("settings-search-row"):
+            search = ui.input(placeholder="Search settings — e.g. watcher, delete, Ollama") \
+                .props("outlined dense clearable").classes("w-96").mark("settings-search")
+            search.props('prepend-icon="search"')
+        jump_row = ui.row().classes("w-full gap-1 flex-wrap")
 
         with ui.card().classes("w-full gap-2"):
             ui.label("Updates").classes("font-semibold")
@@ -514,8 +521,9 @@ def settings_page():
         # ---- privacy: stored chart data ------------------------------------------
         with ui.card().classes("w-full gap-2").mark("privacy-card"):
             ui.label("Stored chart data").classes("font-semibold")
-            ui.label(f"Token maps are encrypted; the key is kept in {secure_store.describe()}. "
-                     "Downloads, batch output and folder-watcher output in the data folder are "
+            ui.label(f"Token maps and recent charts are encrypted; the key is kept in "
+                     f"{secure_store.describe()}. Recent charts, "
+                     "downloads, batch output and folder-watcher output in the data folder are "
                      "deleted automatically after the period below. Run history, rules and "
                      "settings hold no chart text and are kept.") \
                 .classes("text-xs opacity-60 -mt-1")
@@ -539,9 +547,105 @@ def settings_page():
                     .classes("w-56").mark("retention-days")
                 ui.button("Delete stored chart data now", icon="delete_forever",
                           on_click=lambda: confirm_dialog(
-                              "Delete all token maps, downloads, batch output and folder-watcher "
-                              "output in the data folder? Token maps can't be restored afterwards.",
+                              "Delete all token maps, recent and known-good charts, downloads, batch "
+                              "output and folder-watcher output in the data folder? Token maps "
+                              "can't be restored afterwards.",
                               delete_now)).props("outline color=negative")
+
+        # ---- privacy: recent charts for rule suggestions ---------------------------
+        with ui.card().classes("w-full gap-2").mark("recent-charts-card"):
+            ui.label("Recent charts (for rule suggestions)").classes("font-semibold")
+            ui.label("The Clean page keeps encrypted copies of your last few charts so it can "
+                     "suggest rules (“this line appeared in 9 of your last 10 charts”) and show "
+                     "what a new rule would also change. They are deleted after the period above "
+                     "and by “Delete stored chart data now”.").classes("text-xs opacity-60 -mt-1")
+            rc = recent_charts.settings(common.PREFS)
+            rc_count = ui.label(f"{recent_charts.count()} chart(s) kept now.").classes("text-sm")
+
+            def rc_save(**changes) -> None:
+                current = recent_charts.settings(common.PREFS)
+                current.update(changes)
+                common.PREFS["recent_charts"] = current
+                save_prefs()
+
+            def rc_forget() -> None:
+                n = recent_charts.clear()
+                rc_count.set_text("0 chart(s) kept now.")
+                ui.notify(f"Forgot {n} recent chart(s).", type="positive")
+
+            with ui.row().classes("items-center gap-3"):
+                ui.switch("Keep recent charts", value=rc["enabled"],
+                          on_change=lambda e: rc_save(enabled=bool(e.value))).mark("recent-charts-switch")
+                ui.number("How many", value=rc["keep"], min=1, max=200, step=1,
+                          on_change=lambda e: rc_save(keep=int(e.value or 20))).classes("w-32")
+                ui.button("Forget them now", icon="delete", on_click=rc_forget).props("flat color=negative")
+
+        # ---- known-good charts (personal regression set) ----------------------------
+        with ui.card().classes("w-full gap-2").mark("known-good-card"):
+            ui.label("Known-good charts").classes("font-semibold")
+            ui.label("Charts you marked “known good” on the Clean page, with the output you "
+                     "approved (encrypted). Check them after changing rules — Save on the Pipeline "
+                     "page does this for you.").classes("text-xs opacity-60 -mt-1")
+            kg_holder = ui.column().classes("w-full gap-1")
+
+            def kg_draw(results: dict | None = None) -> None:
+                kg_holder.clear()
+                charts = regression_set.list_charts()
+                with kg_holder:
+                    if not charts:
+                        ui.label("None yet — on the Clean page use ⋯ → Mark as known good.") \
+                            .classes("text-sm opacity-60")
+                    for kg in charts:
+                        res = (results or {}).get(kg.id)
+                        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                            if res is None:
+                                ui.icon("radio_button_unchecked").classes("opacity-50")
+                            elif res.changed:
+                                ui.icon("error", color="orange")
+                            else:
+                                ui.icon("check_circle", color="green")
+                            ui.label(kg.label).classes("text-sm flex-grow")
+                            ui.label(kg.ts[:16].replace("T", " ")).classes("text-xs opacity-60")
+                            if res is not None and res.changed:
+                                ui.button("Show change", icon="difference",
+                                          on_click=lambda r=res: kg_show(r)).props("flat dense")
+                                ui.button("Accept new output", icon="done",
+                                          on_click=lambda k=kg: kg_accept(k)).props("flat dense")
+                            ui.button(icon="delete", on_click=lambda k=kg: kg_remove(k.id)) \
+                                .props("flat dense round color=negative")
+
+            def kg_show(res) -> None:
+                with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
+                    ui.label(res.label).classes("text-lg font-semibold")
+                    if res.error:
+                        ui.label(res.error).classes("text-sm text-red-600")
+                    ui.html("<pre style='white-space:pre-wrap;font-size:11px'>"
+                            + esc("\n".join(res.diff)) + "</pre>")
+                    ui.button("Close", on_click=dlg.close).props("flat")
+                dlg.open()
+
+            def kg_accept(kg) -> None:
+                out = Pipeline(load_config(common.CONFIG_PATH), custom_dir=common.CUSTOM_DIR,
+                               mode=kg.mode).run(kg.input, fact_check=False).text
+                regression_set.approve(kg.id, out)
+                ui.notify("New output approved.", type="positive")
+                asyncio.get_running_loop().create_task(kg_check())
+
+            def kg_remove(chart_id: str) -> None:
+                regression_set.remove(chart_id)
+                kg_draw()
+
+            async def kg_check() -> None:
+                cfg = load_config(common.CONFIG_PATH)
+                results = await run.io_bound(regression_set.check, cfg, common.CUSTOM_DIR)
+                changed = sum(r.changed for r in results)
+                ui.notify(f"{len(results)} checked — {changed} changed." if results else
+                          "No known-good charts yet.", type="warning" if changed else "positive")
+                kg_draw({r.id: r for r in results})
+
+            kg_draw()
+            ui.button("Check them now", icon="playlist_add_check", on_click=kg_check) \
+                .props("outline").mark("known-good-check")
 
         # ---- token maps (reversible tokenization) -------------------------------
         with ui.card().classes("w-full gap-2"):
@@ -588,3 +692,42 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Open tokens folder", icon="folder",
                           on_click=lambda: open_folder(store.TOKENS_DIR)).props("flat")
+
+        # ---- search + jump links (built last: they index every card above) -------
+        privacy_marks = ("privacy-card", "recent-charts-card", "known-good-card")
+        cards = [c for c in page_col.default_slot.children if isinstance(c, ui.card)]
+        for i, card in enumerate([c for c in cards if any(m in c._markers for m in privacy_marks)]):
+            card.move(target_index=3 + i)  # privacy first: right under the search box
+        cards = [c for c in page_col.default_slot.children if isinstance(c, ui.card)]
+
+        def card_title(card) -> str:
+            first = next(iter(card.default_slot.children), None)
+            return getattr(first, "text", "") or ""
+
+        def card_words(card) -> str:
+            parts = []
+            for el in card.descendants():
+                for attr in ("text", "_text"):
+                    value = getattr(el, attr, None)
+                    if isinstance(value, str):
+                        parts.append(value)
+                label = el.props.get("label")
+                if isinstance(label, str):
+                    parts.append(label)
+            return " ".join(parts).casefold()
+
+        index = [(card, card_words(card)) for card in cards]
+
+        def filter_cards(e) -> None:
+            words = (e.value or "").casefold().split()
+            for card, text in index:
+                card.set_visibility(all(w in text for w in words))
+
+        search.on_value_change(filter_cards)
+        with jump_row:
+            for card in cards:
+                title = card_title(card)
+                if title:
+                    ui.chip(title, on_click=lambda c=card: ui.run_javascript(
+                        f"document.getElementById('c{c.id}').scrollIntoView({{behavior:'smooth'}})")) \
+                        .props("dense outline clickable")

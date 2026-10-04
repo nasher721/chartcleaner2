@@ -135,7 +135,7 @@ async def test_settings_card_saves_retention(user):
 
     await user.open("/settings")
     await user.should_see("Stored chart data")
-    await user.should_see("Token maps are encrypted")
+    await user.should_see("Token maps and recent charts are encrypted")
     box = user.find(marker="retention-days").elements.pop()
     box.set_value(3)
     assert store.load_prefs()["retention_days"] == 3

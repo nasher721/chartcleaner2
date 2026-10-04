@@ -155,6 +155,8 @@ CSS = """
 .cc-rep { background: rgba(255, 190, 40, 0.18); }
 .cc-flag { background: rgba(245, 158, 11, 0.16); box-shadow: inset 3px 0 0 #f59e0b; }
 .cc-diff-left { border-right: 1px solid rgba(128,128,128,0.35); }
+.cc-panel { background: #f5f5f5; }
+.body--dark .cc-panel { background: #1d1d1d; }
 .cc-click { cursor: pointer; border-radius: 3px; }
 .cc-gone { text-decoration: line-through; text-decoration-color: rgba(220,38,38,.7); background: rgba(255,60,60,.18); }
 .cc-abbr { background: rgba(99,102,241,.18); border-bottom: 1px dotted #6366f1; }
@@ -203,7 +205,7 @@ def report_error(title: str, exc: Exception) -> None:
         pass
     with ui.dialog() as dlg, ui.card().classes("w-[560px]"):
         ui.label(title).classes("font-semibold text-red-600")
-        with ui.scroll_area().classes("w-full max-h-64 border rounded bg-grey-1 dark:bg-grey-10 p-2"):
+        with ui.scroll_area().classes("w-full max-h-64 border rounded cc-panel p-2"):
             ui.html(f"<pre style='white-space:pre-wrap;font-size:11px'>{esc(tb)}</pre>")
         with ui.row():
             ui.button("Copy traceback", icon="content_copy",
@@ -534,18 +536,18 @@ def _status_strip() -> None:
     with ui.row().classes("items-center gap-1 flex-nowrap").mark("status-strip"):
         preset = PREFS.get("last_preset") or ""
         ui.chip(preset or "current rules", icon="inventory_2", color="white", text_color="primary",
-                on_click=lambda: ui.navigate.to("/pipeline")).props("dense outline") \
+                on_click=lambda: ui.navigate.to("/pipeline")).props("dense") \
             .tooltip("Rule preset in use — click to edit the pipeline")
         watcher = CLIPBOARD_WATCHER.get("watcher")
         on = bool(watcher is not None and watcher.running)
         ui.chip("watcher on" if on else "watcher off", icon="content_paste_search",
-                color="white", text_color="green" if on else "grey",
-                on_click=lambda: ui.navigate.to("/settings")).props("dense outline") \
+                color="white", text_color="green-8" if on else "grey-8",
+                on_click=lambda: ui.navigate.to("/settings")).props("dense") \
             .tooltip("Clipboard watcher — click for settings")
-        ai_chip = ui.chip("AI …", icon="psychology", color="white", text_color="grey") \
-            .props("dense outline").tooltip("Local AI (Ollama) status")
+        ai_chip = ui.chip("AI …", icon="psychology", color="white", text_color="grey-8") \
+            .props("dense").tooltip("Local AI (Ollama) status")
         ui.chip("encrypted", icon="lock", color="white", text_color="teal",
-                on_click=lambda: ui.navigate.to("/settings")).props("dense outline") \
+                on_click=lambda: ui.navigate.to("/settings")).props("dense") \
             .tooltip("Stored chart data (token maps, recent charts) is encrypted on this computer")
 
     async def probe() -> None:
@@ -566,7 +568,7 @@ def _status_strip() -> None:
             model, up = "", False
         try:
             ai_chip.set_text(model.split(":")[0] if up and model else "AI off")
-            ai_chip.props(f"text-color={'green' if up else 'grey'}")
+            ai_chip.props(f"text-color={'green-8' if up else 'grey-8'}")
         except Exception:
             pass  # the page may be gone
 
@@ -588,7 +590,8 @@ def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] |
 
     with ui.header().classes("items-center justify-between"):
         with ui.row().classes("items-center gap-2 flex-nowrap"):
-            ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round aria-label='Toggle menu'")
+            ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
+                .props("flat round color=white aria-label='Toggle menu'")
             ui.icon("health_and_safety").classes("text-2xl")
             ui.label("Chart Cleaner").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
             ui.badge(f"v{__version__}", color="blue-grey").props("outline")
@@ -597,15 +600,16 @@ def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] |
             if actions is not None:
                 actions()
             ui.button(icon="search", on_click=lambda: open_command_palette(commands)) \
-                .props("flat round aria-label='Command palette'").mark("palette-button") \
+                .props("flat round color=white aria-label='Command palette'").mark("palette-button") \
                 .tooltip(f"Command palette ({MOD}+K)")
             ui.button(icon="keyboard", on_click=lambda: open_shortcuts_dialog(
                 [(c, d) for c, d, _ in page_shortcuts])) \
-                .props("flat round aria-label='Keyboard shortcuts'").tooltip(f"Keyboard shortcuts ({MOD}+/)")
+                .props("flat round color=white aria-label='Keyboard shortcuts'") \
+                .tooltip(f"Keyboard shortcuts ({MOD}+/)")
             ui.switch("Dark", value=dark.value,
                       on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
 
-    with ui.left_drawer(fixed=True, value=None).classes("bg-grey-1 dark:bg-grey-10") as drawer:
+    with ui.left_drawer(fixed=True, value=None).classes("cc-panel") as drawer:
         ui.label("Menu").classes("text-xs uppercase opacity-60 ml-2")
         for path, icon, label in NAV:
             btn = ui.button(label, icon=icon, on_click=lambda p=path: ui.navigate.to(p))
@@ -613,7 +617,7 @@ def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] |
             if path == ("/" if active == "clean" else "/" + active.strip("/")):
                 btn.props("color=primary").classes("font-semibold bg-blue-1 dark:bg-blue-9")
 
-    with ui.footer().classes("bg-transparent text-xs opacity-60"):
+    with ui.footer(fixed=False).classes("bg-transparent text-xs opacity-60"):
         ui.label("Runs entirely on this computer — 127.0.0.1 only. Not a guarantee of "
                  "de-identification; review output before sharing.")
 

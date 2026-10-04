@@ -220,3 +220,35 @@ def test_new_presets_are_grounded_and_labelled():
         assert key in PRESET_LABELS
         assert build_prompt(key, "", "chart").endswith("Chart:\nchart")
     assert set(SUMMARY_PRESETS) | {"custom"} == set(PRESET_LABELS)
+
+
+def test_inbox_never_suggests_clinical_section_lines():
+    texts = [f"Subjective: well {i}\nEpic build {i} printed\n" for i in range(4)]
+    items = rule_inbox.suggestions(cfg(), texts, hidden=set())
+    assert not any(i.kind == "remove_line" and i.samples[0].startswith("Subjective") for i in items)
+    assert any(i.kind == "remove_line" and "Epic build" in i.samples[0] for i in items)
+
+
+def test_batch_reports_progress_and_review_flags(tmp_path):
+    from chartcleaner.batch import run_batch
+    a = tmp_path / "a.txt"
+    a.write_text("Plan: recheck\n", encoding="utf-8")
+    b = tmp_path / "missing.txt"
+    seen = []
+    results = run_batch([a, b], cfg(), on_progress=lambda d, t, r: seen.append((d, t, r.status)))
+    assert seen == [(1, 2, "ok"), (2, 2, "error")]
+    assert not results[0].needs_review and not results[1].needs_review
+
+
+def test_expand_mode_cache_sees_abbreviation_changes():
+    from chartcleaner.abbreviations import normalize_settings
+    c = cfg()
+    cache = StageCache()
+    text = "Hx of MS."
+    first = Pipeline(c, mode="expand").run(text, cache=cache).text
+    group = normalize_settings(c.get("abbreviations"))
+    group["expand_prefer"] = {"MS": "multiple sclerosis"}
+    c2 = dict(c, abbreviations=normalize_settings(group))
+    second = Pipeline(c2, mode="expand").run(text, cache=cache).text
+    assert second == Pipeline(c2, mode="expand").run(text).text
+    assert "multiple sclerosis" in second and first != second

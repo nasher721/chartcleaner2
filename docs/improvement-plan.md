@@ -587,3 +587,56 @@ Order: 1 → 4 → 5 → 2 → 3. Branch `claude/magical-volta-w468nq`.
 - [x] **P3 Neuro ICU condensers** — stage `neuro_summary` (anchor `vitals_summary`,
   off by default): neuro checks, EVD/ICP (`icp_threshold`), serial sodium, drip
   titrations; each part switchable.
+
+
+# Phase 6 (2026-10-04) — UI redesign and making the tools come to you
+
+Branch `claude/magical-edison-yk146v`.
+
+- [x] **Clean page layout** — chart left, result right (`xl:grid-cols-2`; `2xl` while the
+  AI drawer is open). Local AI summary + Ask this chart moved to a right drawer
+  (`prefs.ai_drawer`). Result tabs cut from up to 7 to **Output / Review / Insights**.
+- [x] **Clickable provenance** — `common.review_diff_html` marks every tracked change
+  (`data-cc="g<n>"`); a click opens the rule with *Never remove this* / *Delete this
+  rule* / abbreviation *Change* / *Don't abbreviate this*.
+- [x] **Trust strip** — fact-check headline and leftover-PHI count as badges above the output.
+- [x] **Copy as…** split button (`prefs.copy_default`): plain, Epic-safe, Markdown, stats,
+  trends on top, tokenized for an external AI, prompt templates.
+- [x] **Selection toolbar** replaces the Remove/Replace/Abbreviate mode checkboxes
+  (plus *Never remove*, which writes an exception for every regex stage, and *More…*).
+- [x] **Note-type chip** after a clean; click to map the type to a preset.
+- [x] **Command palette** (Ctrl/⌘+K) and shortcuts (Ctrl/⌘+/ lists them) in `common.shell`
+  (`commands=`, `shortcuts=`). Fixes Ctrl+Enter, which never matched (it compared a set of
+  booleans with key names, and `ui.keyboard` ignored textareas).
+- [x] **Header status strip** — preset, clipboard watcher, local AI (probed after load,
+  not under `NICEGUI_USER_SIMULATION`), encryption.
+- [x] **First run** — dismissible four-step card with "Try it on the sample chart"
+  (`prefs.onboarded`).
+- [x] **Pipeline page** — stage cards with drag-to-reorder (HTML5 drag events), last-run
+  hits, a per-stage before/after preview (`Pipeline.stage_io`), and Save re-checks
+  known-good charts first.
+- [x] **Statistics** — rule-health dashboard (never firing, very broad, charts with
+  clinical values flagged, stages behind lost values from `fact_check.lost_by_stage`),
+  % removed per day.
+- [x] **Batch** — live progress (`run_batch(on_progress=)`), All / Needs review / Errors
+  filter (`BatchResult.needs_review`), retry failed files.
+- [x] **Settings** — search box + jump links; privacy cards first; Recent charts and
+  Known-good charts cards.
+- [x] **Rule inbox** — `recent_charts.py` (encrypted `data/recent/`, `prefs.recent_charts`,
+  retention-purged) + `rule_inbox.py` over `rule_miner` / `phrase_miner`; never suggests
+  lines with clinical facts or section headings; dismissals in `data/inbox_state.json`
+  (ids only).
+- [x] **Rule preview** — `rule_preview.preview()` runs only the new rule's stage on recent
+  charts (+ learned-rule examples); shown after a highlight rule is saved, in the learn
+  dialog and the inbox.
+- [x] **PHI round trip** — `service.restore()`, `/api/v1/restore`, Clean page dialog.
+  Not exposed over MCP on purpose.
+- [x] **Trends visuals** — `REFERENCE_RANGES`, `LabTrend.numbers()/flags()`,
+  `TrendReport.med_rows()`; sparklines on the Insights tab.
+- [x] **Note timeline** — `timeline.py` (offsets for jumping), `service.timeline()`.
+- [x] **Grounded AI presets** — one-liner, problem list, handoff (`summarizer.PRESET_LABELS`).
+- [x] **Speed** — `stage_cache.StageCache` keyed on the stage's input text + a config
+  fingerprint without other stages' option groups (`OWNED_KEYS`); auto-clean waits 1.5 s
+  after typing stops.
+- [x] **Known-good charts** — `regression_set.py` (encrypted `data/known_good/`, not
+  age-purged, removed by *Delete stored chart data now*).
