@@ -196,7 +196,13 @@ def safe_extract_archive(archive: Path, destination: Path) -> None:
                        if parent != destination and destination in parent.parents):
                     raise UpdateError("unsafe_archive")
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.symlink_to(link_text)
+                if os.name == "nt":
+                    # Windows links need native separators (a "/" link doesn't resolve)
+                    # and must say whether they point at a directory.
+                    native = link_text.replace("/", os.sep)
+                    target.symlink_to(native, target_is_directory=(target.parent / native).is_dir())
+                else:
+                    target.symlink_to(link_text)
             for target, _link_text, _mode in links:
                 try:
                     resolved = target.resolve(strict=True)

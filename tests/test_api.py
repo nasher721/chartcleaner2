@@ -82,7 +82,8 @@ def test_bad_bodies(client):
 
 def test_token_file_is_private_and_rotates(client):
     first = api.get_token()
-    assert oct(os.stat(api.token_path()).st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows has no POSIX mode bits; the profile folder's ACL guards it
+        assert oct(os.stat(api.token_path()).st_mode & 0o777) == "0o600"
     assert api.rotate_token() != first == first
 
 

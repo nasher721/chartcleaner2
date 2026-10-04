@@ -81,7 +81,15 @@ def remember(text: str, source: str = "", prefs: dict | None = None, *, tag: str
         return files[-1]  # the same chart cleaned again
     d = recent_dir()
     d.mkdir(parents=True, exist_ok=True)
-    dest = d / f"chart-{time.time_ns():020d}-{digest}.enc"
+    # File names sort by this stamp, so it must grow even when the clock doesn't
+    # (Windows' clock can return the same value for back-to-back saves).
+    stamp = time.time_ns()
+    if files:
+        try:
+            stamp = max(stamp, int(files[-1].stem.split("-")[1]) + 1)
+        except (IndexError, ValueError):
+            pass
+    dest = d / f"chart-{stamp:020d}-{digest}.enc"
     record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "source": source, "text": text}
     if tag:
         record["tag"] = tag

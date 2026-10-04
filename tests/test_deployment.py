@@ -107,7 +107,7 @@ time.sleep(30)
             assert updater._payload_version(install) == '2.3.0'
             assert (install / 'Contents/MacOS/Chart Cleaner').read_bytes() == b'old application'
             assert len(launches) == (2 if outcome == 'broken_startup' else 0)
-        assert {str(p.relative_to(data)): p.read_bytes() for p in data.rglob('*') if p.is_file()} == sentinel
+        assert {p.relative_to(data).as_posix(): p.read_bytes() for p in data.rglob('*') if p.is_file()} == sentinel
         assert not list(updater.staging_root().glob('install-*'))
         assert not (install.parent / '.Chart Cleaner.app.rollback').exists()
     finally:

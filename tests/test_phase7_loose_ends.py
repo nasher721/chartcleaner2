@@ -219,7 +219,7 @@ def test_self_test_runs_each_command(tmp_path):
     rows = qa.self_test(tmp_path / "svc", run=fake_run)
     assert all(r["ok"] for r in rows), rows
     assert len(calls) == 3 and calls[0][0][:2] == ["/bin/bash", "-c"]
-    assert str(cli) in calls[0][0][2] and "MRN" in calls[0][1]
+    assert cli.as_posix() in calls[0][0][2] and "MRN" in calls[0][1]
 
     rows = qa.self_test(tmp_path / "svc", run=lambda *a, **k: _Done(1, err="No virtual environment"))
     assert not rows[0]["ok"] and "No virtual environment" in rows[0]["detail"]
