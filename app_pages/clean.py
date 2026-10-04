@@ -24,6 +24,7 @@ from chartcleaner.devices import build as build_devices
 from chartcleaner.micro import build as build_micro
 from chartcleaner.overnight import build as build_overnight
 from chartcleaner.problems import build as build_problems
+from chartcleaner.daily_note import build as build_daily_note
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -116,7 +117,7 @@ async def clean_page():
                 pass  # map saving must never break a run
             if mode == "clean":
                 try:
-                    recent_charts.remember(text, source, common.PREFS)
+                    recent_charts.remember(text, source, common.PREFS, tag=CLEAN_STATE.get("tag") or "")
                 except Exception:
                     pass  # suggestions are a bonus; never break a run
             store.maybe_purge_old_data()
@@ -394,6 +395,13 @@ async def clean_page():
                                 ui.icon("smart_toy")
                             with ui.item_section():
                                 ui.item_label(f"Prompt: {tmpl['name']}")
+                    ui.separator()
+                    for i, tmpl in enumerate(note_templates_mod.templates(load_config(common.CONFIG_PATH))):
+                        with ui.item(on_click=lambda n=tmpl["name"]: copy_note(n)).mark(f"copy-note-{i}"):
+                            with ui.item_section().props("avatar"):
+                                ui.icon("article")
+                            with ui.item_section():
+                                ui.item_label(f"Note: {tmpl['name']}")
                 ui.separator()
                 ui.item("Change what the main button copies…", on_click=open_copy_default_dialog)
             with ui.dropdown_button("Save", icon="download", auto_close=True).props("flat no-caps"):
@@ -410,6 +418,8 @@ async def clean_page():
                         .mark("restore-reply")
                     ui.menu_item("Mark as known good (re-check after rule changes)…",
                                  on_click=open_known_good_dialog).mark("known-good")
+                    ui.menu_item("Daily note — compare with a previous chart…",
+                                 on_click=open_daily_note_dialog).mark("daily-note")
                     ui.menu_item("Clean again", on_click=run_clean)
         if CLEAN_STATE.get("result_mode") == "expand":
             ambiguous = dict(result.stages[0].details.get("ambiguous") or {})
@@ -1694,6 +1704,69 @@ async def clean_page():
             return
         ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
 
+    def copy_note(name: str) -> None:
+        try:
+            text = note_templates_mod.render(name, CLEAN_STATE.get("result_text") or "",
+                                             load_config(common.CONFIG_PATH))
+        except Exception as ex:
+            ui.notify(f"Could not fill the note template: {ex}", type="negative")
+            return
+        copy_to_clipboard(text, f"“{name}” note copied")
+
+    def open_daily_note_dialog() -> None:
+        """Pick a previous chart (same bed tag first) and show today's daily update."""
+        if not CLEAN_STATE.get("result_text") or CLEAN_STATE.get("result_mode") not in (None, "clean"):
+            ui.notify("Do a full clean first.", type="info")
+            return
+        tag = CLEAN_STATE.get("tag") or ""
+        today_input = CLEAN_STATE.get("input") or ""
+        try:
+            records = [r for r in recent_charts.load(30) if r["text"] != today_input]
+        except Exception:
+            records = []
+        # same bed first (newest first within each group: load() is newest-first)
+        records.sort(key=lambda r: not (tag and (r.get("tag") or "").casefold() == tag.casefold()))
+        with ui.dialog() as dlg, ui.card().classes("w-[760px] max-w-full gap-2").mark("daily-note-dialog"):
+            ui.label("Daily note").classes("text-lg font-semibold")
+            if not records:
+                ui.label("No previous charts stored yet — recent charts are kept (encrypted) after "
+                         "each clean. Clean yesterday's chart with the same bed tag first.") \
+                    .classes("text-sm opacity-70")
+                ui.button("Close", on_click=dlg.close).props("flat")
+                dlg.open()
+                return
+            options = {}
+            for i, r in enumerate(records):
+                first = next((ln.strip() for ln in r["text"].splitlines() if ln.strip()), "")[:60]
+                options[i] = f"{r.get('ts', '')[:16].replace('T', ' ')}" + \
+                    (f" · {r['tag']}" if r.get("tag") else "") + f" · {first}"
+            pick = ui.select(options, value=0, label="Compare with").classes("w-full")
+            out = ui.textarea("").props("outlined readonly input-style='min-height: 320px'") \
+                .classes("w-full cc-mono").mark("daily-note-output")
+
+            async def build_note() -> None:
+                rec = records[pick.value or 0]
+                today_text = CLEAN_STATE["result_text"]
+
+                def work():
+                    cfg = load_config(common.CONFIG_PATH)
+                    previous = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
+                        rec["text"], wrap=False, fact_check=False).text
+                    return build_daily_note(service_mod._unwrap(today_text), previous, cfg).to_text()
+
+                try:
+                    out.set_value(await run.io_bound(work))
+                except Exception as ex:
+                    report_error("Daily note failed", ex)
+
+            with ui.row().classes("gap-2"):
+                ui.button("Build", icon="today", on_click=build_note).props("unelevated color=primary") \
+                    .mark("daily-note-build")
+                ui.button("Copy", icon="content_copy",
+                          on_click=lambda: copy_to_clipboard(out.value or "")).props("flat")
+                ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
+
     def copy_prompt(name: str) -> None:
         try:
             text = render_prompt(name, CLEAN_STATE.get("result_text") or "", load_config(common.CONFIG_PATH))
@@ -2081,6 +2154,13 @@ async def clean_page():
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:
                         f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                    tag_input = ui.input("Bed tag", value=CLEAN_STATE.get("tag") or "",
+                                         autocomplete=recent_charts.tags(),
+                                         on_change=lambda e: CLEAN_STATE.update(
+                                             tag=recent_charts.clean_tag(e.value))) \
+                        .props("dense outlined clearable").classes("w-32").mark("bed-tag")
+                    tag_input.tooltip("e.g. G20-1 — kept with this chart (encrypted) so the daily "
+                                      "note and trends follow the patient, not the paste")
                     ui.space()
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \

@@ -78,6 +78,7 @@ from chartcleaner.evaluate import load_last_evaluation, save_evaluation
 from chartcleaner.local_llm import LocalLlmClient
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
+from chartcleaner.batch import run_texts as run_patient_texts
 from chartcleaner.delta_engine import extract_note_deltas
 from chartcleaner import api as local_api
 from chartcleaner import rule_examples
@@ -85,6 +86,8 @@ from chartcleaner.clipboard_watcher import ClipboardWatcher
 from chartcleaner.exporters import save_to_vault, to_docx, to_markdown, to_smartphrase
 from chartcleaner.prompt_templates import render as render_prompt
 from chartcleaner.prompt_templates import templates as prompt_templates
+from chartcleaner import note_templates as note_templates_mod
+from chartcleaner import patients as patients_mod
 from chartcleaner.rule_health import report as rule_health_report
 from chartcleaner.note_type import LABELS as NOTE_TYPE_LABELS
 from chartcleaner.note_type import detect as detect_note_type

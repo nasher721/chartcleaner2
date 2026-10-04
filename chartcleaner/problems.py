@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-__all__ = ["RELATED", "Evidence", "Problem", "ProblemReport", "build"]
+__all__ = ["RELATED", "Evidence", "Problem", "ProblemReport", "build", "logical_lines"]
 
 # problem keyword -> related terms (all lowercase; short ones match whole words)
 RELATED: dict[str, tuple[str, ...]] = {
@@ -148,6 +148,27 @@ class ProblemReport:
         return {"problems": [p.to_dict() for p in self.problems], "text": self.to_text()}
 
 
+def continues(prev: str, line: str) -> bool:
+    """True when ``line`` is the wrapped rest of ``prev`` (not a new line, item or heading)."""
+    return bool(line.strip() and prev.strip()
+                and not re.search(r"[.:;!?]\s*$", prev)
+                and (re.match(r"\s*[a-z0-9(]", line) or re.search(r"[a-z,]\s*$", prev))
+                and not _PLAN_LINE.match(line) and not _PROBLEM.match(line)
+                and not _AP_HEADING.match(prev) and not _SECTION_END.match(prev)
+                and not _AP_HEADING.match(line) and not _SECTION_END.match(line))
+
+
+def logical_lines(text: str) -> list[str]:
+    """``text`` split into lines with wrapped lines rejoined."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        if out and continues(out[-1], line):
+            out[-1] = out[-1].rstrip() + " " + line.strip()
+        else:
+            out.append(line)
+    return out
+
+
 def _title_of(raw: str) -> str:
     """"SAH, Hunt-Hess 2, Fisher 3, post-coiling day 4." → "SAH"."""
     head = re.split(r"[,:;(]| — | - |\.\s", raw.strip(), maxsplit=1)[0]
@@ -248,12 +269,7 @@ def build(text: str, max_evidence: int = 25) -> ProblemReport:
         pos = start
         for line in note.raw_text.split("\n"):
             prev = labelled[-1] if labelled and labelled[-1][1] == label else None
-            if (prev is not None and line.strip() and prev[0].strip()
-                    and not re.search(r"[.:;!?]\s*$", prev[0])
-                    and (re.match(r"\s*[a-z0-9(]", line) or re.search(r"[a-z,]\s*$", prev[0]))
-                    and not _PLAN_LINE.match(line) and not _PROBLEM.match(line)
-                    and not _AP_HEADING.match(prev[0]) and not _SECTION_END.match(prev[0])
-                    and not _AP_HEADING.match(line) and not _SECTION_END.match(line)):
+            if prev is not None and continues(prev[0], line):
                 labelled[-1] = (prev[0].rstrip() + " " + line.strip(), label, prev[2])
             else:
                 labelled.append((line, label, pos))

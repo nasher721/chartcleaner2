@@ -16,7 +16,8 @@ from . import store
 from .engine import Pipeline, RunResult, load_config
 
 __all__ = ["FORMATS", "INSIGHTS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
-           "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text"]
+           "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text",
+           "daily_note", "split_patients", "clean_patients", "note"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -110,6 +111,75 @@ def insights_text(text: str, which: tuple[str, ...] | list[str] | None = None) -
         if block:
             blocks.append(block)
     return "\n\n".join(blocks)
+
+
+def _cleaned(text: str, cfg: dict, record: bool, source: str) -> str:
+    return clean(text, config=cfg, wrap=False, record=record, source=source)["text"]
+
+
+def daily_note(today: str, previous: str | None = None, *, tag: str | None = None,
+               preset: str | None = None, config: dict | None = None, clean_first: bool = True,
+               record: bool = False, source: str = "api") -> dict:
+    """Today's chart against a previous one (see :mod:`chartcleaner.daily_note`).
+
+    ``previous`` defaults to the newest stored recent chart with bed ``tag``.
+    Both charts are cleaned with the same config unless ``clean_first`` is False.
+    """
+    from . import recent_charts
+    from .daily_note import build
+
+    if previous is None:
+        found = recent_charts.latest_for(tag, exclude_text=today) if tag else None
+        if found is None:
+            raise ValueError("No previous chart: pass one, or tag today's bed and clean "
+                             "yesterday's chart with the same tag first.")
+        previous = found["text"]
+    cfg = config if config is not None else load_active_config(preset)
+    if clean_first:
+        today = _cleaned(today, cfg, record, source)
+        previous = _cleaned(previous, cfg, False, source)
+    return build(today, previous, cfg).to_dict()
+
+
+def split_patients(text: str) -> list[dict]:
+    """A multi-patient paste split per patient (see :mod:`chartcleaner.patients`)."""
+    from .patients import split
+    return [c.to_dict() for c in split(text)]
+
+
+def clean_patients(text: str, *, preset: str | None = None, config: dict | None = None,
+                   summarize: bool = False, client: Any = None, custom_dir: str | Path | None = None
+                   ) -> list[dict]:
+    """Split a patient list and clean each patient; ``summarize`` adds an on-device
+    AI one-liner per patient (left empty when no local model answers)."""
+    from .batch import run_texts
+    from .patients import split
+
+    cfg = config if config is not None else load_active_config(preset)
+    one_liner = None
+    if summarize:
+        from .summarizer import summarize as summarize_chart
+        llm_cfg = {**cfg, "local_llm": {**(cfg.get("local_llm") or {}),
+                                        "prompt_preset": "one_liner", "custom_prompt": ""}}
+
+        def one_liner(chart: str) -> str:
+            return summarize_chart(chart, llm_cfg, client=client).text
+    chunks = split(text)
+    results = run_texts([(c.label, c.text) for c in chunks], {**cfg, "wrap_output": False},
+                        custom_dir=custom_dir or store.CUSTOM_RULES_DIR, summarize=one_liner)
+    return [{"label": r.name, "status": r.status, "error": r.error, "text": r.cleaned,
+             "summary": r.summary, "reduction": r.reduction, "facts": r.facts,
+             "facts_status": r.facts_status} for r in results]
+
+
+def note(text: str, template: str, *, preset: str | None = None, clean_first: bool = True,
+         record: bool = True, source: str = "api", config: dict | None = None) -> dict:
+    """Clean ``text`` and fill note template ``template`` (see note_templates)."""
+    from .note_templates import render
+
+    cfg = config if config is not None else load_active_config(preset)
+    chart = _cleaned(text, cfg, record, source) if clean_first else text
+    return {"template": template, "text": render(template, chart, cfg)}
 
 
 def _unwrap(text: str) -> str:

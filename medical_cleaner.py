@@ -50,6 +50,7 @@ class MedicalCleaner:
             print(f"Invalid config ({path}):\n- " + "\n- ".join(errors), file=sys.stderr)
             sys.exit(1)
         self._custom_dir = _SCRIPT_DIR / "custom_rules"
+        self.mode = mode
         self._wrap = wrap_output
         self._pipeline = Pipeline(self.config, custom_dir=self._custom_dir, mode=mode)
 
@@ -144,21 +145,77 @@ def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
     if not text.strip():
         print("Nothing to clean.", file=sys.stderr)
         sys.exit(1)
-    result = cleaner.clean_detailed(text)
     if args.format == "docx":
         print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
         sys.exit(1)
+    if args.split_patients:
+        _emit(args, _split_and_clean(text, cleaner))
+        return
+    result = cleaner.clean_detailed(text)
     out = _format_output(result.text, args.delta, args.format, args.trends, args.insights)
     if args.prompt:
         from chartcleaner.prompt_templates import render
         out = render(args.prompt, result.text, cleaner.config)
+    if args.template:
+        from chartcleaner.note_templates import render as render_note
+        out = render_note(args.template, result.text, cleaner.config)
+    if args.daily_note or args.tag:
+        out = _daily_note(args, text, result.text, cleaner) or out
+    _emit(args, out)
+    print(f"{result.summary()}", file=sys.stderr)
+    _print_fact_check(result)
+
+
+def _emit(args, out: str) -> None:
     if args.stdout:
         sys.stdout.write(out)
         sys.stdout.flush()
     else:
         pyperclip.copy(out)
-    print(f"{result.summary()}", file=sys.stderr)
-    _print_fact_check(result)
+
+
+def _split_and_clean(text: str, cleaner: "MedicalCleaner") -> str:
+    """Each patient of a list cleaned on its own, under a "=== label ===" line."""
+    from chartcleaner.patients import split
+    from chartcleaner.engine import Pipeline
+    chunks = split(text)
+    pipe = Pipeline(cleaner.config, custom_dir=cleaner._custom_dir, mode=cleaner.mode)
+    parts = []
+    for c in chunks:
+        parts.append(f"=== {c.label} ===\n{pipe.run(c.text, wrap=False).text}")
+    print(f"{len(chunks)} patient(s) cleaned.", file=sys.stderr)
+    return "\n\n".join(parts) + "\n"
+
+
+def _daily_note(args, raw_today: str, cleaned_today: str, cleaner: "MedicalCleaner") -> str | None:
+    """Today's update against --daily-note FILE or the last chart with --tag; remembers today."""
+    from chartcleaner import recent_charts
+    from chartcleaner.daily_note import build
+    from chartcleaner.engine import Pipeline
+    from chartcleaner.service import _unwrap
+
+    previous = None
+    if args.daily_note:
+        try:
+            previous = Path(args.daily_note).expanduser().read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"Could not read {args.daily_note}: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.tag:
+        found = recent_charts.latest_for(args.tag, exclude_text=raw_today)
+        previous = found["text"] if found else None
+    if args.tag:
+        try:
+            recent_charts.remember(raw_today, "cli", tag=args.tag)
+        except Exception:
+            pass  # remembering is a convenience; never fail the run
+    if previous is None:
+        print(f"No earlier chart for bed {args.tag!r} yet — today's chart is now stored for tomorrow.",
+              file=sys.stderr)
+        return None
+    pipe = Pipeline(cleaner.config, custom_dir=cleaner._custom_dir)
+    prev_clean = pipe.run(previous, wrap=False, fact_check=False).text
+    return build(_unwrap(cleaned_today), prev_clean, cleaner.config).to_text()
 
 
 def _run_export_abbreviations(args) -> None:
@@ -389,6 +446,18 @@ def main():
                         help="Characters typed before each abbreviation (default ';').")
     parser.add_argument("--export-custom-only", action="store_true",
                         help="Export only your own abbreviations, not the bundled dictionary.")
+    parser.add_argument("--template", type=str, metavar="NAME",
+                        help='Fill a note template from the cleaned chart, e.g. "Systems note ([N] '
+                             '[CV] [R] …)", "Interval note", "Problem-oriented note".')
+    parser.add_argument("--daily-note", type=str, metavar="PREVIOUS_FILE",
+                        help="Output today's update (what's new, trends, devices, antibiotics, "
+                             "overnight events) against the previous chart in PREVIOUS_FILE.")
+    parser.add_argument("--tag", type=str, metavar="BED",
+                        help="Bed tag (e.g. G20-1): compare with the last chart stored for this bed "
+                             "and store today's chart (encrypted) for tomorrow.")
+    parser.add_argument("--split-patients", action="store_true",
+                        help="Split a pasted patient list (bed labels, Patient: lines, separators) "
+                             "and clean each patient on its own.")
     parser.add_argument("--check-known-good", action="store_true",
                         help="Re-clean your known-good charts with config.json (or --preset) and "
                              "show any whose output changed; exits 1 when one did.")
@@ -412,7 +481,8 @@ def main():
 
     cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode, preset=args.preset)
 
-    if args.stdin or args.stdout:
+    if (args.stdin or args.stdout or args.daily_note or args.tag or args.split_patients
+            or args.template):
         _run_pipe(args, cleaner)
         return
 

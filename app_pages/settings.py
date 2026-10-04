@@ -380,6 +380,52 @@ def settings_page():
 
             draw_templates()
 
+        # ---- note templates -----------------------------------------------------------
+        with ui.card().classes("w-full gap-2").mark("note-templates"):
+            ui.label("Note templates").classes("font-semibold")
+            ui.label("Used by “Copy as → note template” on the Clean page (and --template on the "
+                     "command line): the note itself, filled with the chart's own lines. "
+                     "Placeholders: {{chart}}, {{date}}, {{systems}} ([N] [CV] [R] [R/GU] [GI] [E] "
+                     "[H] [ID] …), {{system:N}}, {{section:Assessment & Plan}}, {{problems}}, "
+                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}. A template with a "
+                     "built-in's name replaces it.").classes("text-xs opacity-60 -mt-1")
+            ui.label("Built-in: " + ", ".join(t["name"] for t in note_templates_mod.DEFAULT_TEMPLATES)) \
+                .classes("text-xs opacity-60")
+            note_box = ui.column().classes("w-full gap-2")
+
+            def save_note_templates(items: list[dict]) -> None:
+                cfg = load_config(common.CONFIG_PATH)
+                cfg["note_templates"] = items
+                try:
+                    save_config_with_backup(cfg)
+                except Exception as ex:
+                    ui.notify(f"Could not save: {ex}", type="negative")
+                    return
+                ui.notify("Note templates saved.", type="positive")
+                draw_note_templates()
+
+            def draw_note_templates() -> None:
+                note_box.clear()
+                mine = list(load_config(common.CONFIG_PATH).get("note_templates") or [])
+                with note_box:
+                    for idx, t in enumerate(mine):
+                        with ui.column().classes("w-full gap-1 border rounded p-2"):
+                            name = ui.input("Name", value=t.get("name", "")).classes("w-full")
+                            body = ui.textarea("Template", value=t.get("template", "")) \
+                                .props("outlined autogrow").classes("w-full cc-mono")
+                            with ui.row():
+                                ui.button("Save", on_click=lambda i=idx, n=name, b=body: save_note_templates(
+                                    [*mine[:i], {"name": n.value.strip(), "template": b.value},
+                                     *mine[i + 1:]])).props("flat dense")
+                                ui.button("Delete", on_click=lambda i=idx: save_note_templates(
+                                    mine[:i] + mine[i + 1:])).props("flat dense color=negative")
+                    ui.button("Add note template", icon="add", on_click=lambda: save_note_templates(
+                        mine + [{"name": f"My note {len(mine) + 1}",
+                                 "template": "{{date}}\n\n{{overnight}}\n\n{{systems}}"}])) \
+                        .props("outline")
+
+            draw_note_templates()
+
         # ---- note types → presets ---------------------------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Note types").classes("font-semibold")

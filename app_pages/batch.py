@@ -6,6 +6,12 @@ from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 
 
+def safe_stem(name: str) -> str:
+    """A file-name-safe stem for a file or patient label ("G20-1" stays, "a/b" → "a_b")."""
+    stem = Path(name).stem if "." in name else name
+    return re.sub(r"[^A-Za-z0-9._ -]+", "_", stem).strip() or "item"
+
+
 def batch_page():
     """Clean many charts at once — upload files or point at a folder."""
     state = {"running": False}
@@ -125,6 +131,8 @@ def batch_page():
                 {"name": "facts", "label": "Clinical facts", "field": "facts", "align": "left"},
                 {"name": "note", "label": "Note type", "field": "note", "align": "left"},
                 {"name": "ms", "label": "Elapsed", "field": "ms", "align": "left"},
+                *([{"name": "summary", "label": "One-liner (local AI)", "field": "summary",
+                    "align": "left"}] if any(r.summary for r in shown) else []),
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
             ]
             rows = []
@@ -138,7 +146,7 @@ def batch_page():
                                            ("⚠ " if r.facts_status == "review" else "✕ ")
                                            + r.facts) if r.facts_status else "—",
                                  "note": (r.note_type + (f" → {r.preset}" if r.preset else "")) or "—",
-                                 "ms": f"{r.elapsed_ms:,} ms", "status": "ok"})
+                                 "ms": f"{r.elapsed_ms:,} ms", "status": "ok", "summary": r.summary})
                 else:
                     rows.append({"file": r.name, "chars": "—", "reduction": "—",
                                  "phi": "—", "findings": "—", "facts": "—", "note": "—",
@@ -153,7 +161,7 @@ def batch_page():
                     ui.button("Open exports folder", icon="folder",
                               on_click=lambda: open_folder(out_dir)).props("flat")
                 for r in [r for r in shown if r.status == "ok"]:
-                    out_name = f"{Path(r.name).stem}_cleaned.txt"
+                    out_name = f"{safe_stem(r.name)}_cleaned.txt"
                     with ui.row().classes("w-full items-center gap-2"):
                         ui.icon("description").classes("opacity-60")
                         ui.label(out_name).classes("text-xs cc-mono flex-grow")
@@ -167,6 +175,70 @@ def batch_page():
                     .classes("text-xs text-red-600")
             ui.label("Cleaned copies also live in data/exports; run history is on the "
                      "Statistics page.").classes("text-xs opacity-60")
+
+    def publish(results) -> None:
+        """Save cleaned copies + a .zip, record history, and show the results."""
+        out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ok = [r for r in results if r.status == "ok"]
+        for r in ok:
+            (out_dir / f"{safe_stem(r.name)}_cleaned.txt").write_text(r.cleaned, encoding="utf-8")
+            store.append_run({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "source": f"batch:{r.name}",
+                "chars_before": r.chars_before, "chars_after": r.chars_after,
+                "reduction": r.reduction, "duration_ms": r.elapsed_ms,
+                "stages": r.stages, "warnings": [],
+            })
+        zip_name = f"batch_{out_dir.name}.zip"
+        zip_path = store.EXPORTS_DIR / zip_name
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for r in ok:
+                zf.writestr(f"{safe_stem(r.name)}_cleaned.txt", r.cleaned)
+        out_ref.update(dir=out_dir, zip=zip_name)
+        out_ref["results"] = results
+        render_results()
+        ui.notify(f"Processed {len(results)} item(s) — {len(ok)} ok.", type="positive")
+
+    def preview_split() -> None:
+        chunks = patients_mod.split(list_input.value or "")
+        split_label.set_text(f"{len(chunks)} patient(s): " + ", ".join(c.label for c in chunks[:12])
+                             + (" …" if len(chunks) > 12 else "") if chunks else "Paste a list first.")
+
+    async def run_list() -> None:
+        if state["running"]:
+            return
+        chunks = patients_mod.split(list_input.value or "")
+        if not chunks:
+            ui.notify("Paste a patient list first.", type="warning")
+            return
+        set_running(True)
+        try:
+            cfg = load_config(common.CONFIG_PATH)
+            progress.update(done=0, total=len(chunks), current="")
+            summarize_fn = None
+            if ai_switch.value:
+                llm_cfg = {**cfg, "local_llm": {**merge_llm_config(cfg), "prompt_preset": "one_liner",
+                                                "custom_prompt": ""}}
+
+                def summarize_fn(chart: str) -> str:
+                    return summarize(chart, llm_cfg).text
+
+            def report(done: int, total: int, result) -> None:
+                progress.update(done=done, total=total, current=result.name)
+
+            def work():
+                return run_patient_texts([(c.label, c.text) for c in chunks], cfg,
+                                         custom_dir=common.CUSTOM_DIR, on_progress=report,
+                                         summarize=summarize_fn)
+
+            publish(await run.io_bound(work))
+        except ConfigError as e:
+            ui.notify(str(e), type="negative")
+        except Exception as e:
+            report_error("Patient list failed", e)
+        finally:
+            set_running(False)
 
     async def run_now() -> None:
         if state["running"] or not pending:
@@ -189,30 +261,7 @@ def batch_page():
                                        preset_loader=store.load_preset)
 
             results = await run.io_bound(work)
-            out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            ok = [r for r in results if r.status == "ok"]
-            for r in ok:
-                (out_dir / f"{Path(r.name).stem}_cleaned.txt").write_text(
-                    r.cleaned, encoding="utf-8")
-                store.append_run({
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "source": f"batch:{r.name}",
-                    "chars_before": r.chars_before, "chars_after": r.chars_after,
-                    "reduction": r.reduction, "duration_ms": r.elapsed_ms,
-                    "stages": r.stages, "warnings": [],
-                })
-            zip_name = f"batch_{out_dir.name}.zip"
-            zip_path = store.EXPORTS_DIR / zip_name
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for r in ok:
-                    zf.writestr(f"{Path(r.name).stem}_cleaned.txt", r.cleaned)
-            out_ref.update(dir=out_dir, zip=zip_name)
-
-            out_ref["results"] = results
-            render_results()
-            ui.notify(f"Processed {len(results)} file(s) — {len(ok)} ok.",
-                      type="positive")
+            publish(results)
         except ConfigError as e:
             ui.notify(str(e), type="negative")
         except Exception as e:
@@ -254,6 +303,21 @@ def batch_page():
             progress_label = ui.label("").classes("text-xs opacity-70")
         progress_row.set_visibility(False)
         ui.timer(0.3, tick_progress)
+        with ui.expansion("…or paste a patient list (sign-out, census, rounding list)",
+                          icon="groups").classes("w-full").mark("patient-list"):
+            ui.label("Patients are split at bed labels (G20-1, Bed 4), Patient:/Name: lines, "
+                     "numbered entries or separator lines; each one is cleaned on its own.") \
+                .classes("text-xs opacity-70")
+            list_input = ui.textarea("Patient list", on_change=lambda _: preview_split()) \
+                .props("outlined input-style='min-height: 180px'").classes("w-full cc-mono") \
+                .mark("patient-list-input")
+            split_label = ui.label("Paste a list first.").classes("text-xs opacity-70") \
+                .mark("patient-split")
+            with ui.row().classes("items-center gap-2"):
+                ui.button("Split & clean", icon="call_split", on_click=run_list) \
+                    .props("unelevated color=primary").mark("patient-list-run")
+                ai_switch = ui.switch("Add a one-liner per patient (local AI)").tooltip(
+                    "Uses the on-device model (Ollama); left blank when no model answers.")
         results_col = ui.column().classes("w-full gap-3")
 
 
