@@ -34,6 +34,7 @@ from __future__ import annotations
 import bisect
 import re
 from collections import Counter
+from functools import lru_cache
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,7 +43,8 @@ from .compactors.labs import LABS
 from .compactors.vitals import VITALS
 
 __all__ = ["DEFAULTS", "FactLoss", "FactReport", "FactTracker", "fact_counts",
-           "extract_facts", "stage_category", "check"]
+           "extract_facts", "stage_category", "check", "MeaningChange", "meaning_changes",
+           "UnsupportedFact", "OutputCheck", "verify_output"]
 
 DEFAULTS: dict[str, Any] = {"enabled": True}
 # Above this the per-stage snapshots cost seconds; the check is skipped with a warning.
@@ -92,6 +94,7 @@ _EXTRA_LABELS = (
     "gcs", "nihss", "mrs", "hunt-hess", "hunt hess", "fisher", "icp", "cpp", "evd", "fio2", "peep",
     "a1c", "hba1c", "bnp", "ldl", "tsh", "ck", "lipase", "ammonia", "ph", "pco2", "po2",
     "glucose", "poc glucose", "weight", "wt", "uop", "osm", "serum osm", "vent rate", "tv",
+    "rass", "cpot",
 )
 _LABELS = frozenset(
     {s for _, (_, names) in LABS.items() for s in names} | set(VITALS) | set(_EXTRA_LABELS))
@@ -135,16 +138,17 @@ def _is_drug(word: str) -> bool:
     return word in _DRUGS or (len(word) >= 7 and word.endswith(_DRUG_STEMS))
 
 
-def _word_keys(text: str) -> list[tuple[str, str, int]]:
+def _word_keys(text: str) -> list[tuple[str, str, int, int]]:
     out = []
     for m in _WORD.finditer(text):
         w = m.group(0).lower()
         if w in _KEYWORD_WORDS:
-            out.append((f"kw:{_KEYWORD_WORDS[w]}", m.group(0), m.start()))
+            out.append((f"kw:{_KEYWORD_WORDS[w]}", m.group(0), m.start(), m.end()))
         elif _is_drug(w):
-            out.append((f"drug:{w}", m.group(0), m.start()))
+            out.append((f"drug:{w}", m.group(0), m.start(), m.end()))
     for m in _KEYWORD_PHRASES.finditer(text):
-        out.append(("kw:full code" if m.group(1) else "kw:comfort care", m.group(0), m.start()))
+        out.append(("kw:full code" if m.group(1) else "kw:comfort care", m.group(0), m.start(),
+                    m.end()))
     return out
 
 
@@ -164,21 +168,22 @@ def _label_of(before: str) -> str | None:
     return None
 
 
-def _fact_spans(masked: str) -> list[tuple[str, str, int]]:
-    """(key, display, start) for every fact in already-masked text."""
-    spans: dict[int, tuple[str, str, int]] = {}  # number start -> fact (first match wins)
+def _fact_spans(masked: str) -> list[tuple[str, str, int, int]]:
+    """(key, display, start, end) for every fact in already-masked text."""
+    spans: dict[int, tuple[str, str, int, int]] = {}  # number start -> fact (first match wins)
     for m in _BP.finditer(masked):
         for g in (1, 2):
             spans.setdefault(m.start(g), (f"n:{_norm_number(m.group(g))}", f"BP {m.group(0)}",
-                                          m.start()))
+                                          m.start(), m.end()))
     for m in _LABELED_NUM.finditer(masked):
         label = _label_of(masked[max(0, m.start() - 48):m.start()])
         if label:
             spans.setdefault(m.start("num"), (f"n:{_norm_number(m.group('num'))}",
-                                              f"{label} {m.group('num')}", m.start()))
+                                              f"{label} {m.group('num')}", m.start(), m.end()))
     for m in _WITH_UNIT.finditer(masked):
         spans.setdefault(m.start("num"), (f"n:{_norm_number(m.group('num'))}",
-                                          f"{m.group('num')} {m.group('unit')}", m.start()))
+                                          f"{m.group('num')} {m.group('unit')}", m.start(),
+                                          m.end()))
     out = [spans[k] for k in sorted(spans)]
     out.extend(_word_keys(masked))
     return out
@@ -191,7 +196,7 @@ def fact_counts(text: str) -> Counter:
     never looks like losing "Hunt-Hess 2"; values are compared by number, so
     "Sodium 141 mmol/L" → "Na 141" keeps the fact.
     """
-    return Counter(key for key, _, _ in _fact_spans(_mask(text)))
+    return Counter(key for key, _, _, _ in _fact_spans(_mask(text)))
 
 
 @dataclass
@@ -214,7 +219,7 @@ def extract_facts(text: str) -> list[Fact]:
         end = text.find("\n", starts[i])
         return text[starts[i]:end if end != -1 else len(text)].strip()
 
-    return [Fact(key, shown, line_of(start)) for key, shown, start in _fact_spans(_mask(text))]
+    return [Fact(key, shown, line_of(start)) for key, shown, start, _end in _fact_spans(_mask(text))]
 
 
 # --- report ----------------------------------------------------------------
@@ -236,9 +241,39 @@ class FactLoss:
 
 
 @dataclass
+class MeaningChange:
+    """A line a stage rewrote (not removed) that lost a negation or changed side."""
+    kind: str            # "negation" | "laterality"
+    stage_id: str
+    stage_label: str
+    category: str
+    before: str
+    after: str
+
+    @property
+    def message(self) -> str:
+        if self.kind == "negation":
+            return f"{self.stage_label} dropped a negation (no/denies/without…)"
+        return f"{self.stage_label} changed left/right/bilateral"
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "stage_id": self.stage_id, "stage_label": self.stage_label,
+                "category": self.category, "before": self.before, "after": self.after,
+                "message": self.message}
+
+
+@dataclass
 class FactReport:
     total: int
     losses: list[FactLoss]
+    # rewritten lines that lost a negation or switched side (see meaning_changes)
+    meaning: list[MeaningChange] = field(default_factory=list)
+    # values in the output that were nowhere in the input (FactLoss rows, count = times)
+    introduced: list[FactLoss] = field(default_factory=list)
+    # impossible values / very high doses in the output (plausibility.Implausible)
+    implausible: list[Any] = field(default_factory=list)
+    # keys of implausible items that the input already had (not caused by cleaning)
+    implausible_in_source: set = field(default_factory=set)
 
     def lost(self, category: str | None = None) -> int:
         return sum(x.count for x in self.losses if category in (None, x.category))
@@ -247,25 +282,54 @@ class FactReport:
     def kept(self) -> int:
         return self.total - self.lost()
 
+    def _meaning(self, category: str) -> int:
+        return sum(1 for m in self.meaning if m.category == category)
+
+    def _introduced(self, category: str) -> int:
+        return sum(x.count for x in self.introduced if x.category == category)
+
+    @property
+    def implausible_new(self) -> list[Any]:
+        """Impossible values the cleaning produced (the input didn't have them)."""
+        return [x for x in self.implausible if x.key() not in self.implausible_in_source]
+
     @property
     def status(self) -> str:
-        """``alert`` (unexpected loss), ``review`` (a rule removed facts) or ``ok``."""
-        if self.lost("unexpected"):
+        """``alert`` (unexpected loss/change), ``review`` (a rule removed facts) or ``ok``."""
+        if (self.lost("unexpected") or self._meaning("unexpected")
+                or self._introduced("unexpected") or self.implausible_new):
             return "alert"
-        if self.lost("rule"):
+        if self.lost("rule") or self._meaning("rule"):
             return "review"
         return "ok"
 
     def headline(self) -> str:
         if self.status == "alert":
-            text = f"{self.lost('unexpected')} clinical value(s) lost unexpectedly"
+            parts = []
+            if self.lost("unexpected"):
+                parts.append(f"{self.lost('unexpected')} clinical value(s) lost unexpectedly")
+            if self._meaning("unexpected"):
+                parts.append(f"{self._meaning('unexpected')} line(s) changed meaning")
+            if self._introduced("unexpected"):
+                parts.append(f"{self._introduced('unexpected')} value(s) appeared that weren't in the chart")
+            if self.implausible_new:
+                parts.append(f"{len(self.implausible_new)} impossible value(s) after cleaning")
+            text = "; ".join(parts)
         elif self.status == "review":
-            text = f"{self.lost('rule')} clinical value(s) removed by rules — review"
+            parts = []
+            if self.lost("rule"):
+                parts.append(f"{self.lost('rule')} clinical value(s) removed by rules")
+            if self._meaning("rule"):
+                parts.append(f"{self._meaning('rule')} line(s) changed meaning by rules")
+            text = "; ".join(parts) + " — review"
         else:
             text = f"All {self.total - self.lost('by_design')} clinical value(s) kept"
         by_design = self.lost("by_design")
         if by_design:
             text += f" ({by_design} dropped by section/summary settings)"
+        old = len(self.implausible) - len(self.implausible_new)
+        if old:
+            text += f" · {old} value(s) in the chart look impossible"
         return text
 
     def summary(self) -> dict:
@@ -276,11 +340,206 @@ class FactReport:
                 by_stage[x.stage_id] = by_stage.get(x.stage_id, 0) + x.count
         return {"status": self.status, "total": self.total, "kept": self.kept,
                 **{f"lost_{c}": self.lost(c) for c in CATEGORY_ORDER},
-                "lost_by_stage": by_stage}
+                "lost_by_stage": by_stage,
+                "meaning_flags": len(self.meaning),
+                "introduced": sum(x.count for x in self.introduced),
+                "implausible": len(self.implausible)}
 
     def to_dict(self) -> dict:
         return {**self.summary(), "headline": self.headline(),
-                "losses": [x.to_dict() for x in self.losses]}
+                "losses": [x.to_dict() for x in self.losses],
+                "meaning": [m.to_dict() for m in self.meaning],
+                "introduced_values": [x.to_dict() for x in self.introduced],
+                "implausible_values": [{**x.to_dict(), "in_source": x.key() in self.implausible_in_source}
+                                       for x in self.implausible]}
+
+
+# --- meaning guard: negation and laterality on rewritten lines -------------
+
+_NEGATION = re.compile(
+    r"(?<![A-Za-z])(?:no|not|denies|denied|deny|without|negative|neg|absent|never|none|nor)"
+    r"(?![A-Za-z])|(?<![A-Za-z])w/o(?![A-Za-z])|n't\b"
+    r"|(?<![A-Za-z])(?-i:WO|NEG)(?![A-Za-z])|\(-\)|(?<![A-Za-z])-ve\b", re.IGNORECASE)
+_SIDE = re.compile(
+    r"(?<![A-Za-z])(?:(left|lt)|(right|rt)|(bilateral|bilat|both))(?![A-Za-z])"
+    r"|(?<![A-Za-z/])(?:(L)|(R))(?![A-Za-z/])|(?<![A-Za-z])(b/l)(?![A-Za-z])", re.IGNORECASE)
+# Single-letter sides only count in capitals ("L MCA", not "r/o").
+MAX_MEANING_LINES = 4000
+
+
+def _sides(line: str) -> Counter:
+    out: Counter = Counter()
+    for m in _SIDE.finditer(line):
+        if m.group(1):
+            out["L"] += 1
+        elif m.group(2):
+            out["R"] += 1
+        elif m.group(3) or m.group(6):
+            out["B"] += 1
+        elif m.group(4) and m.group(4) == "L":
+            out["L"] += 1
+        elif m.group(5) and m.group(5) == "R":
+            out["R"] += 1
+    return out
+
+
+@lru_cache(maxsize=1)
+def _negation_abbreviations() -> re.Pattern | None:
+    """Abbreviations that stand for a negated phrase (NAD, DNR, NGTD, N/A…).
+
+    Abbreviating "No acute distress" to "NAD" keeps the negation; counting
+    these forms as negations lets the guard see that.
+    """
+    import csv
+    from .abbreviations import SOURCE_PATH
+    forms = set()
+    try:
+        with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as fh:
+            for row in csv.DictReader(fh):
+                abbr = (row.get("Abbreviation") or "").strip()
+                if len(abbr) >= 2 and _NEGATION.search(row.get("Expanded version") or ""):
+                    forms.add(abbr)
+    except OSError:
+        return None
+    if not forms:
+        return None
+    alternation = "|".join(re.escape(f) for f in sorted(forms, key=len, reverse=True))
+    return re.compile(rf"(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])")
+
+
+def _negations(line: str) -> int:
+    n = len(_NEGATION.findall(line))
+    abbrs = _negation_abbreviations()
+    if abbrs is not None:
+        n += sum(1 for m in abbrs.finditer(line) if not _NEGATION.fullmatch(m.group(0)))
+    return n
+
+
+def _pairs(before: list[str], after: list[str]) -> list[tuple[str, str]]:
+    import difflib
+    out: list[tuple[str, str]] = []
+    sm = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != "replace":
+            continue
+        olds, news = before[i1:i2], after[j1:j2]
+        if len(olds) == len(news):
+            out.extend(zip(olds, news))
+            continue
+        for old in olds:
+            best, score = None, 0.5
+            for new in news:
+                r = difflib.SequenceMatcher(a=old, b=new, autojunk=False).ratio()
+                if r > score:
+                    best, score = new, r
+            if best is not None:
+                out.append((old, best))
+    return out
+
+
+def meaning_changes(before: str, after: str, stage_id: str = "output",
+                    stage_label: str = "Output") -> list[MeaningChange]:
+    """Rewritten lines whose negations dropped or whose sides changed.
+
+    Only lines a stage *rewrote* are compared (removed lines are the facts
+    check's job), so "No fever" → "fever" is caught while deleting a whole
+    boilerplate line is not. Abbreviated sides (left → L) count as the same side.
+    """
+    a, b = before.split("\n"), after.split("\n")
+    if len(a) > MAX_MEANING_LINES or len(b) > MAX_MEANING_LINES:
+        return []
+    category = stage_category(stage_id)
+    out = []
+    for old, new in _pairs(a, b):
+        if not old.strip() or not new.strip():
+            continue
+        before_n, after_n = _negations(old), _negations(new)
+        # Abbreviating can fold two negations into one form ("No acute process /
+        # no acute pathology" → NAP); there only a vanished negation counts.
+        lost = (before_n and not after_n) if stage_id in WORD_SAFE_STAGES else after_n < before_n
+        if lost:
+            out.append(MeaningChange("negation", stage_id, stage_label, category,
+                                     old.strip()[:300], new.strip()[:300]))
+        so, sn = _sides(old), _sides(new)
+        if so != sn and (sn - so):  # a side appeared that wasn't there (a switch, not a drop)
+            out.append(MeaningChange("laterality", stage_id, stage_label, category,
+                                     old.strip()[:300], new.strip()[:300]))
+        elif so and not sn and new.strip():
+            out.append(MeaningChange("laterality", stage_id, stage_label, category,
+                                     old.strip()[:300], new.strip()[:300]))
+    return out
+
+
+# --- AI output check: facts the source never had ---------------------------
+
+@dataclass
+class UnsupportedFact:
+    key: str
+    display: str
+    start: int
+    end: int
+
+    def to_dict(self) -> dict:
+        return {"key": self.key, "display": self.display, "start": self.start, "end": self.end}
+
+
+@dataclass
+class OutputCheck:
+    """Clinical facts in generated text (AI summary, answer, compactor output)
+    checked against the source chart."""
+    total: int
+    unsupported: list[UnsupportedFact]
+
+    @property
+    def ok(self) -> bool:
+        return not self.unsupported
+
+    @property
+    def score(self) -> float:
+        if not self.total:
+            return 100.0
+        return round(100.0 * (self.total - len(self.unsupported)) / self.total, 1)
+
+    def headline(self) -> str:
+        if not self.total:
+            return "No clinical values to check"
+        if self.ok:
+            return f"All {self.total} clinical value(s) are in the chart"
+        shown = ", ".join(dict.fromkeys(u.display for u in self.unsupported))
+        return f"{len(self.unsupported)} value(s) not in the chart: {shown}"
+
+    def to_dict(self) -> dict:
+        return {"total": self.total, "ok": self.ok, "score": self.score,
+                "headline": self.headline(),
+                "unsupported": [u.to_dict() for u in self.unsupported]}
+
+
+_ANY_NUMBER = re.compile(r"(?<![\w.])[<>]?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
+
+
+def verify_output(source: str, generated: str) -> OutputCheck:
+    """Which clinical facts in ``generated`` the ``source`` chart never states.
+
+    Numbers count as supported when the same value appears anywhere in the
+    source (the label may be worded differently); drug names and safety
+    keywords when the source has them. Spans index into ``generated`` so the
+    app can highlight them.
+    """
+    numbers = {_norm_number(m.group(1)) for m in _ANY_NUMBER.finditer(source)}
+    words = {m.group(0).lower() for m in _WORD.finditer(source)}
+    source_keys = set(fact_counts(source))
+    spans = _fact_spans(_mask(generated))
+    unsupported = []
+    for key, display, start, end in spans:
+        if key.startswith("n:"):
+            ok = key[2:] in numbers
+        elif key.startswith("drug:"):
+            ok = key[5:] in words
+        else:
+            ok = key in source_keys
+        if not ok:
+            unsupported.append(UnsupportedFact(key, display, start, end))
+    return OutputCheck(total=len(spans), unsupported=unsupported)
 
 
 class FactTracker:
@@ -291,17 +550,59 @@ class FactTracker:
         self.facts = extract_facts(text)
         self.start = fact_counts(text)
         self.current = self.start
+        self.previous = text
         self.drops: list[tuple[str, str, Counter]] = []  # (stage id, label, decreases)
+        self.meaning: list[MeaningChange] = []
+        self.added: list[tuple[str, str, Counter]] = []  # values new to the chart, per stage
 
     def after_stage(self, stage_id: str, label: str, text: str) -> None:
         now = fact_counts(text)
         dec = Counter({k: v - now.get(k, 0) for k, v in self.current.items() if v > now.get(k, 0)})
         if dec:
             self.drops.append((stage_id, label, dec))
+        new = Counter({k: v - self.current.get(k, 0) for k, v in now.items()
+                       if k.startswith("n:") and k not in self.start and v > self.current.get(k, 0)})
+        if new:
+            self.added.append((stage_id, label, new))
+        if stage_id not in BY_DESIGN_STAGES and stage_id not in DEDUP_STAGES:
+            try:
+                self.meaning.extend(meaning_changes(self.previous, text, stage_id, label))
+            except Exception:
+                pass  # the guard must never break a clean
         self.current = now
+        self.previous = text
 
     def report(self, final_text: str) -> FactReport:
-        return check(self.text, final_text, self.drops, facts=self.facts, start=self.start)
+        rep = check(self.text, final_text, self.drops, facts=self.facts, start=self.start)
+        rep.meaning = self.meaning
+        rep.introduced = self._introduced(final_text)
+        self._plausibility(rep, final_text)
+        return rep
+
+    def _introduced(self, final_text: str) -> list[FactLoss]:
+        if not self.added:
+            return []
+        final = fact_counts(final_text)
+        facts = extract_facts(final_text)
+        out = []
+        for stage_id, label, new in self.added:
+            for key, n in new.items():
+                if not final.get(key):
+                    continue  # a later stage removed it again
+                shown = next((f for f in facts if f.key == key), None)
+                out.append(FactLoss(key, shown.display if shown else key[2:], n, stage_id, label,
+                                    stage_category(stage_id),
+                                    lines=[shown.line] if shown else []))
+        return out
+
+    def _plausibility(self, rep: FactReport, final_text: str) -> None:
+        from .plausibility import check as plausible
+        try:
+            rep.implausible = plausible(final_text)
+            if rep.implausible:
+                rep.implausible_in_source = {x.key() for x in plausible(self.text)}
+        except Exception:
+            pass
 
 
 def check(before: str, after: str, drops: list[tuple[str, str, Counter]] | None = None, *,

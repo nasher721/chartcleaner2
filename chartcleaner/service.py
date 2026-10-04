@@ -194,6 +194,7 @@ def ask(question: str, chart: str, *, preset: str | None = None,
         "grounding_score": res.grounding.grounding_score,
         "grounded": res.grounding.is_safe,
         "ungrounded_entities": list(res.grounding.ungrounded_entities),
+        "facts": res.facts.to_dict() if res.facts is not None else None,
         "duration_ms": res.duration_ms,
     }
 

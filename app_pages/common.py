@@ -422,6 +422,40 @@ GLOBAL_SHORTCUTS = [("mod+k", "Open the command palette"),
                     ("mod+/", "Show keyboard shortcuts")]
 
 
+def highlight_unsupported_html(text: str, facts) -> str:
+    """``text`` as HTML with each value the chart doesn't support marked in red.
+
+    ``facts`` is a :class:`chartcleaner.fact_check.OutputCheck` (or None).
+    """
+    spans = sorted(((u.start, u.end, u.display) for u in (facts.unsupported if facts else [])),
+                   key=lambda x: x[0])
+    out, pos = [], 0
+    for start, end, display in spans:
+        if start < pos:
+            continue
+        out.append(esc(text[pos:start]))
+        out.append(f'<mark class="cc-unsupported" title="Not in the chart: {esc(display)}" '
+                   f'style="background:#fecaca;color:#7f1d1d;border-radius:3px;padding:0 2px">'
+                   f"{esc(text[start:end])}</mark>")
+        pos = end
+    out.append(esc(text[pos:]))
+    return ('<div class="cc-mono text-sm" style="white-space:pre-wrap">' + "".join(out) + "</div>")
+
+
+def facts_badge(facts) -> None:
+    """Badge for an AI output's value-by-value check (fact_check.OutputCheck)."""
+    if facts is None:
+        return
+    if not facts.total:
+        return
+    if facts.ok:
+        ui.badge(f"All {facts.total} values in the chart", color="green").props("outline") \
+            .mark("ai-facts-ok")
+    else:
+        ui.badge(f"{len(facts.unsupported)} value(s) not in the chart", color="red") \
+            .tooltip(facts.headline()).mark("ai-facts-unsupported")
+
+
 def shortcut_label(combo: str) -> str:
     parts = combo.split("+")
     names = {"mod": MOD, "shift": "Shift", "alt": "Alt", "enter": "Enter", "/": "/"}

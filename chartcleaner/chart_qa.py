@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from chartcleaner.local_llm import GroundingResult, LocalLlmClient, verify_clinical_grounding
-from chartcleaner.summarizer import LlmUnavailableError, NoModelError, merge_llm_config
+from chartcleaner.summarizer import LlmUnavailableError, NoModelError, _check_facts, merge_llm_config
 
 __all__ = [
     "MAX_HISTORY_TURNS",
@@ -59,6 +59,8 @@ class QaResult:
     grounding: GroundingResult
     model: str
     duration_ms: int
+    # clinical facts in the answer checked one by one (fact_check.OutputCheck)
+    facts: Any = None
 
 
 def build_qa_prompt(
@@ -137,4 +139,5 @@ def ask_chart(
         grounding=grounding,
         model=model,
         duration_ms=duration_ms,
+        facts=_check_facts(chart, answer),
     )

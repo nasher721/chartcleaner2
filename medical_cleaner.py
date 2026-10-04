@@ -85,6 +85,12 @@ def _print_fact_check(result, limit: int = 5) -> None:
     for x in [x for x in report.losses if x.category != "by_design"][:limit]:
         print(f"    - {x.display} ({x.stage_label}): {x.lines[0][:100] if x.lines else ''}",
               file=sys.stderr)
+    for m in report.meaning[:limit]:
+        print(f"    - {m.message}: {m.before[:60]!r} → {m.after[:60]!r}", file=sys.stderr)
+    for x in report.introduced[:limit]:
+        print(f"    - new value {x.display} ({x.stage_label})", file=sys.stderr)
+    for x in report.implausible_new[:limit]:
+        print(f"    - {x.message}", file=sys.stderr)
 
 
 def _print_audit(audit, limit: int = 10) -> None:
@@ -281,6 +287,29 @@ def _run_untoken(source: str | None, tokens_file: str | None) -> None:
         print(f"Restored {n} token(s) — text copied back to clipboard.")
 
 
+def _run_check_known_good(preset: str | None) -> int:
+    """Re-clean every known-good chart; exit status 1 when any output changed."""
+    from chartcleaner import regression_set, store
+    from chartcleaner.service import load_active_config
+
+    try:
+        cfg = load_active_config(preset)
+    except Exception as e:
+        print(f"Could not load {'preset ' + preset if preset else 'config.json'}: {e}", file=sys.stderr)
+        return 2
+    results = regression_set.check(cfg, custom_dir=store.CUSTOM_RULES_DIR)
+    if not results:
+        print("No known-good charts yet — mark one on the Clean page (Mark as known good).")
+        return 0
+    changed = [r for r in results if r.changed]
+    for r in results:
+        print(f"{'✕' if r.changed else '✓'} {r.label}" + (f" — {r.error}" if r.error else ""))
+        for line in r.diff[:20]:
+            print(f"    {line}")
+    print(f"{len(results) - len(changed)} of {len(results)} known-good chart(s) unchanged.")
+    return 1 if changed else 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Clean and structure Epic EMR text for LLMs. "
@@ -353,7 +382,13 @@ def main():
                         help="Characters typed before each abbreviation (default ';').")
     parser.add_argument("--export-custom-only", action="store_true",
                         help="Export only your own abbreviations, not the bundled dictionary.")
+    parser.add_argument("--check-known-good", action="store_true",
+                        help="Re-clean your known-good charts with config.json (or --preset) and "
+                             "show any whose output changed; exits 1 when one did.")
     args = parser.parse_args()
+
+    if args.check_known_good:
+        sys.exit(_run_check_known_good(args.preset))
 
     if args.export_abbreviations:
         _run_export_abbreviations(args)

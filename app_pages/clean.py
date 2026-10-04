@@ -774,6 +774,8 @@ async def clean_page():
             custom_box.set_visibility(preset_key == "custom")
             summary_refs["output"] = ui.textarea("").props(
                 "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
+            summary_refs["marked"] = ui.html("").classes("w-full").mark("ai-summary-marked")
+            summary_refs["marked"].set_visibility(False)
             with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                 summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
                 summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
@@ -836,10 +838,17 @@ async def clean_page():
         summary_refs["output"].set_value(res.text)
         summary_refs["meta"].set_text(f"model: {res.model} · {res.duration_ms:,} ms")
         g = res.grounding
+        facts = getattr(res, "facts", None)
+        marked = summary_refs.get("marked")
+        if marked is not None:
+            show = bool(facts and facts.unsupported)
+            marked.set_content(highlight_unsupported_html(res.text, facts) if show else "")
+            marked.set_visibility(show)
         row = summary_refs["grounding_row"]
         row.clear()
         with row:
             grounding_badge(g.grounding_score, g.is_safe, g.total_entities)
+            facts_badge(facts)
             for item in g.ungrounded_entities:
                 ui.button(item, icon="content_copy",
                           on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
@@ -895,10 +904,15 @@ async def clean_page():
         with log_col:
             for t in turns:
                 ui.label("Q: " + t["q"]).classes("text-sm font-semibold")
-                ui.markdown(t["a"]).classes("w-full")
+                facts = t.get("facts")
+                if facts is not None and facts.unsupported:
+                    ui.html(highlight_unsupported_html(t["a"], facts)).classes("w-full")
+                else:
+                    ui.markdown(t["a"]).classes("w-full")
                 g = t["g"]
                 with ui.row().classes("items-center gap-1 flex-wrap"):
                     grounding_badge(g["score"], g["safe"], g["total"])
+                    facts_badge(facts)
                     ui.button("Copy answer", icon="content_copy",
                               on_click=lambda _, a=t["a"]: copy_to_clipboard(a)).props("flat dense")
                     ui.label(f"{t['model']} · {t['ms']:,} ms").classes("text-xs opacity-60")
@@ -937,6 +951,7 @@ async def clean_page():
                 "q": res.question, "a": res.answer,
                 "g": {"score": res.grounding.grounding_score, "safe": res.grounding.is_safe,
                       "total": res.grounding.total_entities},
+                "facts": getattr(res, "facts", None),
                 "model": res.model, "ms": res.duration_ms})
             if q_box:
                 q_box.set_value("")
@@ -1498,7 +1513,7 @@ async def clean_page():
 
     def render_fact_check(report) -> None:
         """Details behind the trust badge: which clinical values went, and where."""
-        if not report.losses:
+        if not (report.losses or report.meaning or report.introduced or report.implausible):
             return
         status = report.status
         icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
@@ -1531,6 +1546,32 @@ async def clean_page():
                                 .props("flat dense")
                 if len(items) > 20:
                     ui.label(f"… {len(items) - 20} more").classes("text-xs opacity-60")
+            if report.meaning:
+                ui.label("Lines whose meaning changed (a negation dropped, or a side switched)") \
+                    .classes("text-sm font-semibold mt-1")
+                for m in report.meaning[:20]:
+                    with ui.column().classes("w-full gap-0 border-l-4 pl-2").mark("meaning-change"):
+                        ui.label(m.message).classes("text-xs font-semibold text-red-600"
+                                                    if m.category == "unexpected" else "text-xs font-semibold")
+                        ui.label("before: " + m.before).classes("text-xs cc-mono break-all")
+                        ui.label("after:  " + m.after).classes("text-xs cc-mono break-all")
+            if report.introduced:
+                ui.label("Values in the output that weren't in the chart") \
+                    .classes("text-sm font-semibold mt-1")
+                for x in report.introduced[:20]:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.badge(x.display).props(f"outline color={'red' if x.category == 'unexpected' else 'grey'}")
+                        ui.label(f"{x.stage_label}: {x.lines[0][:240] if x.lines else ''}") \
+                            .classes("text-xs cc-mono flex-grow break-all")
+            if report.implausible:
+                ui.label("Values that look impossible").classes("text-sm font-semibold mt-1")
+                for x in report.implausible[:20]:
+                    new = x.key() not in report.implausible_in_source
+                    with ui.row().classes("w-full items-start gap-2 no-wrap").mark("implausible-value"):
+                        ui.badge("after cleaning" if new else "in the chart",
+                                 color="red" if new else "orange").props("outline")
+                        ui.label(f"{x.message} — {x.line[:200]}") \
+                            .classes("text-xs cc-mono flex-grow break-all")
 
     async def keep_text(sid: str, text: str) -> None:
         cfg = load_config(common.CONFIG_PATH)

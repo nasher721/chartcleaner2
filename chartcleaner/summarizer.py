@@ -106,6 +106,8 @@ class SummaryResult:
     model: str
     preset: str
     duration_ms: int
+    # clinical facts in the summary checked one by one (fact_check.OutputCheck)
+    facts: Any = None
 
 
 class LlmClient(Protocol):  # structural type for injection in tests
@@ -184,4 +186,14 @@ def summarize(
         model=model,
         preset=str(opts["prompt_preset"]),
         duration_ms=duration_ms,
+        facts=_check_facts(chart, text),
     )
+
+
+def _check_facts(chart: str, text: str):
+    """Every value, drug and code-status word in ``text`` checked against ``chart``."""
+    from chartcleaner.fact_check import verify_output
+    try:
+        return verify_output(chart, text)
+    except Exception:
+        return None  # a bonus check; never fail a summary over it
