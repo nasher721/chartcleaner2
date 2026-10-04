@@ -335,6 +335,92 @@ def settings_page():
                      on_change=lambda e: (common.PREFS.update(notes_folder=e.value.strip()), save_prefs())) \
                 .classes("w-full cc-mono")
 
+        # ---- local AI (Ollama) ----------------------------------------------------------
+        with ui.card().classes("w-full gap-2").mark("local-ai-card"):
+            ui.label("Local AI (Ollama)").classes("font-semibold")
+            ui.label("Summaries and “Ask this chart” run on this computer through Ollama. Chart "
+                     "text only ever goes to a loopback address.").classes("text-xs opacity-60 -mt-1")
+            ai_status = ui.label("Not checked yet.").classes("text-sm").mark("local-ai-status")
+            ai_models = ui.column().classes("w-full gap-1")
+            pull_row = ui.row().classes("w-full items-center gap-2")
+            pull_state = {"running": False, "status": "", "fraction": None}
+
+            def use_model(name: str) -> None:
+                cfg = load_config(common.CONFIG_PATH)
+                cfg["local_llm"] = {**merge_llm_config(cfg), "model": name}
+                save_config_with_backup(cfg)
+                ui.notify(f"Summaries will use {name}.", type="positive")
+                draw_health(last_health.get("h"))
+
+            last_health: dict = {}
+
+            def draw_health(h: dict | None) -> None:
+                if not h:
+                    return
+                last_health["h"] = h
+                current = merge_llm_config(load_config(common.CONFIG_PATH)).get("model") or ""
+                if h["reachable"]:
+                    ai_status.set_text(f"✓ Ollama {h['version'] or ''} at {h['base_url']} — "
+                                       f"{len(h['models'])} model(s)" + (f" · {h['error']}" if h["error"] else ""))
+                else:
+                    ai_status.set_text(f"✕ {h['error'] or 'Not reachable'} ({h['base_url']})")
+                ai_models.clear()
+                with ai_models:
+                    for m in h["models"]:
+                        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                            ui.label(m.get("name", "")).classes("text-sm cc-mono w-56")
+                            ui.label(" · ".join(x for x in (m.get("parameters"), f"{m.get('size_gb', '')} GB"
+                                                              if m.get("size_gb") else "", m.get("modified")) if x)) \
+                                .classes("text-xs opacity-60 flex-grow")
+                            if m.get("name") == current or (not current and m is h["models"][0]):
+                                ui.badge("in use", color="green").props("outline")
+                            else:
+                                ui.button("Use", on_click=lambda n=m["name"]: use_model(n)).props("flat dense")
+                pull_row.set_visibility(h["reachable"] and not h["has_recommended"])
+
+            async def check_ai() -> None:
+                url = str(merge_llm_config(load_config(common.CONFIG_PATH))["base_url"])
+                draw_health(await run.io_bound(local_llm_health, url))
+
+            async def pull_recommended() -> None:
+                if pull_state["running"]:
+                    return
+                pull_state.update(running=True, status="starting…", fraction=None)
+                url = str(merge_llm_config(load_config(common.CONFIG_PATH))["base_url"])
+
+                def work():
+                    client = LocalLlmClient(url, timeout=30.0)
+                    return client.pull(RECOMMENDED_MODEL, on_progress=lambda st, fr: pull_state.update(
+                        status=st, fraction=fr))
+                try:
+                    ok = await run.io_bound(work)
+                    ui.notify(f"{RECOMMENDED_MODEL} is ready." if ok else "Pull finished without success.",
+                              type="positive" if ok else "warning")
+                except Exception as ex:
+                    ui.notify(f"Could not pull {RECOMMENDED_MODEL}: {ex}", type="negative")
+                finally:
+                    pull_state["running"] = False
+                    await check_ai()
+
+            def tick_pull() -> None:
+                if pull_state["running"]:
+                    frac = pull_state["fraction"]
+                    pull_label.set_text(pull_state["status"] + (f" — {frac:.0%}" if frac is not None else ""))
+                    if frac is not None:
+                        pull_bar.set_value(frac)
+
+            with pull_row:
+                ui.button(f"Pull {RECOMMENDED_MODEL} (≈5 GB)", icon="download",
+                          on_click=pull_recommended).props("outline").mark("pull-model")
+                pull_bar = ui.linear_progress(value=0, show_value=False).classes("w-48")
+                pull_label = ui.label("").classes("text-xs opacity-70")
+            pull_row.set_visibility(False)
+            ui.timer(0.5, tick_pull)
+            with ui.row().classes("gap-2"):
+                ui.button("Check now", icon="refresh", on_click=check_ai).props("flat").mark("check-ai")
+            if not os.environ.get("NICEGUI_USER_SIMULATION"):
+                ui.timer(0.2, check_ai, once=True)
+
         # ---- prompt templates ---------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
             ui.label("Prompt templates").classes("font-semibold")

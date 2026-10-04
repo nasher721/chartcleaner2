@@ -10,7 +10,7 @@ LLM client is injectable so tests never touch the network.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from chartcleaner.local_llm import (
@@ -28,6 +28,7 @@ __all__ = [
     "SummaryResult",
     "build_prompt",
     "merge_llm_config",
+    "run_model",
     "summarize",
 ]
 
@@ -108,6 +109,8 @@ class SummaryResult:
     duration_ms: int
     # clinical facts in the summary checked one by one (fact_check.OutputCheck)
     facts: Any = None
+    # where each summary line comes from in the chart (citations.Citation)
+    citations: list = field(default_factory=list)
 
 
 class LlmClient(Protocol):  # structural type for injection in tests
@@ -141,12 +144,31 @@ def _resolve_model(client: LlmClient, model: str) -> str:
     return models[0]
 
 
+def run_model(client: Any, prompt: str, model: str, on_token: Any = None) -> str:
+    """The model's answer; with ``on_token(text_so_far)`` it streams when the client can."""
+    stream = getattr(client, "generate_stream", None)
+    if on_token is None or not callable(stream):
+        return client.generate(prompt, model=model)
+    text = ""
+    for piece in stream(prompt, model=model):
+        text += piece
+        try:
+            on_token(text)
+        except Exception:
+            pass  # a display callback must never stop generation
+    return text.strip()
+
+
 def summarize(
     chart: str,
     cfg: dict,
     client: LlmClient | None = None,
+    on_token: Any = None,
 ) -> SummaryResult:
-    """Summarize ``chart`` on-device and attach clinical grounding verification."""
+    """Summarize ``chart`` on-device and attach clinical grounding verification.
+
+    ``on_token(text_so_far)`` is called as the summary streams in.
+    """
     opts = merge_llm_config(cfg)
     base_url: str = opts["base_url"]
     threshold = min(max(float(opts["grounding_threshold"]), 0.0), 100.0)
@@ -169,7 +191,7 @@ def summarize(
 
     started = time.monotonic()
     try:
-        text = client.generate(prompt, model=model)
+        text = run_model(client, prompt, model, on_token)
     except ValueError:
         raise
     except Exception as exc:
@@ -187,7 +209,16 @@ def summarize(
         preset=str(opts["prompt_preset"]),
         duration_ms=duration_ms,
         facts=_check_facts(chart, text),
+        citations=_cite(text, chart),
     )
+
+
+def _cite(text: str, chart: str) -> list:
+    from chartcleaner.citations import cite
+    try:
+        return cite(text, chart)
+    except Exception:
+        return []  # citations are a bonus; never fail a summary over them
 
 
 def _with_overnight(opts: dict, chart: str) -> str:

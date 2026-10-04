@@ -75,7 +75,8 @@ from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE, PENDING_RULE, PIPE_TES
 from chartcleaner.benchmark import generate as generate_benchmark
 from chartcleaner.evaluate import evaluate as evaluate_samples
 from chartcleaner.evaluate import load_last_evaluation, save_evaluation
-from chartcleaner.local_llm import LocalLlmClient
+from chartcleaner.local_llm import LocalLlmClient, RECOMMENDED_MODEL
+from chartcleaner.local_llm import health as local_llm_health
 from chartcleaner.chart_qa import QaTurn, ask_chart
 from chartcleaner.batch import run_batch as run_batch_files
 from chartcleaner.batch import run_texts as run_patient_texts

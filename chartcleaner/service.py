@@ -313,6 +313,7 @@ def ask(question: str, chart: str, *, preset: str | None = None,
         "grounded": res.grounding.is_safe,
         "ungrounded_entities": list(res.grounding.ungrounded_entities),
         "facts": res.facts.to_dict() if res.facts is not None else None,
+        "citations": [c.to_dict() for c in res.citations],
         "duration_ms": res.duration_ms,
     }
 

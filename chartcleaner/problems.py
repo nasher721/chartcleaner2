@@ -150,7 +150,9 @@ class ProblemReport:
 
 def continues(prev: str, line: str) -> bool:
     """True when ``line`` is the wrapped rest of ``prev`` (not a new line, item or heading)."""
-    return bool(line.strip() and prev.strip()
+    words = prev.split()
+    title_like = len(words) <= 4 and all(w[:1].isupper() or not w[:1].isalpha() for w in words)
+    return bool(line.strip() and prev.strip() and not title_like
                 and not re.search(r"[.:;!?]\s*$", prev)
                 and (re.match(r"\s*[a-z0-9(]", line) or re.search(r"[a-z,]\s*$", prev))
                 and not _PLAN_LINE.match(line) and not _PROBLEM.match(line)

@@ -95,7 +95,7 @@ async def test_stale_summary_is_discarded_after_chart_change(user: User, monkeyp
     started = threading.Event()
     release = threading.Event()
 
-    def delayed_summary(chart, cfg):
+    def delayed_summary(chart, cfg, **_kw):
         started.set()
         release.wait(timeout=2)
         return _summary("STALE SUMMARY")
@@ -128,7 +128,7 @@ async def test_stale_answer_is_discarded_after_chart_change(user: User, monkeypa
     started = threading.Event()
     release = threading.Event()
 
-    def delayed_answer(question, chart, cfg, history=None):
+    def delayed_answer(question, chart, cfg, history=None, **_kw):
         started.set()
         release.wait(timeout=2)
         return _answer(question, "STALE ANSWER")
@@ -163,13 +163,13 @@ async def test_current_chart_ai_response_is_published(user: User, monkeypatch, t
     before, auto_before, _ = await _open_ai_panel(user, monkeypatch, tmp_path)
     try:
         if kind == "summary":
-            monkeypatch.setattr(clean_mod, "summarize", lambda chart, cfg: _summary("CURRENT SUMMARY"))
+            monkeypatch.setattr(clean_mod, "summarize", lambda chart, cfg, **_kw: _summary("CURRENT SUMMARY"))
             user.find("Summarize").click()
             await user.should_see("CURRENT SUMMARY", retries=20)
             assert CLEAN_STATE["summary"].text == "CURRENT SUMMARY"
         else:
             monkeypatch.setattr(clean_mod, "ask_chart",
-                                lambda question, chart, cfg, history=None: _answer(question, "CURRENT ANSWER"))
+                                lambda question, chart, cfg, history=None, **_kw: _answer(question, "CURRENT ANSWER"))
             user.find(ui.input).type("What happened?")
             ask_button = next(e for e in user.find(ui.button).elements if e.props.get("label") == "Ask")
             UserInteraction(user, {ask_button}, "Ask").click()

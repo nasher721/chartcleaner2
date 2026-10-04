@@ -858,10 +858,42 @@ async def clean_page():
         download_file(f"/exports/{name}", name)
 
     # ---- AI drawer: local summary + ask this chart ------------------------------
-    summary_state = {"running": False}
+    summary_state = {"running": False, "partial": None}
     summary_refs: dict = {}  # panel widgets, repopulated by render_ai
-    qa_state = {"running": False}
+    qa_state = {"running": False, "partial": None}
     qa_refs: dict = {}
+
+    def tick_streams() -> None:
+        """Show AI text as it streams in (the worker thread only writes the partial text)."""
+        try:
+            partial = summary_state.get("partial")
+            if summary_state["running"] and partial is not None and "output" in summary_refs:
+                summary_refs["output"].set_value(partial)
+            partial = qa_state.get("partial")
+            if qa_state["running"] and partial is not None and "stream" in qa_refs:
+                qa_refs["stream"].set_text(partial)
+                qa_refs["stream"].set_visibility(True)
+        except Exception:
+            pass  # the panel may have been re-rendered
+
+    def render_citations(container, citations, marker: str) -> None:
+        """[n] chips under an AI answer; a click jumps to the chart line it came from."""
+        found = [c for c in citations or [] if c.found]
+        if not found:
+            return
+        with container:
+            with ui.column().classes("w-full gap-0").mark(marker):
+                ui.label("Where it comes from in the chart (click to jump):").classes("text-xs opacity-60")
+                for n, c in enumerate(found, start=1):
+                    with ui.row().classes("w-full items-start gap-1 no-wrap cursor-pointer") \
+                            .on("click", lambda c=c: (show_tab(0), jump_to(c.start, c.end))):
+                        ui.badge(f"[{n}]").props("outline color=primary")
+                        ui.label(f"{c.text[:70]} ← {c.source[:110]}").classes("text-xs break-all")
+                missing = [c for c in citations if not c.found]
+                if missing:
+                    ui.label(f"{len(missing)} line(s) with no matching chart line — check them: "
+                             + "; ".join(c.text[:50] for c in missing[:3])) \
+                        .classes("text-xs text-orange-700")
 
     def render_ai() -> None:
         ai_col.clear()
@@ -918,6 +950,7 @@ async def clean_page():
                 "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
             summary_refs["marked"] = ui.html("").classes("w-full").mark("ai-summary-marked")
             summary_refs["marked"].set_visibility(False)
+            summary_refs["cites"] = ui.column().classes("w-full gap-0")
             with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                 summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
                 summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
@@ -940,6 +973,9 @@ async def clean_page():
             if model_val:
                 ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
                          "verified against the chart").classes("text-xs opacity-60")
+            qa_refs["stream"] = ui.label("").classes("text-sm whitespace-pre-wrap opacity-80") \
+                .mark("ai-answer-stream")
+            qa_refs["stream"].set_visibility(False)
             qa_refs["log"] = ui.column().classes("w-full gap-2")
             render_qa_log()
 
@@ -986,6 +1022,10 @@ async def clean_page():
             show = bool(facts and facts.unsupported)
             marked.set_content(highlight_unsupported_html(res.text, facts) if show else "")
             marked.set_visibility(show)
+        cites = summary_refs.get("cites")
+        if cites is not None:
+            cites.clear()
+            render_citations(cites, getattr(res, "citations", None), "ai-summary-citations")
         row = summary_refs["grounding_row"]
         row.clear()
         with row:
@@ -1002,6 +1042,7 @@ async def clean_page():
         chart_result = CLEAN_STATE.get("result")
         chart_text = CLEAN_STATE["result_text"]
         summary_state["running"] = True
+        summary_state["partial"] = None
         sum_btn = summary_refs.get("button")
         sum_spin = summary_refs.get("spinner")
         if sum_btn:
@@ -1010,7 +1051,8 @@ async def clean_page():
             sum_spin.set_visibility(True)
         try:
             def work():
-                return summarize(chart_text, load_config(common.CONFIG_PATH))
+                return summarize(chart_text, load_config(common.CONFIG_PATH),
+                                 on_token=lambda t: summary_state.update(partial=t))
 
             result = await run.io_bound(work)
             if (CLEAN_STATE.get("result") is not chart_result
@@ -1029,6 +1071,7 @@ async def clean_page():
             report_error("Summarization failed", e)
         finally:
             summary_state["running"] = False
+            summary_state["partial"] = None
             try:
                 if sum_btn:
                     sum_btn.set_enabled(True)
@@ -1052,6 +1095,7 @@ async def clean_page():
                 else:
                     ui.markdown(t["a"]).classes("w-full")
                 g = t["g"]
+                render_citations(log_col, t.get("citations"), "ai-answer-citations")
                 with ui.row().classes("items-center gap-1 flex-wrap"):
                     grounding_badge(g["score"], g["safe"], g["total"])
                     facts_badge(facts)
@@ -1074,6 +1118,7 @@ async def clean_page():
             ui.notify("Type a question about the chart first.", type="warning")
             return
         qa_state["running"] = True
+        qa_state["partial"] = None
         btn, spin = qa_refs.get("button"), qa_refs.get("spinner")
         if btn:
             btn.set_enabled(False)
@@ -1083,7 +1128,8 @@ async def clean_page():
             history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
 
             def work():
-                return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history)
+                return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history,
+                                 on_token=lambda t: qa_state.update(partial=t))
 
             res = await run.io_bound(work)
             if (CLEAN_STATE.get("result") is not chart_result
@@ -1094,6 +1140,7 @@ async def clean_page():
                 "g": {"score": res.grounding.grounding_score, "safe": res.grounding.is_safe,
                       "total": res.grounding.total_entities},
                 "facts": getattr(res, "facts", None),
+                "citations": getattr(res, "citations", None),
                 "model": res.model, "ms": res.duration_ms})
             if q_box:
                 q_box.set_value("")
@@ -1109,7 +1156,12 @@ async def clean_page():
             report_error("Chart Q&A failed", e)
         finally:
             qa_state["running"] = False
+            qa_state["partial"] = None
             try:
+                stream = qa_refs.get("stream")
+                if stream is not None:
+                    stream.set_text("")
+                    stream.set_visibility(False)
                 if btn:
                     btn.set_enabled(True)
                 if spin:
@@ -2211,6 +2263,7 @@ async def clean_page():
         sync_mode_controls()
         sync_layout()
         ui.timer(0.5, auto_tick)
+        ui.timer(0.25, tick_streams)
         ui.timer(0.3, refresh_inbox, once=True)
         render_results()
 
