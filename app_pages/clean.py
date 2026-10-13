@@ -28,6 +28,12 @@ from chartcleaner.pending import build as build_pending
 from chartcleaner.bundle import ADDRESSED, MISSING, NOT_APPLICABLE, REVIEW
 from chartcleaner.bundle import build as build_bundle
 from chartcleaner.daily_note import build as build_daily_note
+from chartcleaner.safety import CHANGED as SAFETY_CHANGED
+from chartcleaner.safety import NOT_STATED as SAFETY_NOT_STATED
+from chartcleaner.safety import REMOVED as SAFETY_REMOVED
+from chartcleaner.safety import removed_lines
+from chartcleaner.safety import build as build_safety
+from chartcleaner.stale import build as build_stale
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -46,6 +52,7 @@ COPY_FORMATS = {
     "markdown": ("Markdown", "notes"),
     "stats": ("Text + stats", "data_object"),
     "trends": ("Text with trends on top", "vertical_align_top"),
+    "safety": ("Text with safety header on top", "health_and_safety"),
     "ai": ("Tokenized, for an external AI", "smart_toy"),
 }
 AUTO_CLEAN_PAUSE = 1.5  # seconds of no typing before auto-clean runs
@@ -87,13 +94,15 @@ async def clean_page():
                     text, track_changes=True, cache=cache)
                 return result, run_audit(result.text, cfg)
 
-            def extras_work(cleaned: str):
+            def extras_work(cleaned: str, fact_report):
                 out = {}
+                gone = removed_lines(fact_report)
                 for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
                                 ("timeline", build_timeline), ("problems", build_problems),
                                 ("devices", build_devices), ("micro", build_micro),
                                 ("overnight", build_overnight), ("pending", build_pending),
-                                ("bundle", build_bundle)):
+                                ("bundle", build_bundle),
+                                ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale)):
                     try:
                         out[key] = fn(cleaned)
                     except Exception:
@@ -101,14 +110,16 @@ async def clean_page():
                 return out
 
             result, audit = await run.io_bound(work)
-            extras = await run.io_bound(extras_work, result.text) if mode == "clean" else {}
+            extras = (await run.io_bound(extras_work, result.text, result.fact_check)
+                      if mode == "clean" else {})
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
                                timeline=extras.get("timeline"), problems=extras.get("problems"),
                                devices=extras.get("devices"), micro=extras.get("micro"),
                                overnight=extras.get("overnight"), pending=extras.get("pending"),
-                               bundle=extras.get("bundle"))
+                               bundle=extras.get("bundle"), safety=extras.get("safety"),
+                               stale=extras.get("stale"), fact_ack=False)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -331,6 +342,12 @@ async def clean_page():
             block = trends.to_text() if trends is not None and not trends.empty else ""
             return (f"{block}\n\n{text}" if block else text), (
                 "Copied with trends on top" if block else "No trends in this chart — copied the text")
+        if fmt == "safety":
+            safety = CLEAN_STATE.get("safety")
+            block = safety.to_text() if safety is not None else ""
+            return (f"{block}\n\n{text}" if block else text), (
+                "Copied with the safety header on top" if block
+                else "No allergies, code status or other safety facts found — copied the text")
         if fmt == "ai":
             if not any(st.details.get("token_map") for st in (result.stages if result else [])):
                 ui.notify("Turn on Reversible tokenization (Pipeline page) so names become [[T1]]-style "
@@ -344,9 +361,55 @@ async def clean_page():
             ui.notify("Clean a chart first.", type="info")
             return
         fmt = fmt or common.PREFS.get("copy_default") or "text"
-        got = copy_text(fmt if fmt in COPY_FORMATS else "text")
-        if got:
-            copy_to_clipboard(*got)
+
+        def go() -> None:
+            got = copy_text(fmt if fmt in COPY_FORMATS else "text")
+            if got:
+                copy_to_clipboard(*got)
+        guarded_copy(go)
+
+    def guarded_copy(action) -> None:
+        """Run ``action`` (a copy), first asking when the fact check raised an alert.
+
+        Lost clinical values, changed meaning or values new to the chart must be
+        seen before the text leaves the app (prefs ``copy_guard``). Acknowledging
+        once covers every copy of this result; a new clean asks again.
+        """
+        result = CLEAN_STATE.get("result")
+        report = getattr(result, "fact_check", None)
+        if (not common.PREFS.get("copy_guard", True) or CLEAN_STATE.get("fact_ack")
+                or report is None or report.status != "alert"
+                or CLEAN_STATE.get("result_mode") not in (None, "clean")):
+            action()
+            return
+        with ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full gap-2").mark("copy-guard"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("report", color="red").classes("text-2xl")
+                ui.label("Check before copying").classes("text-lg font-semibold")
+            ui.label(report.headline()).classes("text-sm text-red-600")
+            for x in [x for x in report.losses if x.category == "unexpected"][:6]:
+                ui.label(f"Lost: {x.display} — {x.stage_label}: {x.lines[0][:160] if x.lines else ''}") \
+                    .classes("text-xs cc-mono break-all")
+            for m in [m for m in report.meaning if m.category == "unexpected"][:4]:
+                ui.label(f"{m.message}: {m.before[:160]}").classes("text-xs cc-mono break-all")
+            ui.label("The cleaned text may be missing or changing a clinical value. Review it, "
+                     "or copy anyway if you've checked.").classes("text-xs opacity-70")
+
+            def review() -> None:
+                dlg.close()
+                show_tab(1)
+
+            def anyway() -> None:
+                CLEAN_STATE["fact_ack"] = True
+                dlg.close()
+                action()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Review", icon="rule", on_click=review).props("unelevated color=primary") \
+                    .mark("copy-guard-review")
+                ui.button("Copy anyway", icon="content_copy", on_click=anyway).props("flat") \
+                    .mark("copy-anyway")
+        dlg.open()
 
     def toggle_edit() -> None:
         out = refs.get("output")
@@ -404,6 +467,8 @@ async def clean_page():
                         label += f" · {n.day}"
                     ui.chip(label, on_click=lambda n=n: jump_to(n.start, n.end)) \
                         .props("dense outline clickable").tooltip(n.title)
+        if not single_pass:
+            render_safety_strip()
         shown_text = CLEAN_STATE.get("result_text") or result.text
         out = ui.textarea("", value=shown_text)
         out.props("outlined readonly input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
@@ -685,6 +750,13 @@ async def clean_page():
                         ui.badge(n.day, color="teal").props("outline")
                     ui.label(n.preview or n.title).classes("text-xs opacity-80 truncate flex-grow")
                     ui.label(f"{n.chars:,} chars").classes("text-xs opacity-50")
+        safety = CLEAN_STATE.get("safety")
+        if safety is not None and not safety.empty:
+            shown = True
+            flagged = len([i for i in safety.flagged if i.status != SAFETY_NOT_STATED])
+            render_block(f"Safety header ({flagged} to look at)" if flagged else "Safety header",
+                         "health_and_safety", safety.to_text(), "insight-safety",
+                         lambda: render_safety(safety))
         overnight = CLEAN_STATE.get("overnight")
         if overnight is not None and not overnight.empty:
             shown = True
@@ -696,6 +768,11 @@ async def clean_page():
             shown = True
             render_block(f"To do / pending ({len(pending.items)})", "checklist", pending.to_text(),
                          "insight-pending", lambda: render_pending(pending))
+        stale = CLEAN_STATE.get("stale")
+        if stale is not None and not stale.empty:
+            shown = True
+            render_block(f"Possibly stale ({len(stale.lines)})", "history_toggle_off", stale.to_text(),
+                         "insight-stale", lambda: render_stale(stale))
         bundle = CLEAN_STATE.get("bundle")
         if bundle is not None and not bundle.empty:
             shown = True
@@ -726,7 +803,8 @@ async def clean_page():
                     .classes("w-full"):
                 render_delta(delta)
         if not shown:
-            ui.label("Problems, a to-do list, an ICU bundle check, devices, antibiotics, overnight "
+            ui.label("A safety header, problems, a to-do list, stale copied-forward lines, an ICU "
+                     "bundle check, devices, antibiotics, overnight "
                      "events, trends, a note timeline and changes over time appear here when the "
                      "chart has them.") \
                 .classes("text-sm opacity-60")
@@ -760,6 +838,66 @@ async def clean_page():
                 ui.label(item.name).classes("text-xs font-semibold w-48")
                 detail = "; ".join(item.details) if item.details else item.line
                 ui.label(detail).classes("text-xs cc-mono opacity-70 truncate flex-grow").tooltip(detail)
+
+    def render_safety_strip() -> None:
+        """Allergies and code status at a glance, above the result."""
+        safety = CLEAN_STATE.get("safety")
+        if safety is None:
+            return
+        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("safety-strip"):
+            for name in ("Allergies", "Code status", "Isolation"):
+                item = safety.get(name)
+                if item is None:
+                    continue
+                if item.status == SAFETY_NOT_STATED:
+                    text, color = f"{name}: not stated", "orange"
+                elif item.status == SAFETY_REMOVED:
+                    text, color = f"{name}: removed by a cleaning rule", "red"
+                else:
+                    shown = item.value if name == "Code status" and item.value else item.line
+                    text = f"{name}: {shown}"
+                    color = "red" if item.status == SAFETY_CHANGED or item.removed else "grey"
+                chip = ui.chip(text[:90], icon="health_and_safety", color=f"{color}-1",
+                               text_color=f"{color}-9",
+                               on_click=lambda: show_tab(2)).props("dense clickable")
+                chip.tooltip(item.to_text())
+
+    def render_safety(report) -> None:
+        ui.label("The latest line stating each item, verbatim. \"Changed\" means an earlier note "
+                 "said it differently; \"removed by cleaning\" means a rule took the line out (see "
+                 "Review → Never remove this); \"not stated\" means only that the chart doesn't say.") \
+            .classes("text-xs opacity-60")
+        colors = {SAFETY_CHANGED: "red", SAFETY_REMOVED: "red", SAFETY_NOT_STATED: "orange"}
+        for item in report.items:
+            with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                ui.badge(item.status, color=colors.get(item.status, "green")).props("outline") \
+                    .classes("w-32")
+                ui.label(item.name).classes("text-xs font-semibold w-32")
+                with ui.column().classes("gap-0 flex-grow"):
+                    if item.status not in (SAFETY_NOT_STATED, SAFETY_REMOVED):
+                        shown = item.value if item.name in ("Weight", "Height") and item.value else item.line
+                        ui.label(shown).classes("text-xs cc-mono break-all")
+                    for line in item.extra:
+                        ui.label(line).classes("text-xs cc-mono break-all")
+                    for line in item.earlier:
+                        ui.label("earlier: " + line).classes("text-xs cc-mono opacity-60 break-all")
+                    for line in item.removed:
+                        with ui.row().classes("items-center gap-1 no-wrap"):
+                            ui.label("removed by a rule: " + line) \
+                                .classes("text-xs cc-mono text-red-600 break-all")
+                            ui.button(icon="content_copy",
+                                      on_click=lambda t=line: copy_to_clipboard(t)).props("flat dense")
+
+    def render_stale(report) -> None:
+        ui.label("Lines in the latest note copied word for word from the notes before it, though "
+                 "they talk about a particular day (\"tomorrow\", \"POD #2\", \"pending\"). Still "
+                 "true?").classes("text-xs opacity-60")
+        for s in report.lines:
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.badge(f"{s.notes} notes", color="orange").props("outline")
+                ui.label(s.text).classes("text-xs cc-mono flex-grow").tooltip(
+                    f"Unchanged since {s.since}; says “{s.word}”")
+                ui.badge(s.word, color="teal").props("outline")
 
     def render_devices(report) -> None:
         ui.label(f"Day counts as of {report.reference.strftime('%m/%d/%Y')} (the chart's latest "
@@ -1838,7 +1976,7 @@ async def clean_page():
         except Exception as ex:
             ui.notify(f"Could not fill the note template: {ex}", type="negative")
             return
-        copy_to_clipboard(text, f"“{name}” note copied")
+        guarded_copy(lambda: copy_to_clipboard(text, f"“{name}” note copied"))
 
     def open_daily_note_dialog() -> None:
         """Pick a previous chart (same bed tag first) and show today's daily update."""
@@ -1900,7 +2038,7 @@ async def clean_page():
         except Exception as ex:
             ui.notify(f"Could not build the prompt: {ex}", type="negative")
             return
-        copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
+        guarded_copy(lambda: copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool"))
 
     def render_abbreviation_changes(changes: list[dict]) -> None:
         """Every abbreviation applied in this result, with quick fixes."""

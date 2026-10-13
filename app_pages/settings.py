@@ -73,6 +73,14 @@ def settings_page():
 
             ui.button("Save output settings", on_click=save_output).props("outline")
 
+            def toggle_copy_guard(e) -> None:
+                common.PREFS["copy_guard"] = bool(e.value)
+                save_prefs()
+
+            ui.switch("Ask before copying when the clinical-facts check finds a lost or changed value",
+                      value=bool(common.PREFS.get("copy_guard", True)), on_change=toggle_copy_guard) \
+                .mark("copy-guard-pref")
+
         with ui.card().classes("w-full gap-2"):
             ui.label("NLP redaction status").classes("font-semibold")
             try:
@@ -549,7 +557,7 @@ def settings_page():
                      "command line): the note itself, filled with the chart's own lines. "
                      "Placeholders: {{chart}}, {{date}}, {{systems}} ([N] [CV] [R] [R/GU] [GI] [E] "
                      "[H] [ID] …), {{system:N}}, {{section:Assessment & Plan}}, {{problems}}, "
-                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}, {{pending}}, {{bundle}}. A template with a "
+                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}, {{pending}}, {{bundle}}, {{safety}}, {{stale}}. A template with a "
                      "built-in's name replaces it.").classes("text-xs opacity-60 -mt-1")
             ui.label("Built-in: " + ", ".join(t["name"] for t in note_templates_mod.DEFAULT_TEMPLATES)) \
                 .classes("text-xs opacity-60")

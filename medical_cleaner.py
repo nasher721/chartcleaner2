@@ -450,7 +450,8 @@ def main():
     )
     parser.add_argument(
         "--insights", action="store_true",
-        help="Put overnight events, a to-do list, lines/drains with day counts, antibiotic days "
+        help="Put a safety header (allergies, code status, isolation, weight, antithrombotics), "
+             "overnight events, a to-do list, stale copied-forward lines, lines/drains with day counts, antibiotic days "
              "and cultures, an ICU bundle check and a problem-oriented view (chart lines grouped under each A&P problem) above "
              "the output.",
     )
