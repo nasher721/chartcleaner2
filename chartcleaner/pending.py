@@ -42,7 +42,11 @@ GROUPS: dict[str, re.Pattern] = {
         r"|\b(?:call|notify|page)\s+(?:md|team|provider|neurosurgery|nsgy|us|me|resident|fellow|"
         r"if|for|with)\b|\bprn\s+for\b", re.IGNORECASE),
     "Follow up": re.compile(
-        r"\bf/u\b|\bfollow[- ]?up\b|\bfollow(?:ing)?\s+(?!(?:simple |complex |\w+ )?(?:commands?|directions?|instructions?)\b)"
+        r"\bf/u\b|\bfollow[- ]?up\b"
+        # "following" after a past participle or before an article means "after":
+        # "admitted following coiling", "seizure following the fall".
+        r"|(?:\bfollow|(?<!ed )\bfollowing(?!\s+(?:an?|the|his|her|their|this|that)\b))"
+        r"\s+(?!(?:simple |complex |\w+ )?(?:commands?|directions?|instructions?)\b)"
         r"[a-z]\w*|\bre-?check\b"
         r"|\brepeat\s+\w+|\btrend(?:ing)?\b(?!s?:)|\bserial\s+\w+|\bq\s?\d{1,2}\s?h(?:r|rs)?\s+(?:checks?|labs?|na|"
         r"sodium|neuro checks?|bmp|cbc)\b", re.IGNORECASE),

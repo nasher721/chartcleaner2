@@ -26,6 +26,16 @@ def test_stdin_stdout_expand_and_empty_input():
     assert _cli("--stdin", "--stdout", stdin="   ").returncode == 1
 
 
+def test_file_with_stdout_reads_the_file_not_the_clipboard(tmp_path):
+    chart = tmp_path / "chart.txt"
+    chart.write_text("Hypertension noted.\n", encoding="utf-8")
+    out = _cli("-f", str(chart), "--stdout", "--mode", "abbreviations", stdin="")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == "HTN noted.\n"
+    missing = _cli("-f", str(tmp_path / "nope.txt"), "--stdout", stdin="")
+    assert missing.returncode == 1 and "Cannot read" in missing.stderr
+
+
 def test_unknown_preset_is_a_clear_error():
     out = _cli("--stdin", "--stdout", "--preset", "no-such-preset", stdin="x")
     assert out.returncode == 1 and "no preset" in out.stderr

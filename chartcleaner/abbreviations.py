@@ -162,6 +162,31 @@ def _normalize_scope(scope: Any) -> dict | None:
     return {"mode": scope["mode"], "sections": sections} if sections else None
 
 
+# One-letter abbreviations that read as ordinary English ("a" for artery).
+_ENGLISH_LETTERS = {"a", "I"}
+
+
+def _unclear_letters(rows: list[dict]) -> set[str]:
+    """One-letter abbreviations the bundled list never applies when shortening.
+
+    A single letter with several dictionary meanings (x = "for" or "times",
+    K = potassium or vitamin K, N = neck or neurologic) can't be read back
+    from the letter alone, so "vitamin K" stays as written instead of
+    becoming a "K" that reads as potassium. A custom entry can still use one.
+    """
+    found: dict[str, list[str]] = {}
+    for row in rows:
+        abbr = row["Abbreviation"].strip()
+        term = row["Expanded version"].strip()
+        if len(abbr) != 1 or not term or "not expanded in source" in term.casefold():
+            continue
+        meaning = display_term(term)
+        seen = found.setdefault(abbr, [])
+        if not any(_same_meaning(meaning, other) for other in seen):
+            seen.append(meaning)
+    return {a for a, seen in found.items() if len(seen) > 1 or a in _ENGLISH_LETTERS}
+
+
 @lru_cache(maxsize=32)
 def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None], int, dict[str, str],
                                          dict[str, str]]:
@@ -175,6 +200,7 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
     # created by an earlier row.
     by_term: dict[str, str | None] = {}
     aliases_by_source: dict[str, set[str]] = {}
+    unclear = _unclear_letters(rows)
     for row in rows:
         expanded = row["Expanded version"].strip()
         abbreviation = row["Abbreviation"].strip()
@@ -182,7 +208,7 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
             continue
         parenthetical = re.fullmatch(r"(.+?)\s+\(([^()]*)\)$", expanded)
         replacement: str | None = abbreviation
-        if is_blocked(abbreviation, expanded):
+        if is_blocked(abbreviation, expanded) or abbreviation in unclear:
             # Do Not Use abbreviations are never applied from the bundled list;
             # a user can still allow one explicitly as an acknowledged custom entry.
             replacement = None
@@ -196,7 +222,7 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
         abbreviation = row["Abbreviation"].strip()
         if not expanded or "not expanded in source" in expanded.casefold():
             continue
-        blocked = is_blocked(abbreviation, expanded)
+        blocked = is_blocked(abbreviation, expanded) or abbreviation in unclear
         for alias, replacement in _candidates(expanded, abbreviation):
             key = alias.casefold()
             if key and key not in by_term:
@@ -284,7 +310,17 @@ def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
             })
         return replacement
 
-    return pattern.sub(replace, segment), counts, row_count
+    result = pattern.sub(replace, segment)
+    if counts:
+        result = _drop_echoes(result, counts)
+    return result, counts, row_count
+
+
+def _drop_echoes(text: str, counts: dict[str, int]) -> str:
+    """"subarachnoid hemorrhage (SAH)" abbreviates to "SAH (SAH)"; keep one."""
+    names = sorted((re.escape(r) for r in counts if r.strip()), key=len, reverse=True)
+    echo = re.compile(r"(?<!\w)(" + "|".join(names) + r")\s*\(\1\)")
+    return echo.sub(r"\1", text)
 
 
 def _section_key(name: str) -> str:

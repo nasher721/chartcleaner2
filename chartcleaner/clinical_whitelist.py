@@ -154,10 +154,32 @@ CLINICAL_WHITELIST: FrozenSet[str] = frozenset(
 _WORD_SPLIT = re.compile(r"[^a-zA-Z0-9\-]+")
 
 
+# Relationship and care-team words NER tags as names when capitalized ("Family at
+# bedside", "Son visited"). A candidate made only of these is not a name; one
+# with any other word ("Spouse John Doe") is still redacted.
+_ROLE_WORDS = frozenset({
+    "family", "mother", "father", "mom", "dad", "parent", "parents", "spouse", "wife", "husband",
+    "partner", "son", "daughter", "sister", "brother", "sibling", "siblings", "aunt", "uncle",
+    "niece", "nephew", "cousin", "grandmother", "grandfather", "grandson", "granddaughter",
+    "children", "child", "friend", "caregiver", "guardian", "hcp", "poa", "surrogate",
+    "patient", "pt", "nurse", "rn", "np", "pa", "md", "do", "attending", "resident", "fellow",
+    "intern", "team", "chaplain", "pharmacist", "pharmacy", "therapist", "dietitian", "and", "or",
+})
+_ROLE_SPLIT = re.compile(r"[^a-z]+")
+
+
+def is_role_phrase(candidate: str) -> bool:
+    """True when every word of ``candidate`` is a relationship or care-team word."""
+    words = [w for w in _ROLE_SPLIT.split(candidate.lower()) if w]
+    return bool(words) and all(w in _ROLE_WORDS for w in words)
+
+
 def is_non_person_text(candidate: str) -> bool:
     """Return True if candidate structurally cannot be a person's name."""
     s = candidate.strip()
     if not s:
+        return True
+    if is_role_phrase(s):
         return True
     # Contains newlines, tabs, slashes, comparison operators, or structural punctuation
     if any(ch in s for ch in ("\n", "\r", "\t", "/", "\\", "<", ">", "=", "@", "#", "{", "}", "[", "]")):

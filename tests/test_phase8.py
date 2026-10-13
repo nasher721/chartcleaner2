@@ -126,6 +126,14 @@ def test_pending_groups_latest_note_lines_verbatim():
     assert not any("commands" in t for items in groups.values() for t in items)
 
 
+def test_following_meaning_after_is_not_a_follow_up():
+    follow = pending.GROUPS["Follow up"]
+    assert not follow.search("SAH admitted following coiling of an aneurysm.")
+    assert not follow.search("Seizure following the fall.")
+    assert follow.search("Following sodium closely.")
+    assert follow.search("Will continue following lytes.")
+
+
 def test_pending_time_hints_dedup_and_negatives():
     rep = pending.build(CHART)
     repeat = next(i for i in rep.items if i.text.startswith("Repeat CTH"))
