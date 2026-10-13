@@ -737,6 +737,11 @@ def _disable_expensive_spacy_pipes(nlp_engine: Any) -> None:
 _PRESIDIO_CACHE = PresidioEngineCache()
 
 
+_ID_LABEL = re.compile(
+    r"\b(?:accession|acc|mrn|csn|fin|har|order|referral|ref|encounter|account|acct|specimen|"
+    r"case|req(?:uisition)?|id)\b\s*(?:no\.?|number|num|#)?\s*[:#]?\s*\(?$", re.IGNORECASE)
+
+
 def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     """Redact PHI entities using Presidio Analyzer and Anonymizer."""
     from presidio_anonymizer.entities import OperatorConfig
@@ -771,6 +776,13 @@ def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
         etype: OperatorConfig("replace", {"new_value": repl})
         for etype, repl in entities.items()
     }
+    # A labelled record number ("Accession 8847362519") is phone-shaped but isn't
+    # a phone; call it an ID so the output doesn't say a CT has a phone number.
+    if "PHONE_NUMBER" in entities:
+        for r in filtered:
+            if r.entity_type == "PHONE_NUMBER" and _ID_LABEL.search(text, max(0, r.start - 30), r.start):
+                r.entity_type = "ID_NUMBER"
+                operators["ID_NUMBER"] = OperatorConfig("replace", {"new_value": "[REDACTED_ID]"})
     new_text = anonymizer.anonymize(text=text, analyzer_results=filtered, operators=operators).text
 
     counts: dict[str, int] = {}

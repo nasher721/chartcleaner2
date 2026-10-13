@@ -98,3 +98,26 @@ def test_expanded_clinical_whitelist():
     assert is_clinical_term("Ventricular Rate") is True
     assert is_clinical_term("Chlorhexidine Bath") is True
     assert is_clinical_term("calcium ionized") is True
+
+
+def test_relationship_and_team_words_are_not_names():
+    from chartcleaner.clinical_whitelist import is_non_person_text
+
+    assert is_non_person_text("• Family") is True
+    assert is_non_person_text("Son") is True
+    assert is_non_person_text("Patient and Family") is True
+    # A relationship word next to a real name is still a name.
+    assert is_non_person_text("Spouse John Doe") is False
+
+
+def test_nlp_keeps_family_and_labels_record_numbers_as_ids():
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": True}
+    pipeline = Pipeline(cfg)
+    text = ("CSF clear.  • Family at bedside reports she is answering questions.\n"
+            "CT head (Accession 8847362519) shows no hydrocephalus.\n"
+            "Spouse John Doe at bedside.")
+    res = pipeline.run(text, wrap=False)
+    assert "Family at bedside" in res.text
+    assert "[REDACTED_ID]" in res.text and "8847362519" not in res.text
+    assert "John Doe" not in res.text

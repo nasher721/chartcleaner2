@@ -140,8 +140,21 @@ def _run_watch_clipboard() -> None:
 
 
 def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
-    """stdin/clipboard in, result to stdout/clipboard; only the result on stdout."""
-    text = sys.stdin.read() if args.stdin else pyperclip.paste()
+    """stdin/-f file/clipboard in, result to stdout/clipboard; only the result on stdout."""
+    if args.stdin:
+        text = sys.stdin.read()
+    elif args.file:
+        from chartcleaner.ingest import IngestError, load_file
+        try:
+            ing = load_file(Path(args.file), cleaner.config)
+        except (IngestError, OSError) as e:
+            print(f"Cannot read {args.file}: {e}", file=sys.stderr)
+            sys.exit(1)
+        for w in ing.warnings:
+            print(f"  ! {w}", file=sys.stderr)
+        text = ing.text
+    else:
+        text = pyperclip.paste()
     if not text.strip():
         print("Nothing to clean.", file=sys.stderr)
         sys.exit(1)

@@ -754,3 +754,26 @@ Branch `claude/compassionate-tesla-wgy7hl`.
   (`fact_check.verify_output`), then grounding, cited lines, median seconds. In memory only.
   Settings → Local AI → *Compare models* (`compare-models`, rows `compare-row-<n>` with *Use*);
   CLI `--compare-models [MODEL …] [--summary-preset P]` (exit 2 when no model ran).
+
+
+# Phase 9 (2026-10-13) — output-quality fixes from a sample-chart review
+
+Found by running `sample_chart.txt` end to end and reading the result.
+
+- [x] **Unclear one-letter abbreviations** — the bundled list no longer shortens to a single
+  letter with several dictionary meanings (`x` = "for" or "times", `K` = potassium or
+  vitamin K, `N` = neck or neurologic, `H`, `L`, `R`, `T`, …) or to `a` (English article).
+  "Vitamin K" no longer becomes a "K" that reads as potassium. `abbreviations._unclear_letters`;
+  custom entries can still use any letter.
+- [x] **No "SAH (SAH)"** — a term followed by its own abbreviation in parentheses reads once
+  after abbreviating (`abbreviations._drop_echoes`).
+- [x] **PHI false positives** — relationship and care-team words alone ("• Family", "Son",
+  "Patient and Family") are not names (`clinical_whitelist.is_role_phrase`); "Spouse John Doe"
+  is still redacted. A phone-shaped number after a record label (Accession, MRN, CSN, order,
+  referral …) is redacted as `[REDACTED_ID]`, not `[REDACTED_PHONE]`.
+- [x] **Mobile Phone rule** kept the line break, so `[REDACTED_PHONE]` and the next line no
+  longer run together.
+- [x] **To-do list** — "admitted following coiling" / "following the fall" (meaning *after*)
+  is no longer a follow-up item.
+- [x] **CLI** — `-f FILE --stdout` (and `-f` with `--template`, `--daily-note`, `--tag`) reads
+  the file instead of the clipboard; a missing file is a clear error.

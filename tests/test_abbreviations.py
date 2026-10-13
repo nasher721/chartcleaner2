@@ -2,7 +2,7 @@ import csv
 
 from chartcleaner.abbreviation_safety import is_blocked
 from chartcleaner.abbreviations import SOURCE_PATH
-from chartcleaner.abbreviations import SOURCE_ROW_COUNT, abbreviate
+from chartcleaner.abbreviations import SOURCE_ROW_COUNT, _unclear_letters, abbreviate
 
 
 def test_source_is_complete_and_maps_full_cells():
@@ -56,7 +56,10 @@ def test_plural_parenthetical_and_parenthesis_slash_aliases():
 def test_every_defined_source_cell_has_a_mapping():
     expected: dict[str, str] = {}
     with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
-        for row in csv.DictReader(source):
+        rows = list(csv.DictReader(source))
+    unclear = _unclear_letters(rows)
+    if True:
+        for row in rows:
             expanded = row["Expanded version"].strip()
             if not expanded or "not expanded in source" in expanded.casefold():
                 continue
@@ -64,11 +67,29 @@ def test_every_defined_source_cell_has_a_mapping():
             if expanded.casefold().endswith(" (likely)"):
                 qualifier = " (likely)"
             abbreviation = row["Abbreviation"].strip()
-            # Do Not Use rows are never applied from the bundled list.
-            mapped = None if is_blocked(abbreviation, expanded) else abbreviation + qualifier
+            # Do Not Use rows and unclear single letters are never applied from the bundled list.
+            mapped = (None if is_blocked(abbreviation, expanded) or abbreviation in unclear
+                      else abbreviation + qualifier)
             expected.setdefault(expanded.casefold(), mapped)
     for expanded, abbreviation in expected.items():
         assert abbreviate(expanded)[0] == (abbreviation or expanded)
+
+
+def test_unclear_single_letters_are_not_applied():
+    # x = "for" or "times"; K = potassium or vitamin K; N = neck or neurologic; a is English.
+    text = "Vitamin K given for 3 days; neurologic exam; radial artery"
+    assert abbreviate(text)[0] == "Vitamin K given for 3 d; neurologic exam; radial artery"
+    # A letter with one meaning still applies, and a custom entry can use any letter.
+    assert abbreviate("24 hours")[0] == "24 hrs"
+    cfg = {"abbreviations": {"custom": [{"term": "neurologic", "replacement": "N", "enabled": True}]}}
+    assert abbreviate("neurologic exam", cfg)[0] == "N exam"
+
+
+def test_term_followed_by_its_own_abbreviation_reads_once():
+    text = "Subarachnoid hemorrhage (SAH) with Glasgow Coma Scale (GCS) 15; SAH (SAH) as written"
+    assert abbreviate(text)[0] == "SAH w GCS 15; SAH as written"
+    # A different abbreviation in parentheses is kept.
+    assert abbreviate("hypertension (BP 180)")[0] == "HTN (BP 180)"
 
 
 def test_user_override_disable_and_boundary_matching():
