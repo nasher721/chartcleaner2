@@ -80,6 +80,8 @@ DEFAULT_PREFS = {
     "recent_charts": {"enabled": True, "keep": 20},
     # Clean page: layout and the main "Copy as…" format.
     "copy_default": "text",
+    # Ask before copying a result whose fact check raised an alert (Clean page).
+    "copy_guard": True,
     "ai_drawer": False,
     "onboarded": False,
 }

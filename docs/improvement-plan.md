@@ -777,3 +777,35 @@ Found by running `sample_chart.txt` end to end and reading the result.
   is no longer a follow-up item.
 - [x] **CLI** — `-f FILE --stdout` (and `-f` with `--template`, `--daily-note`, `--tag`) reads
   the file instead of the clipboard; a missing file is a clear error.
+
+
+# Phase 10 (2026-10-13) — safety header, stale copy-forward lines, copy guard
+
+Branch `claude/safety-header-stale-lines`.
+
+- [x] **Safety header** — `chartcleaner/safety.py` (insight `safety`). Allergies, code status,
+  isolation, weight, height and antithrombotics: the latest line stating each, verbatim (an
+  "Allergies"/"ALLG" heading takes the lines under it; "Label: value" fields are never joined as
+  wrapped lines — `safety.lines_of`). `changed` when an earlier note said it differently (code
+  status compared by value: full code / DNR / DNI / DNR/DNI / comfort care), `not stated` for
+  allergies and code status only, `removed by cleaning` when the cleaned text no longer states it
+  but a line the fact check saw removed did (`build(text, removed=safety.removed_lines(report))`).
+  Removed lines never go into the text block (they skipped redaction). Clean page: a strip of
+  chips above the output (`safety-strip`), the Insights block (`insight-safety`), and Copy as →
+  *Text with safety header on top* (`copy-safety`).
+- [x] **Stale copy-forward lines** — `chartcleaner/stale.py` (insight `stale`). Lines of the
+  latest note copied unchanged through at least `MIN_NOTES` (3) notes in a row that carry a
+  time-bound word (tomorrow/tmrw, in AM, pending, POD #2, day 3 of 7, plan to, will …). Never
+  removes anything. Insights block `insight-stale`.
+- [x] **Copy guard** — when the fact check's status is `alert`, every copy from the Clean page
+  (Copy as, prompt and note templates) first opens a dialog (`copy-guard`) listing the lost
+  values / meaning changes, with *Review* and *Copy anyway* (`copy-anyway`; once per result).
+  Prefs `copy_guard` (default on), Settings → Output switch (`copy-guard-pref`).
+- Both insights are in `service.INSIGHTS`, `format_output(insights=True)` (safety first, stale
+  after pending), note-template placeholders `{{safety}}` / `{{stale}}`, `/api/v1/insights`,
+  MCP `chart_insights` and CLI `--insights`.
+
+Open question: the default `metadata_lines` rule `^\s*Code Status(?: History)?…` removes every
+"Code status: …" line, real statements included ("Code status: DNR/DNI after family meeting").
+The safety header now reports it as removed, but the rule itself is unchanged pending a decision.
+
