@@ -157,19 +157,20 @@ def scripts_page():
                 ui.button("Cancel", on_click=dlg.close).props("flat")
         dlg.open()
 
-    with shell("Custom Scripts — rules limited only by Python", "scripts"):
+    with shell("Custom Scripts — rules limited only by Python", "scripts", measure=True):
         ui.label("Each .py file in custom_rules/ becomes a pipeline stage you can enable, disable and "
                  "reorder on the Pipeline page. Implement clean(text, ctx) and the chart is yours to "
-                 "transform however you like.").classes("opacity-70 -mt-2 text-sm")
+                 "transform however you like.").classes("cc-page-sub")
 
-        with ui.card().classes("w-full border-orange-300"):
-            ui.label("⚠ Scripts run with the full privileges of your user account on this machine "
+        with ui.card().classes("w-full cc-tint cc-tint--warn gap-3"):
+            status_tag("caution", "warn")
+            ui.label("Scripts run with the full privileges of your user account on this machine "
                      "(that is what makes them limitless). Only add scripts you wrote or reviewed.") \
-                .classes("text-xs text-orange-600")
+                .classes("text-sm")
 
-        with ui.row().classes("w-full gap-4 items-stretch"):
-            with ui.column().classes("w-64 shrink-0 gap-1 p-2 border rounded"):
-                ui.label("Rule files").classes("font-semibold")
+        with ui.row().classes("w-full gap-6 items-stretch no-wrap"):
+            with ui.column().classes("w-64 shrink-0 gap-2 p-4 border rounded"):
+                ui.label("Rule files").classes("cc-eyebrow")
                 list_holder["box"] = ui.column().classes("w-full gap-1")
                 with list_holder["box"]:
                     build_list()

@@ -31,7 +31,8 @@ def batch_page():
         if not state["running"]:
             return
         total = progress["total"] or 1
-        progress_bar.set_value(progress["done"] / total)
+        progress_bar.set_value(progress["done"] / total,
+                               f"{progress['done']} / {progress['total']}")
         progress_label.set_text(f"{progress['done']} of {progress['total']} done"
                                 + (f" — last: {progress['current']}" if progress["current"] else ""))
 
@@ -270,13 +271,14 @@ def batch_page():
             set_running(False)
 
     # ---- UI ------------------------------------------------------------------
-    with shell("Batch clean", "/batch"):
+    with shell("Batch clean", "/batch", measure=True):
         ui.label("Clean many charts in one run. Upload files or queue a folder — every "
                  "cleaned copy is saved to data/exports, and the per-file stats below show "
-                 "exactly what your rules did.").classes("opacity-70")
+                 "exactly what your rules did.").classes("cc-page-sub")
         with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-            ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True) \
-                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("max-w-xs")
+            ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
+                      label="Drop .txt / .docx / .pdf") \
+                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("w-[320px]")
             folder_input = ui.input("…or a folder path", placeholder="/path/to/charts") \
                 .classes("w-96 cc-mono")
             ui.button("Add folder files", icon="create_new_folder",
@@ -298,9 +300,9 @@ def batch_page():
                 "type in Settings → Note types.").mark("batch-note-types")
             spinner = ui.spinner("dots", size="lg")
             spinner.set_visibility(False)
-        with ui.column().classes("w-full gap-1").mark("batch-progress") as progress_row:
-            progress_bar = ui.linear_progress(value=0, show_value=False).props("rounded size=10px")
-            progress_label = ui.label("").classes("text-xs opacity-70")
+        with ui.column().classes("w-full gap-2").mark("batch-progress") as progress_row:
+            progress_bar = SegmentedBar(progress_row, segments=32, label="Progress")
+            progress_label = ui.label("").classes("cc-segbar-note")
         progress_row.set_visibility(False)
         ui.timer(0.3, tick_progress)
         with ui.expansion("…or paste a patient list (sign-out, census, rounding list)",

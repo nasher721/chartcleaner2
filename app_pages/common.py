@@ -150,25 +150,34 @@ NAV = [
     ("/doctor", "medical_services", "Doctor"),
 ]
 
-CSS = """
-<style>
-.cc-mono textarea, .cc-mono input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important; }
-.cc-diff td { vertical-align: top; padding: 0 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-              font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-.cc-del { background: rgba(255, 60, 60, 0.13); }
-.cc-ins { background: rgba(40, 200, 90, 0.15); }
-.cc-rep { background: rgba(255, 190, 40, 0.18); }
-.cc-flag { background: rgba(245, 158, 11, 0.16); box-shadow: inset 3px 0 0 #f59e0b; }
-.cc-diff-left { border-right: 1px solid rgba(128,128,128,0.35); }
-.cc-panel { background: #f5f5f5; }
-.body--dark .cc-panel { background: #1d1d1d; }
-.cc-click { cursor: pointer; border-radius: 3px; }
-.cc-gone { text-decoration: line-through; text-decoration-color: rgba(220,38,38,.7); background: rgba(255,60,60,.18); }
-.cc-abbr { background: rgba(99,102,241,.18); border-bottom: 1px dotted #6366f1; }
-.cc-click:hover { outline: 2px solid #f59e0b; }
-.cc-spark td { padding: 2px 8px; }
-</style>
-"""
+# Section labels + numbers for the page eyebrow (shell()).
+SECTION_NUMBERS = {
+    "clean": ("01", "Clean"),
+    "batch": ("02", "Batch"),
+    "rules": ("03", "My text rules"),
+    "pipeline": ("04", "Pipeline & Rules"),
+    "stats": ("05", "Statistics"),
+    "scripts": ("06", "Custom Scripts"),
+    "settings": ("07", "Settings"),
+    "doctor": ("08", "Doctor"),
+}
+
+# Design system: Nothing-inspired tokens, components and the stylesheet.
+# Kept in one module so every screen shares a single source of truth.
+from app_pages.design_system import (  # noqa: E402  (after the store bootstrap)
+    CSS,
+    BRAND_SVG,
+    STATIC_DIR,
+    SegmentedBar,
+    chart,
+    clear_charts,
+    opacity_ramp,
+    retheme_charts,
+    set_chart_theme,
+    stat_chip,
+    status_tag,
+    tone,
+)
 
 
 def save_prefs() -> None:
@@ -285,13 +294,6 @@ async def read_upload(event) -> tuple[str, bytes]:
     if hasattr(event, "file"):
         return event.file.name, await event.file.read()
     return event.name, event.content.read()
-
-
-def stat_chip(container, label: str, value: str, color: str = "primary") -> None:
-    with container:
-        with ui.card().classes("py-3 px-5 items-center min-w-[130px]"):
-            ui.label(value).classes(f"text-xl font-bold text-{color}")
-            ui.label(label).classes("text-xs opacity-70")
 
 
 def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> str:
@@ -439,8 +441,7 @@ def highlight_unsupported_html(text: str, facts) -> str:
         if start < pos:
             continue
         out.append(esc(text[pos:start]))
-        out.append(f'<mark class="cc-unsupported" title="Not in the chart: {esc(display)}" '
-                   f'style="background:#fecaca;color:#7f1d1d;border-radius:3px;padding:0 2px">'
+        out.append(f'<mark class="cc-unsupported" title="Not in the chart: {esc(display)}">'
                    f"{esc(text[start:end])}</mark>")
         pos = end
     out.append(esc(text[pos:]))
@@ -570,28 +571,37 @@ def open_command_palette(extra: list[dict] | None = None) -> None:
     dlg.open()
 
 
-def _status_strip() -> None:
-    """Header chips: active preset, clipboard watcher, local AI, stored-data protection."""
-    with ui.row().classes("items-center gap-1 flex-nowrap").mark("status-strip"):
+def _status_strip(key: str = "") -> None:
+    """Status readouts: active preset, clipboard watcher, local AI, encryption.
+
+    Each one is a mechanical tag — a small square indicator plus an ALL-CAPS
+    mono label. Colour marks the *state* only, never the chrome.
+    """
+    with ui.row().classes("items-center gap-2 flex-nowrap") \
+            .mark(f"status-strip-{key}" if key else "status-strip"):
         preset = PREFS.get("last_preset") or ""
-        ui.chip(preset or "current rules", icon="inventory_2", color="white", text_color="primary",
-                on_click=lambda: ui.navigate.to("/pipeline")).props("dense") \
-            .tooltip("Rule preset in use — click to edit the pipeline")
+        status_tag(preset or "current rules", "info",
+                   tooltip="Rule preset in use — click to edit the pipeline",
+                   on_click=lambda: ui.navigate.to("/pipeline"))
         watcher = CLIPBOARD_WATCHER.get("watcher")
         on = bool(watcher is not None and watcher.running)
-        ui.chip("watcher on" if on else "watcher off", icon="content_paste_search",
-                color="white", text_color="green-8" if on else "grey-8",
-                on_click=lambda: ui.navigate.to("/settings")).props("dense") \
-            .tooltip("Clipboard watcher — click for settings")
-        ai_chip = ui.chip("AI …", icon="psychology", color="white", text_color="grey-8") \
-            .props("dense").tooltip("Local AI (Ollama) status")
-        ui.chip("encrypted", icon="lock", color="white", text_color="teal",
-                on_click=lambda: ui.navigate.to("/settings")).props("dense") \
-            .tooltip("Stored chart data (token maps, recent charts) is encrypted on this computer")
+        status_tag("watcher on" if on else "watcher off", "on" if on else "off",
+                   tooltip="Clipboard watcher — click for settings",
+                   on_click=lambda: ui.navigate.to("/settings"))
+
+        ai_el = ui.element("div").classes("cc-pill").tooltip("Local AI (Ollama) status")
+        with ai_el:
+            ai_dot = ui.element("span").classes("cc-dot") \
+                .style("color: var(--nd-text-disabled)")
+            ai_label = ui.label("AI …")
+        status_tag("encrypted", "info",
+                   tooltip="Stored chart data (token maps, recent charts) is encrypted "
+                           "on this computer",
+                   on_click=lambda: ui.navigate.to("/settings"))
 
     async def probe() -> None:
         if os.environ.get("NICEGUI_USER_SIMULATION"):
-            ai_chip.set_text("AI ?")
+            ai_label.set_text("AI ?")
             return
         try:
             from chartcleaner.summarizer import merge_llm_config
@@ -606,8 +616,8 @@ def _status_strip() -> None:
         except Exception:
             model, up = "", False
         try:
-            ai_chip.set_text(model.split(":")[0] if up and model else "AI off")
-            ai_chip.props(f"text-color={'green-8' if up else 'grey-8'}")
+            ai_label.set_text(model.split(":")[0] if up and model else "AI off")
+            ai_dot.style(f"color: {'var(--nd-success)' if up else 'var(--nd-text-disabled)'}")
         except Exception:
             pass  # the page may be gone
 
@@ -615,54 +625,102 @@ def _status_strip() -> None:
 
 
 @contextmanager
-def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] | None = None,
+def shell(title: str, active: str, *, measure: bool = False,
+          commands: list[dict] | None = None,
           shortcuts: list[tuple[str, str, object]] | None = None, actions=None):
-    """Page frame: header (status strip, palette), menu, footer and content column.
+    """Page frame: header (status, palette), navigation, footer, content column.
 
     ``commands`` are extra palette entries; ``shortcuts`` are
     ``(combo, description, callback)``; ``actions`` is a callable that adds
     page-specific header buttons.
+
+    Navigation is a horizontal mono text bar on desktop and the drawer behind
+    the menu button on narrow screens — one component, two presentations.
+
+    Every page shares one 1440px grid with the header chrome, so the left edge
+    is identical on all nine screens. ``measure=True`` caps the page body at a
+    readable 1040px without moving that edge — use it for text-heavy screens.
     """
-    ui.add_head_html(CSS)
+    # The stylesheet goes into the body, not the head: NiceGUI emits its
+    # Quasar/Tailwind stylesheets after anything added to <head>, and Quasar
+    # ships its colour utilities inside a later CSS cascade layer, so only a
+    # last-in-document stylesheet wins the order battle at equal specificity.
+    ui.add_body_html(CSS)
     dark = ui.dark_mode(bool(PREFS.get("dark", True)))
+    set_chart_theme(bool(PREFS.get("dark", True)))
+    clear_charts()
     page_shortcuts = list(shortcuts or [])
+    slug = (active or "clean").strip("/") or "clean"
+    num, sec_label = SECTION_NUMBERS.get(slug, ("", slug))
+    active_path = "/" if slug == "clean" else f"/{slug}"
 
-    with ui.header().classes("items-center justify-between"):
-        with ui.row().classes("items-center gap-2 flex-nowrap"):
-            ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
-                .props("flat round color=white aria-label='Toggle menu'")
-            ui.icon("health_and_safety").classes("text-2xl")
-            ui.label("Chart Cleaner").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
-            ui.badge(f"v{__version__}", color="blue-grey").props("outline")
-        with ui.row().classes("items-center gap-2 flex-nowrap"):
-            _status_strip()
-            if actions is not None:
-                actions()
-            ui.button(icon="search", on_click=lambda: open_command_palette(commands)) \
-                .props("flat round color=white aria-label='Command palette'").mark("palette-button") \
-                .tooltip(f"Command palette ({MOD}+K)")
-            ui.button(icon="keyboard", on_click=lambda: open_shortcuts_dialog(
-                [(c, d) for c, d, _ in page_shortcuts])) \
-                .props("flat round color=white aria-label='Keyboard shortcuts'") \
-                .tooltip(f"Keyboard shortcuts ({MOD}+/)")
-            ui.switch("Dark", value=dark.value,
-                      on_change=lambda e: (dark.set_value(e.value), PREFS.update(dark=e.value), save_prefs()))
+    def nav_text(path: str, label: str) -> str:
+        item_num, item_label = SECTION_NUMBERS.get(path.strip("/") or "clean", ("", label))
+        return f"{item_num} {item_label}" if item_num else item_label
 
-    # value=None opens the menu by screen width, which NiceGUI asks the browser for;
-    # the test harness answers "open", but on slow runners its answer can miss the
-    # 1 s timeout, so tests start it open instead.
-    menu_open = True if os.environ.get("NICEGUI_USER_SIMULATION") else None
-    with ui.left_drawer(fixed=True, value=menu_open).classes("cc-panel") as drawer:
-        ui.label("Menu").classes("text-xs uppercase opacity-60 ml-2")
-        for path, icon, label in NAV:
-            btn = ui.button(label, icon=icon, on_click=lambda p=path: ui.navigate.to(p))
-            btn.props("flat align=left no-caps").classes("w-full")
-            if path == ("/" if active == "clean" else "/" + active.strip("/")):
-                btn.props("color=primary").classes("font-semibold bg-blue-1 dark:bg-blue-9")
+    def toggle_dark() -> None:
+        dark.set_value(not dark.value)
+        PREFS.update(dark=dark.value)
+        save_prefs()
+        dark_btn.props(f"icon={'light_mode' if dark.value else 'dark_mode'}")
+        set_chart_theme(dark.value)
+        retheme_charts()
 
-    with ui.footer(fixed=False).classes("bg-transparent text-xs opacity-60"):
-        ui.label("Runs entirely on this computer — 127.0.0.1 only. Not a guarantee of "
-                 "de-identification; review output before sharing.")
+    with ui.header().classes("cc-header"):
+        with ui.element("div").classes("cc-band"):
+            with ui.row().classes("cc-shell cc-topbar w-full items-center justify-between no-wrap"):
+                with ui.row().classes("items-center gap-3 no-wrap"):
+                    ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
+                        .props("flat round aria-label='Toggle menu'") \
+                        .classes("cc-headbtn cc-mobile-only")
+                    ui.html(BRAND_SVG)
+                    ui.label("Chart Cleaner").classes("cc-brand cursor-pointer") \
+                        .on("click", lambda: ui.navigate.to("/"))
+                    ui.label(f"v{__version__}").classes("cc-version")
+                with ui.row().classes("items-center gap-2 no-wrap"):
+                    with ui.row().classes("cc-desktop-only items-center gap-2 no-wrap"):
+                        _status_strip()
+                    if actions is not None:
+                        actions()
+                    ui.button(icon="search", on_click=lambda: open_command_palette(commands)) \
+                        .props("flat round aria-label='Command palette'").classes("cc-headbtn") \
+                        .mark("palette-button").tooltip(f"Command palette ({MOD}+K)")
+                    ui.button(icon="keyboard", on_click=lambda: open_shortcuts_dialog(
+                        [(c, d) for c, d, _ in page_shortcuts])) \
+                        .props("flat round aria-label='Keyboard shortcuts'").classes("cc-headbtn") \
+                        .tooltip(f"Keyboard shortcuts ({MOD}+/)")
+                    dark_btn = ui.button(icon="light_mode" if dark.value else "dark_mode",
+                                         on_click=toggle_dark) \
+                        .props("flat round aria-label='Toggle dark mode'").classes("cc-headbtn") \
+                        .mark("dark-toggle").tooltip("Light / dark")
+
+        # Desktop: the horizontal text nav. Mobile falls back to the drawer.
+        with ui.element("div").classes("w-full"):
+            with ui.row().classes("cc-shell cc-navbar cc-desktop-only no-wrap"):
+                for path, _icon, label in NAV:
+                    link = ui.element("button").classes("cc-navlink")
+                    if path == active_path:
+                        link.classes("cc-navlink--active")
+                    link.on("click", lambda p=path: ui.navigate.to(p))
+                    with link:
+                        ui.label(nav_text(path, label))
+
+    with ui.left_drawer(fixed=True, value=False).classes("cc-drawer") as drawer:
+        ui.label("Navigation").classes("cc-eyebrow cc-nav-head")
+        for path, _icon, label in NAV:
+            btn = ui.button(nav_text(path, label),
+                            on_click=lambda p=path: ui.navigate.to(p))
+            btn.props("flat align=left no-caps").classes("w-full cc-nav-item")
+            if path == active_path:
+                btn.classes("cc-nav-active")
+        ui.element("div").classes("cc-rule").style("margin: 24px 16px 0")
+        with ui.column().classes("p-4 gap-2 items-start"):
+            _status_strip("drawer")
+
+    with ui.footer(fixed=False).classes("cc-footer"):
+        with ui.element("div").classes("cc-shell"):
+            ui.label("Runs entirely on this computer — 127.0.0.1 only. Not a guarantee of "
+                     "de-identification; review output before sharing.")
 
     def on_key(e) -> None:
         if not e.action.keydown or e.action.repeat:
@@ -685,9 +743,16 @@ def shell(title: str, active: str, *, wide: bool = False, commands: list[dict] |
 
     ui.keyboard(on_key=on_key, ignore=[])
 
-    width = "max-w-[1680px]" if wide else "max-w-[1150px]"
-    with ui.column().classes(f"w-full {width} mx-auto p-6 gap-4"):
-        ui.label(title).classes("text-2xl font-semibold")
+    # Primary = the page title (Doto). Secondary = the supporting line.
+    head, _, sub = title.partition(" — ")
+    page_cls = "cc-page cc-page--measure" if measure else "cc-page"
+    with ui.column().classes(page_cls):
+        with ui.column().classes("cc-pagehead gap-0"):
+            ui.label(f"{num} / {sec_label}" if num else sec_label).classes("cc-eyebrow")
+            ui.label(head).classes("cc-page-title")
+            if sub:
+                ui.label(sub).classes("cc-page-sub")
+        ui.element("div").classes("cc-rule")
         yield
 
 

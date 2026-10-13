@@ -35,7 +35,7 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
                 .classes("text-sm font-semibold")
             with ui.row().classes("gap-2 flex-wrap"):
                 for sid, n in list(losses.items())[:8]:
-                    ui.badge(f"{STAGE_LABELS.get(sid, sid)} · {n}", color="red").props("outline")
+                    ui.badge(f"{STAGE_LABELS.get(sid, sid)} · {n}", color="orange").props("outline")
     flagged = [r for r in rows if r["status"] in ("never matched", "very broad", "slow")
                or r.get("risks")]
     title = (f"Rule details — {len(flagged)} rule(s) to review" if flagged
@@ -93,11 +93,11 @@ def render_stage_noise(s: dict) -> None:
     days = s.get("days") or []
     if not share:
         return
-    with ui.card().classes("w-full gap-2").mark("stage-noise"):
-        ui.label("Noise removed by each stage over time").classes("text-lg font-semibold")
+    with ui.card().classes("w-full gap-3").mark("stage-noise"):
+        ui.label("Noise removed by each stage over time").classes("cc-eyebrow")
         ui.label("Characters each stage took out, per day (top six stages; the rest are "
                  "grouped). A stage that never removes anything is a candidate to switch off.") \
-            .classes("text-xs opacity-70")
+            .classes("text-xs")
         top = [row["label"] for row in share[:6]]
         by_day = s.get("stage_by_day") or {}
         if len(days) > 1:
@@ -106,14 +106,17 @@ def render_stage_noise(s: dict) -> None:
             other = [sum(n for lbl, n in by_day.get(d, {}).items() if lbl not in top) for d in days]
             if any(other):
                 series.append({"name": "Other stages", "type": "bar", "stack": "removed", "data": other})
-            ui.echart({
-                "backgroundColor": "transparent", "tooltip": {"trigger": "axis"},
+            shades = opacity_ramp(len(series))
+            for i, item in enumerate(series):
+                item["itemStyle"] = {"color": shades[i]}
+            chart({
+                "tooltip": {"trigger": "axis"},
                 "legend": {"type": "scroll", "data": [x["name"] for x in series]},
-                "grid": {"left": 64, "right": 24, "top": 44, "bottom": 32},
+                "grid": {"left": 8, "right": 8, "top": 56, "bottom": 8},
                 "xAxis": {"type": "category", "data": days},
                 "yAxis": {"type": "value", "name": "Chars"},
                 "series": series,
-            }).classes("w-full h-72")
+            })
         cols = [{"name": "label", "label": "Stage", "field": "label", "align": "left"},
                 {"name": "removed", "label": "Characters removed", "field": "removed", "sortable": True},
                 {"name": "share", "label": "% of all removed", "field": "share", "sortable": True},
@@ -130,14 +133,14 @@ def stats_page():
 
     with shell("Statistics — how much has been cleaned", "stats"):
         if not runs:
-            with ui.card().classes("w-full items-center py-10"):
-                ui.icon("insights").classes("text-5xl opacity-30")
+            with ui.column().classes("w-full items-center gap-4 py-24"):
+                ui.element("div").classes("cc-dotgrid")
                 ui.label("No runs recorded yet.").classes("text-lg")
                 ui.label("Clean a chart on the Clean page — every run is tracked here, "
-                         "including per-stage detail.").classes("opacity-60 text-sm")
+                         "including per-stage detail.").classes("cc-page-sub text-center")
             return
 
-        cards = ui.row().classes("gap-3 flex-wrap")
+        cards = ui.row().classes("gap-4 flex-wrap w-full items-stretch")
         stat_chip(cards, "total runs", f"{s['runs']:,}")
         stat_chip(cards, "characters removed", f"{s['chars_removed']:,}", "green")
         stat_chip(cards, "avg reduction", f"{s['avg_reduction']:+.1f}%")
@@ -145,57 +148,73 @@ def stats_page():
         stat_chip(cards, "words removed", f"{max(0, s['words_before'] - s['words_after']):,}", "indigo")
         stat_chip(cards, "avg time / run", f"{s['avg_duration_ms']:.0f} ms", "blue-grey")
 
+        with ui.card().classes("w-full gap-3") as reduction_card:
+            ui.label("Average reduction across every run").classes("cc-eyebrow")
+            SegmentedBar(reduction_card, segments=32,
+                         label="share of each chart your rules removed") \
+                .set_value(max(0.0, s["avg_reduction"]) / 100.0, f"{s['avg_reduction']:+.1f}%")
+
         render_rule_health(runs, s)
 
         if s["days"]:
             days = s["days"]
-            ui.echart({
-                "backgroundColor": "transparent",
+            ui.label("Runs, characters removed and reduction over time").classes("cc-eyebrow")
+            chart({
                 "tooltip": {"trigger": "axis"},
                 "legend": {"data": ["Runs", "Characters removed", "% removed"]},
-                "grid": {"left": 64, "right": 96, "top": 44, "bottom": 32},
+                "grid": {"left": 8, "right": 8, "top": 48, "bottom": 8},
                 "xAxis": {"type": "category", "data": days},
                 "yAxis": [
                     {"type": "value", "name": "Runs", "minInterval": 1},
                     {"type": "value", "name": "Chars", "splitLine": {"show": False}},
-                    {"type": "value", "name": "%", "position": "right", "offset": 56,
+                    {"type": "value", "name": "%", "position": "right",
                      "min": 0, "max": 100, "splitLine": {"show": False}},
                 ],
                 "series": [
-                    {"name": "Runs", "type": "bar", "data": [s["by_day"][d]["runs"] for d in days],
-                     "itemStyle": {"color": "#5c6bc0"}},
-                    {"name": "Characters removed", "type": "line", "yAxisIndex": 1, "smooth": True,
+                    {"name": "Runs", "type": "bar",
+                     "data": [s["by_day"][d]["runs"] for d in days],
+                     "itemStyle": {"color": tone("display-60")}},
+                    {"name": "Characters removed", "type": "line", "yAxisIndex": 1,
                      "data": [s["by_day"][d]["chars_removed"] for d in days],
-                     "areaStyle": {"opacity": 0.15}, "itemStyle": {"color": "#66bb6a"}},
-                    {"name": "% removed", "type": "line", "yAxisIndex": 2, "smooth": True,
+                     "symbol": "none", "lineStyle": {"width": 2, "color": tone("display")},
+                     "itemStyle": {"color": tone("display")}},
+                    {"name": "% removed", "type": "line", "yAxisIndex": 2,
                      "data": [s["by_day"][d].get("reduction", 0) for d in days],
-                     "itemStyle": {"color": "#f59e0b"}, "lineStyle": {"type": "dashed"}},
+                     "symbol": "none", "lineStyle": {"width": 1, "type": "dashed",
+                                                     "color": tone("display-30")},
+                     "itemStyle": {"color": tone("display-30")}},
                 ],
-            }).classes("w-full h-72")
+            })
 
-        with ui.row().classes("w-full gap-4 flex-wrap"):
+        with ui.row().classes("w-full gap-6 flex-wrap items-stretch"):
             if s["top_stages"]:
                 labels = [k for k, _ in s["top_stages"]]
                 vals = [v for _, v in s["top_stages"]]
-                ui.echart({
-                    "backgroundColor": "transparent",
-                    "title": {"text": "Which stages clean the most", "textStyle": {"fontSize": 14}},
-                    "tooltip": {},
-                    "grid": {"left": 210, "right": 40, "top": 36, "bottom": 24},
-                    "xAxis": {"type": "value"},
-                    "yAxis": {"type": "category", "data": labels[::-1],
-                              "axisLabel": {"width": 190, "overflow": "truncate"}},
-                    "series": [{"type": "bar", "data": vals[::-1], "itemStyle": {"color": "#26a69a"}}],
-                }).classes("flex-grow min-w-[430px] h-72")
+                with ui.column().classes("flex-grow min-w-[430px] gap-2"):
+                    ui.label("Which stages clean the most").classes("cc-eyebrow")
+                    chart({
+                        "tooltip": {},
+                        "grid": {"left": 8, "right": 24, "top": 8, "bottom": 8},
+                        "xAxis": {"type": "value"},
+                        "yAxis": {"type": "category", "data": labels[::-1],
+                                  "axisLabel": {"width": 190, "overflow": "truncate"}},
+                        "series": [{"type": "bar", "data": vals[::-1],
+                                    "itemStyle": {"color": tone("display-60")}}],
+                    }, classes="w-full h-64")
             if s["phi_by_type"]:
-                ui.echart({
-                    "backgroundColor": "transparent",
-                    "title": {"text": "PHI redactions by type", "textStyle": {"fontSize": 14}},
-                    "tooltip": {"trigger": "item"},
-                    "legend": {"orient": "vertical", "right": 0, "top": "middle", "textStyle": {"fontSize": 11}},
-                    "series": [{"type": "pie", "radius": ["35%", "70%"], "center": ["40%", "55%"],
-                                "data": [{"name": k, "value": v} for k, v in s["phi_by_type"].items()]}],
-                }).classes("flex-grow min-w-[380px] h-72")
+                phi = list(s["phi_by_type"].items())
+                shades = opacity_ramp(len(phi))
+                with ui.column().classes("flex-grow min-w-[380px] gap-2"):
+                    ui.label("PHI redactions by type").classes("cc-eyebrow")
+                    chart({
+                        "tooltip": {"trigger": "item"},
+                        "legend": {"orient": "vertical", "right": 0, "top": "middle"},
+                        "series": [{"type": "pie", "radius": ["38%", "68%"],
+                                    "center": ["40%", "52%"],
+                                    "data": [{"name": k, "value": v,
+                                              "itemStyle": {"color": shades[i]}}
+                                             for i, (k, v) in enumerate(phi)]}],
+                    }, classes="w-full h-64")
 
         render_stage_noise(s)
 

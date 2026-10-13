@@ -25,9 +25,9 @@ def text_rules_page():
     def load_current() -> dict:
         return load_config(common.CONFIG_PATH)
 
-    with shell("My text rules", "/rules"):
+    with shell("My text rules", "/rules", measure=True):
         ui.label("Manage what you remove, replace and abbreviate. Changes save immediately.") \
-            .classes("text-sm opacity-70")
+            .classes("cc-page-sub")
         with ui.tabs().classes("w-full") as tabs:
             learned = ui.tab("Remove & replace", icon="find_replace")
             abbreviations = ui.tab("Abbreviations", icon="short_text")

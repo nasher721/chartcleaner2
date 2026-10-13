@@ -16,7 +16,7 @@ def settings_page():
         if ok:
             ui.navigate.to("/settings")
 
-    with shell("Settings", "settings"):
+    with shell("Settings", "settings", measure=True):
         draft = dict(load_config(common.CONFIG_PATH))
         page_col = ui.context.slot.parent
         with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("settings-search-row"):
@@ -413,8 +413,8 @@ def settings_page():
             with pull_row:
                 ui.button(f"Pull {RECOMMENDED_MODEL} (≈5 GB)", icon="download",
                           on_click=pull_recommended).props("outline").mark("pull-model")
-                pull_bar = ui.linear_progress(value=0, show_value=False).classes("w-48")
-                pull_label = ui.label("").classes("text-xs opacity-70")
+                pull_bar = SegmentedBar(pull_row, segments=16, classes="w-48")
+                pull_label = ui.label("").classes("cc-segbar-note")
             pull_row.set_visibility(False)
             ui.timer(0.5, tick_pull)
             with ui.row().classes("gap-2"):
@@ -487,13 +487,13 @@ def settings_page():
                 if cmp_state["fraction"] is not None:
                     cmp_bar.set_value(cmp_state["fraction"])
 
-            with ui.row().classes("w-full items-center gap-2"):
+            with ui.row().classes("w-full items-center gap-2") as cmp_row:
                 cmp_preset = ui.select({k: v for k, v in PRESET_LABELS.items() if k != "custom"},
                                        value="clinical", label="Summary preset").classes("w-48")
                 ui.button("Compare installed models", icon="leaderboard",
                           on_click=run_comparison).props("outline").mark("compare-models")
-                cmp_bar = ui.linear_progress(value=0, show_value=False).classes("w-40")
-                cmp_label = ui.label("").classes("text-xs opacity-70")
+                cmp_bar = SegmentedBar(cmp_row, segments=16, classes="w-40")
+                cmp_label = ui.label("").classes("cc-segbar-note")
             cmp_bar.set_visibility(False)
             ui.timer(0.5, tick_compare)
 

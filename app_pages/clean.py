@@ -191,12 +191,11 @@ async def clean_page():
         render_ai()
         if not result:
             with results_col:
-                with ui.column().classes("w-full items-center justify-center py-16 opacity-60 border "
-                                         "border-dashed rounded-lg"):
-                    ui.icon("auto_fix_high").classes("text-4xl")
-                    ui.label("Your cleaned chart appears here.").classes("text-sm")
+                with ui.column().classes("w-full items-center justify-center gap-4 py-24"):
+                    ui.element("div").classes("cc-dotgrid")
+                    ui.label("Your cleaned chart appears here.").classes("cc-page-sub")
                     ui.label(f"Paste a chart on the left and press Clean ({MOD}+Enter).") \
-                        .classes("text-xs")
+                        .classes("cc-segbar-note")
             return
         result_mode = CLEAN_STATE.get("result_mode")
         single_pass = result_mode in ("abbreviations", "expand")
@@ -862,14 +861,14 @@ async def clean_page():
         nums = t.numbers()
         flags = t.flags()
         data = [None if n is None else {"value": n, "itemStyle": {
-            "color": "#dc2626" if f else "#2563eb"}} for n, f in zip(nums, flags)]
+            "color": tone("accent") if f else tone("display")}} for n, f in zip(nums, flags)]
         series = {"type": "line", "data": data, "connectNulls": True, "symbolSize": 7,
-                  "lineStyle": {"width": 2, "color": "#64748b"}}
+                  "lineStyle": {"width": 1.5, "color": tone("secondary")}}
         rng = REFERENCE_RANGES.get(t.name)
         if rng:
-            series["markArea"] = {"silent": True, "itemStyle": {"color": "rgba(34,197,94,0.12)"},
+            series["markArea"] = {"silent": True, "itemStyle": {"color": tone("success-soft")},
                                   "data": [[{"yAxis": rng[0]}, {"yAxis": rng[1]}]]}
-        return {"backgroundColor": "transparent", "animation": False,
+        return {"animation": False,
                 "grid": {"left": 4, "right": 4, "top": 6, "bottom": 4},
                 "tooltip": {"trigger": "axis"},
                 "xAxis": {"type": "category", "data": list(notes), "show": False},
@@ -2172,18 +2171,19 @@ async def clean_page():
 
     def header_actions() -> None:
         ui.button(icon="psychology", on_click=lambda: toggle_ai()) \
-            .props("flat round color=white aria-label='Local AI panel'").tooltip("Local AI panel (Alt+A)")
+            .props("flat round aria-label='Local AI panel'").classes("cc-headbtn") \
+            .tooltip("Local AI panel (Alt+A)")
 
-    with shell("Clean a chart", "clean", wide=True, commands=commands, shortcuts=shortcuts,
+    with shell("Clean a chart", "clean", commands=commands, shortcuts=shortcuts,
                actions=header_actions):
         errs, _warns = validate_config(load_config(common.CONFIG_PATH))
         if errs:
-            with ui.card().classes("w-full border-red-400"):
-                ui.label("Current config has problems — fix them on the Pipeline page").classes("font-semibold text-red-600")
+            with ui.card().classes("w-full cc-tint cc-tint--danger gap-2").mark("config-errors"):
+                ui.label("Current config has problems — fix them on the Pipeline page").classes("font-semibold")
                 for e in errs[:5]:
-                    ui.label(f"• {e}").classes("text-xs text-red-500")
+                    ui.label(f"• {e}").classes("text-xs")
 
-        with ui.card().classes("w-full gap-2 bg-blue-50 dark:bg-slate-900").mark("onboarding") as onboarding:
+        with ui.card().classes("w-full gap-2 cc-tint cc-tint--accent").mark("onboarding") as onboarding:
             ui.label("New here? Four steps").classes("font-semibold")
             with ui.row().classes("w-full gap-6 flex-wrap text-sm"):
                 ui.label("① Paste or drop a chart on the left")
@@ -2233,7 +2233,7 @@ async def clean_page():
                         .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
-                                      "bg-amber-50 dark:bg-slate-800").mark("selection-bar") as sel_bar:
+                                      "cc-tint--warn").mark("selection-bar") as sel_bar:
                     ui.icon("highlight").classes("text-amber-700")
                     sel_text = ui.label("").classes("text-xs cc-mono max-w-[220px] truncate")
                     ui.button("Remove", icon="backspace", on_click=sel_remove) \
@@ -2293,7 +2293,7 @@ async def clean_page():
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \
                         .props("accept=.txt,.md,.docx,.pdf,text/plain flat bordered dense hide-upload-btn") \
-                        .classes("w-[240px]").style("max-height: 72px")
+                        .classes("w-[280px]").style("max-height: 72px")
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 

@@ -413,8 +413,8 @@ def pipeline_page():
             with card:
                 exp = ui.expansion().classes("w-full").props("dense expand-icon-toggle")
                 with exp.add_slot("header"):
-                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                        ui.icon("drag_indicator").classes("cursor-move opacity-50") \
+                    with ui.row().classes("w-full items-center gap-2 no-wrap cc-stage-row"):
+                        ui.icon("drag_indicator").classes("cursor-move opacity-50 cc-drag") \
                             .tooltip("Drag to reorder")
                         ui.switch(value=enabled, on_change=lambda e, s=sid: set_stage_enabled(s, e.value)) \
                             .props("dense").tooltip("Enabled")
@@ -1057,9 +1057,9 @@ def pipeline_page():
     # ---- UI ------------------------------------------------------------------
     resolve_order()
 
-    with shell("Pipeline & Rules", "pipeline"):
+    with shell("Pipeline & Rules", "pipeline", measure=True):
         ui.label("Every cleaning rule lives here: enable, disable, edit, reorder — plus presets and "
-                 "import/export. Changes apply after you save.").classes("opacity-70 -mt-2 text-sm")
+                 "import/export. Changes apply after you save.").classes("cc-page-sub")
 
         pending_holder = ui.column().classes("w-full")
         with pending_holder:
@@ -1069,19 +1069,23 @@ def pipeline_page():
         with suggestions_holder:
             render_suggestions()
 
+        # Two rows, not one: committing changes is a different job from
+        # importing/exporting a rule set, and eight controls on one line
+        # squeezed the uploader down to an unreadable sliver.
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             save_btn = ui.button("Save changes", icon="save", on_click=save_checked)
             save_btn.props("unelevated color=primary")
             ui.button("Revert", icon="undo", on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
             ui.button("Test patterns on sample text", icon="science", on_click=run_tests).props("outline")
-            ui.separator().props("vertical")
+
+        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             preset_dd = ui.select(options={p: p for p in store.list_presets()}, value=None,
                                   label="Presets").classes("w-44")
             ui.button(icon="save_as", on_click=new_preset_dialog).props("flat").tooltip("Save current rules as a preset")
             ui.button(icon="delete", on_click=delete_preset_clicked).props("flat").tooltip("Delete selected preset")
             ui.button(icon="file_download", on_click=export_rules).props("flat").tooltip("Export rules as JSON")
-            ui.upload(on_upload=import_rules, auto_upload=True) \
-                .props("accept=.json,application/json flat").classes("max-w-[210px]")
+            ui.upload(on_upload=import_rules, auto_upload=True, label="Import .json") \
+                .props("accept=.json,application/json flat").classes("w-[230px]")
             ui.button("Factory defaults", icon="restart_alt", on_click=restore_defaults).props("flat")
 
         with ui.expansion("Test text (used by the per-pattern match counters)", icon="science").classes("w-full"):

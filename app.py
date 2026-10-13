@@ -76,6 +76,9 @@ for _path, _page in ROUTES.items():
 
 store.ensure_dirs()  # app.py may re-run (test harness) with relocated data dirs
 app.add_static_files("/exports", str(store.EXPORTS_DIR))
+# Self-hosted design-system fonts (Space Grotesk / Space Mono / Doto): the app is
+# offline-first, so the stylesheet references these instead of a font CDN.
+app.add_static_files("/static", str(common.STATIC_DIR))
 local_api.register(app)  # /api/v1/* — loopback + token only (see chartcleaner/api.py)
 
 

@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_tmp/
 cleaned_charts/
 Clean Medical Chart.app/
 data/
@@ -15,3 +16,6 @@ dist/
 .mimosa/
 raw_chart*.txt
 cleaned_chart*.txt
+
+# WorkBuddy agent-internal data (memory, skills, logs) — never commit
+.workbuddy-ai/

@@ -247,14 +247,16 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
             shown.append((index, pair))
         with list_box:
             if not pairs:
-                ui.label("No learned rules yet. Add one here or highlight text on Clean.").classes(
-                    "rounded border border-dashed p-5 text-sm opacity-70"
-                )
+                with ui.column().classes("w-full items-start gap-3 py-6"):
+                    ui.element("div").classes("cc-dotgrid")
+                    ui.label("No learned rules yet. Add one here or highlight text on Clean.").classes(
+                        "cc-page-sub"
+                    )
                 return
             if not shown:
-                ui.label("No rules match this search or filter.").classes(
-                    "rounded border border-dashed p-5 text-sm opacity-70"
-                )
+                with ui.column().classes("w-full items-start gap-3 py-6"):
+                    ui.element("div").classes("cc-dotgrid")
+                    ui.label("No rules match this search or filter.").classes("cc-page-sub")
                 return
             for index, pair in shown:
                 source, repl, generated = _label(pair)
