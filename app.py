@@ -28,6 +28,7 @@ from nicegui import app, ui
 from app_pages import common, updates
 from app_pages.common import *  # noqa: F401,F403 — re-exported for scripts and tests
 from app_pages.batch import batch_page
+from app_pages.census import census_page
 from app_pages.clean import clean_page
 from app_pages.doctor import doctor_page
 from app_pages.pipeline import pipeline_page
@@ -64,6 +65,7 @@ async def _strip_external_fonts(request, call_next):
 ROUTES = {
     "/": clean_page,
     "/batch": batch_page,
+    "/census": census_page,
     "/rules": text_rules_page,
     "/pipeline": pipeline_page,
     "/stats": stats_page,

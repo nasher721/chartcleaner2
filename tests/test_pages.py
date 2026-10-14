@@ -273,7 +273,7 @@ async def test_update_confirmation_requires_confirm_click(user: User):
 def test_every_page_route_points_at_its_page_function():
     """Routes are registered in app.py's ROUTES table (not with decorators)."""
     assert {path: fn.__name__ for path, fn in cc_app.ROUTES.items()} == {
-        "/": "clean_page", "/batch": "batch_page", "/rules": "text_rules_page",
+        "/": "clean_page", "/batch": "batch_page", "/census": "census_page", "/rules": "text_rules_page",
         "/pipeline": "pipeline_page", "/stats": "stats_page", "/scripts": "scripts_page",
         "/settings": "settings_page", "/doctor": "doctor_page",
     }

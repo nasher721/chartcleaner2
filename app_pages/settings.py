@@ -557,7 +557,7 @@ def settings_page():
                      "command line): the note itself, filled with the chart's own lines. "
                      "Placeholders: {{chart}}, {{date}}, {{systems}} ([N] [CV] [R] [R/GU] [GI] [E] "
                      "[H] [ID] …), {{system:N}}, {{section:Assessment & Plan}}, {{problems}}, "
-                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}, {{pending}}, {{bundle}}, {{safety}}, {{stale}}. A template with a "
+                     "{{devices}}, {{micro}}, {{overnight}}, {{trends}}, {{pending}}, {{bundle}}, {{safety}}, {{stale}}, {{conflicts}}. A template with a "
                      "built-in's name replaces it.").classes("text-xs opacity-60 -mt-1")
             ui.label("Built-in: " + ", ".join(t["name"] for t in note_templates_mod.DEFAULT_TEMPLATES)) \
                 .classes("text-xs opacity-60")

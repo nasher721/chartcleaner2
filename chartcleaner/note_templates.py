@@ -9,7 +9,7 @@ the note itself, filled with the chart's own lines. Placeholders:
 ``{{system:N}}``         one block: N, CV, R, R/GU, GI, E, H, ID, Skin, Lines, Dispo
 ``{{section:NAME}}``     the body of a chart section ("Assessment & Plan", "Labs")
 ``{{problems}}`` ``{{devices}}`` ``{{micro}}`` ``{{overnight}}`` ``{{trends}}``
-``{{pending}}`` ``{{bundle}}`` ``{{safety}}`` ``{{stale}}``
+``{{pending}}`` ``{{bundle}}`` ``{{safety}}`` ``{{stale}}`` ``{{conflicts}}``
                          the matching insight block (see :mod:`chartcleaner.service`)
 
 A system block collects the lines of the most recent note that mention that
@@ -176,7 +176,7 @@ def render(name: str, chart: str, cfg: dict | None = None, *, today: _date | Non
         if key == "section":
             return _section(text, arg)
         if key in ("problems", "devices", "micro", "overnight", "trends", "pending", "bundle",
-                   "safety", "stale"):
+                   "safety", "stale", "conflicts"):
             if key not in cache:
                 cache[key] = insights_text(text, (key,))
             return cache[key]

@@ -451,6 +451,7 @@ def main():
     parser.add_argument(
         "--insights", action="store_true",
         help="Put a safety header (allergies, code status, isolation, weight, antithrombotics), "
+             "possible contradictions (left vs right, NPO vs eating, allergy vs medication), "
              "overnight events, a to-do list, stale copied-forward lines, lines/drains with day counts, antibiotic days "
              "and cultures, an ICU bundle check and a problem-oriented view (chart lines grouped under each A&P problem) above "
              "the output.",
@@ -506,6 +507,10 @@ def main():
     parser.add_argument("--doctor", action="store_true",
                         help="Check Python, packages, the spaCy model, local AI, encryption, rules, "
                              "launchers and the data folder; exits 1 when something is broken.")
+    parser.add_argument("--census", action="store_true",
+                        help="Print one block per bed tag (the newest stored chart for each): allergies, "
+                             "code status, possible contradictions, antibiotics, devices to review, "
+                             "bundle gaps and the to-do list. Uses config.json (or --preset).")
     parser.add_argument("--check-known-good", action="store_true",
                         help="Re-clean your known-good charts with config.json (or --preset) and "
                              "show any whose output changed; exits 1 when one did.")
@@ -524,6 +529,12 @@ def main():
         sys.exit(_run_check_known_good(args.preset))
     if args.doctor:
         sys.exit(_run_doctor())
+    if args.census:
+        from chartcleaner import service
+        text = service.census(preset=args.preset)["text"]
+        print(text or "No bed-tagged charts yet: clean a chart with a bed tag first "
+                      "(Clean page, or --tag BED with --daily-note).")
+        return
 
     if args.export_abbreviations:
         _run_export_abbreviations(args)

@@ -142,6 +142,7 @@ def start_pending_rule(pattern: str, replacement: str | None, stage: str) -> Non
 NAV = [
     ("/", "cleaning_services", "Clean"),
     ("/batch", "layers", "Batch"),
+    ("/census", "bed", "Census"),
     ("/rules", "highlight", "My text rules"),
     ("/pipeline", "tune", "Pipeline & Rules"),
     ("/stats", "insights", "Statistics"),
@@ -154,12 +155,13 @@ NAV = [
 SECTION_NUMBERS = {
     "clean": ("01", "Clean"),
     "batch": ("02", "Batch"),
-    "rules": ("03", "My text rules"),
-    "pipeline": ("04", "Pipeline & Rules"),
-    "stats": ("05", "Statistics"),
-    "scripts": ("06", "Custom Scripts"),
-    "settings": ("07", "Settings"),
-    "doctor": ("08", "Doctor"),
+    "census": ("03", "Census"),
+    "rules": ("04", "My text rules"),
+    "pipeline": ("05", "Pipeline & Rules"),
+    "stats": ("06", "Statistics"),
+    "scripts": ("07", "Custom Scripts"),
+    "settings": ("08", "Settings"),
+    "doctor": ("09", "Doctor"),
 }
 
 # Design system: Nothing-inspired tokens, components and the stylesheet.
@@ -638,7 +640,7 @@ def shell(title: str, active: str, *, measure: bool = False,
     the menu button on narrow screens — one component, two presentations.
 
     Every page shares one 1440px grid with the header chrome, so the left edge
-    is identical on all nine screens. ``measure=True`` caps the page body at a
+    is identical on every screen. ``measure=True`` caps the page body at a
     readable 1040px without moving that edge — use it for text-heavy screens.
     """
     # The stylesheet goes into the body, not the head: NiceGUI emits its
