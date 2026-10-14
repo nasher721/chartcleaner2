@@ -119,6 +119,7 @@ until you use the menu. Hospital browser policies may block unpacked extensions.
 ./clean-chart --insights                  # overnight events, devices, antibiotics, problems on top
 ./clean-chart --check-known-good          # re-check your known-good charts (exit 1 on a change)
 ./clean-chart --doctor                    # check the installation (exit 1 when something is broken)
+./clean-chart --census                    # one block per bed tag: allergies, code status, contradictions, to-do
 ```
 
 ## Prompts, exports and notes

@@ -17,7 +17,7 @@ from .engine import Pipeline, RunResult, load_config
 
 __all__ = ["FORMATS", "INSIGHTS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
            "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text",
-           "daily_note", "split_patients", "clean_patients", "note"]
+           "daily_note", "split_patients", "clean_patients", "note", "census"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -41,7 +41,7 @@ def format_output(text: str, fmt: str = "text", delta: bool = False,
     Returns ``(text, delta_result)``; ``delta_result`` is None unless ``delta``.
     ``trends`` puts the lab-trend / medication-change block (see
     :mod:`chartcleaner.trends`) above the chart when it holds several notes.
-    ``insights`` puts the safety header and the overnight / to-do / stale-line /
+    ``insights`` puts the safety header, possible contradictions and the overnight / to-do / stale-line /
     device / antibiotic / bundle / problem blocks
     (see :func:`insights_text`) above it.
     """
@@ -58,7 +58,7 @@ def _check_format(fmt: str) -> None:
 def _compose(text: str, fmt: str, delta: bool, block: str, insights: bool) -> tuple[str, Any]:
     """format_output's body once the trends block is known."""
     if insights:
-        extra = insights_text(text, ("safety", "overnight", "pending", "stale", "devices", "micro", "bundle",
+        extra = insights_text(text, ("safety", "conflicts", "overnight", "pending", "stale", "devices", "micro", "bundle",
                                      "problems"))
         block = f"{block}\n\n{extra}".strip() if extra else block
     delta_res = None
@@ -93,7 +93,8 @@ def trends_text(text: str, config: dict | None = None) -> str:
 
 
 # name -> module with build(text) returning a report with to_text()/to_dict()
-INSIGHTS = ("problems", "devices", "micro", "overnight", "trends", "pending", "bundle", "safety", "stale")
+INSIGHTS = ("problems", "devices", "micro", "overnight", "trends", "pending", "bundle", "safety", "stale",
+            "conflicts")
 
 
 def _insight_report(name: str, text: str):
@@ -121,8 +122,8 @@ def _each_insight(text: str, which, render: str):
 
 def insights(text: str, which: tuple[str, ...] | list[str] | None = None) -> dict:
     """Problem-oriented view, devices, antibiotics/cultures, overnight events,
-    trends, the to-do list, the ICU bundle check, the safety header and stale
-    copied-forward lines read from ``text`` (each
+    trends, the to-do list, the ICU bundle check, the safety header, stale
+    copied-forward lines and possible contradictions read from ``text`` (each
     built from the chart's own lines)."""
     return dict(_each_insight(text, which, "to_dict"))
 
@@ -367,6 +368,14 @@ def timeline(text: str) -> list[dict]:
 
 
 _RESULT_CACHE: dict = {"cache": None}
+
+
+def census(*, preset: str | None = None, config: dict | None = None) -> dict:
+    """One card per bed tag (the newest stored chart for each): allergies, code status,
+    possible contradictions, to-do, devices to review, antibiotics, bundle gaps, stale
+    lines. Reads the encrypted recent charts; records nothing."""
+    from .census import build
+    return build(_config(config, preset)).to_dict()
 
 
 def result_cache():

@@ -158,15 +158,29 @@ def _specimen_name(raw: str) -> str:
             "mrsanares": "MRSA nares"}.get(key, raw.strip().capitalize())
 
 
+_ALLERGY = re.compile(r"\ballerg(?:y|ies|ic)\b|\bALLG\b", re.IGNORECASE)
+_ALLERGY_HEADING = re.compile(r"^(?:#{1,6}\s*)?(?:allerg(?:y|ies)(?:/adverse reactions)?|ALLG)\s*:?\s*$",
+                              re.IGNORECASE)
+
+
 def build(text: str, ref: date | None = None) -> MicroReport:
     ref = ref or reference_date(text)
     abx: dict[str, Antibiotic] = {}
     cultures: dict[tuple[str, date | None], Culture] = {}
+    in_allergies = False
     for line in text.split("\n"):
         stripped = line.strip()
         if not stripped:
+            in_allergies = False
             continue
-        hits = list(_DRUG.finditer(stripped))
+        # an allergy list names drugs the patient must *not* get ("ALLG: Penicillin (hives)")
+        if _ALLERGY_HEADING.match(stripped):
+            in_allergies = True
+            continue
+        if in_allergies and re.match(r"[A-Za-z][A-Za-z /&]{1,40}:", stripped):
+            in_allergies = False
+        allergy_line = in_allergies or bool(_ALLERGY.search(stripped))
+        hits = [] if allergy_line else list(_DRUG.finditer(stripped))
         for i, m in enumerate(hits):
             name = _ALIASES[m.group(1).lower()]
             item = abx.setdefault(name, Antibiotic(name))

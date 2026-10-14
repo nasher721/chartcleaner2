@@ -9,7 +9,7 @@ Runs over stdio only — no network port is opened. Tools wrap
 * ``list_presets`` / ``list_prompt_templates``
 * ``ask_chart`` — grounded question via the on-device LLM (Ollama)
 * ``chart_insights`` — problem-oriented view, devices, antibiotics/cultures, to-do list, ICU bundle check,
-  safety header, stale copied-forward lines, overnight events and trends
+  safety header, stale copied-forward lines, possible contradictions, overnight events and trends
 * ``fill_note_template`` / ``list_note_templates`` — the note itself, filled
   with the chart's own lines ([N] [CV] [R] … systems, problems, devices)
 * ``clean_patient_list`` — split a sign-out / census paste per patient and clean each
@@ -101,7 +101,9 @@ def chart_insights(text: str, which: str = "") -> dict[str, Any]:
     note never mentions, lines past their review day, antibiotics with no duration),
     safety (allergies, code status, isolation, weight, height, antithrombotics — latest
     statement, with earlier different ones) and stale (time-bound lines of the latest note
-    copied unchanged from the notes before it). ``which`` is a comma-separated subset; empty = all."""
+    copied unchanged from the notes before it) and conflicts (latest-note lines that can't both
+    be true: left vs right, NPO vs eating, full code vs DNR, no anticoagulation vs a heparin drip,
+    an allergy vs a medication, afebrile vs a fever). ``which`` is a comma-separated subset; empty = all."""
     names = [w.strip() for w in which.split(",") if w.strip()] or None
     return service.insights(text, names)
 

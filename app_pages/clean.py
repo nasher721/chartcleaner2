@@ -34,6 +34,7 @@ from chartcleaner.safety import REMOVED as SAFETY_REMOVED
 from chartcleaner.safety import removed_lines
 from chartcleaner.safety import build as build_safety
 from chartcleaner.stale import build as build_stale
+from chartcleaner.conflicts import build as build_conflicts
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -102,7 +103,8 @@ async def clean_page():
                                 ("devices", build_devices), ("micro", build_micro),
                                 ("overnight", build_overnight), ("pending", build_pending),
                                 ("bundle", build_bundle),
-                                ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale)):
+                                ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale),
+                                ("conflicts", build_conflicts)):
                     try:
                         out[key] = fn(cleaned)
                     except Exception:
@@ -119,7 +121,8 @@ async def clean_page():
                                devices=extras.get("devices"), micro=extras.get("micro"),
                                overnight=extras.get("overnight"), pending=extras.get("pending"),
                                bundle=extras.get("bundle"), safety=extras.get("safety"),
-                               stale=extras.get("stale"), fact_ack=False)
+                               stale=extras.get("stale"), conflicts=extras.get("conflicts"),
+                               fact_ack=False)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -757,6 +760,11 @@ async def clean_page():
             render_block(f"Safety header ({flagged} to look at)" if flagged else "Safety header",
                          "health_and_safety", safety.to_text(), "insight-safety",
                          lambda: render_safety(safety))
+        conflicts = CLEAN_STATE.get("conflicts")
+        if conflicts is not None and not conflicts.empty:
+            shown = True
+            render_block(f"Possible contradictions ({len(conflicts.conflicts)})", "compare_arrows",
+                         conflicts.to_text(), "insight-conflicts", lambda: render_conflicts(conflicts))
         overnight = CLEAN_STATE.get("overnight")
         if overnight is not None and not overnight.empty:
             shown = True
@@ -861,6 +869,13 @@ async def clean_page():
                                text_color=f"{color}-9",
                                on_click=lambda: show_tab(2)).props("dense clickable")
                 chip.tooltip(item.to_text())
+            conflicts = CLEAN_STATE.get("conflicts")
+            if conflicts is not None and not conflicts.empty:
+                n = len(conflicts.conflicts)
+                ui.chip(f"{n} possible contradiction{'s' if n != 1 else ''}", icon="compare_arrows",
+                        color="red-1", text_color="red-9", on_click=lambda: show_tab(2)) \
+                    .props("dense clickable").mark("conflicts-chip") \
+                    .tooltip("; ".join(c.why for c in conflicts.conflicts))
 
     def render_safety(report) -> None:
         ui.label("The latest line stating each item, verbatim. \"Changed\" means an earlier note "
@@ -887,6 +902,17 @@ async def clean_page():
                                 .classes("text-xs cc-mono text-red-600 break-all")
                             ui.button(icon="content_copy",
                                       on_click=lambda t=line: copy_to_clipboard(t)).props("flat dense")
+
+    def render_conflicts(report) -> None:
+        ui.label("Lines of the latest note that can't both be true. Nothing was changed — "
+                 "check which one is right.").classes("text-xs opacity-60")
+        for k in report.conflicts:
+            with ui.column().classes("w-full gap-0"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.badge(k.kind, color="red").props("outline")
+                    ui.label(k.why).classes("text-xs font-semibold")
+                for line in k.lines:
+                    ui.label(line).classes("text-xs cc-mono break-all")
 
     def render_stale(report) -> None:
         ui.label("Lines in the latest note copied word for word from the notes before it, though "

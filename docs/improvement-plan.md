@@ -809,3 +809,32 @@ Open question: the default `metadata_lines` rule `^\s*Code Status(?: History)?�
 "Code status: …" line, real statements included ("Code status: DNR/DNI after family meeting").
 The safety header now reports it as removed, but the rule itself is unchanged pending a decision.
 
+
+
+# Phase 11 (2026-10-14) — contradictions in the chart, census page
+
+Branch `claude/contradictions-census`. From the brainstorm's top three (the Code Status rule
+decision stays open, see Phase 10).
+
+- [x] **Possible contradictions** — `chartcleaner/conflicts.py` (insight `conflicts`). Pairs of
+  latest-note lines that can't both be true, quoted verbatim; nothing is changed. Checks: the same
+  one-sided finding left and right (weakness, facial droop, MCA/ACA/PCA, SDH/EDH/ICH, craniotomy,
+  EVD, pneumothorax, chest tube — a line naming both sides or "bilateral" suppresses it; fused
+  forms RHP/LHP, LMCA, RUE/LLE, RSW), a cerebral lesion and a deficit on the same side (cerebellar
+  and brainstem lesions excluded), NPO vs eating (planned NPO excluded), full code vs DNR/DNI/comfort
+  care (discussion lines excluded), no/held anticoagulation vs an active therapeutic anticoagulant
+  (prophylactic SQ heparin doesn't count), an allergy (whole chart; penicillin/sulfa/HIT classes)
+  vs a medication line, afebrile vs ≥ 38.0 °C / 100.4 °F. History lines (h/o, prior) and negated
+  findings are skipped; "R/O" and "2 L NC" are not sides. Lines rejoin only when the next starts
+  lowercase. Clean page: a red chip in the safety strip (`conflicts-chip`) and an Insights block
+  (`insight-conflicts`); also `service.INSIGHTS`, `format_output(insights=True)` (after safety),
+  `{{conflicts}}`, `/api/v1/insights`, MCP `chart_insights`, CLI `--insights`.
+- [x] **Census page** — `/census` (`app_pages/census.py`, nav 03) over `chartcleaner/census.py`:
+  one card per bed tag (newest stored chart per tag, cleaned with the saved config through the
+  shared stage cache): allergies, code status (changed / removed by a rule), contradictions,
+  active antibiotics, devices past review day, bundle items not mentioned (count), stale lines,
+  to-do checklist (ticks not saved). Beds with the most to look at come first; one bed failing
+  shows an error card. *Open* loads the chart and tag into the Clean page. `service.census()`,
+  CLI `--census`. Not exposed over the API/MCP (it reads every stored chart).
+- [x] **Antibiotics** — `micro.py` no longer counts drugs on allergy lines ("ALLG: Penicillin
+  (hives)", lines under an "Allergies" heading) as antibiotics.
