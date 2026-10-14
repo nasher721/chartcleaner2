@@ -22,6 +22,28 @@ SOURCE_PATH = Path(__file__).with_name("medical_abbreviations.csv")
 MAX_TRACKED_CHANGES = 2000
 
 
+class LineCounter:
+    """Line numbers for match positions delivered left to right.
+
+    ``re.Pattern.sub`` calls the replacement function in match order, so counting
+    only the newlines since the previous position is enough. Re-scanning the whole
+    chart for every change would be O(matches * len(text)) — this is O(len(text)).
+    """
+
+    __slots__ = ("_text", "_pos", "_line")
+
+    def __init__(self, text: str):
+        self._text = text
+        self._pos = 0
+        self._line = 1
+
+    def line_at(self, pos: int) -> int:
+        if pos > self._pos:
+            self._line += self._text.count("\n", self._pos, pos)
+            self._pos = pos
+        return self._line
+
+
 _UNCERTAINTY = {"likely", "possibly", "probable", "uncertain"}
 
 
@@ -287,6 +309,7 @@ def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
     settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
     pattern, replacements, row_count, custom_groups, group_terms = _matcher(settings)
     counts: dict[str, int] = {}
+    lines = LineCounter(full)
 
     def replace(match: re.Match[str]) -> str:
         replacement = (custom_groups[match.lastgroup] if match.lastgroup
@@ -305,7 +328,7 @@ def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
                 "source": "custom" if match.lastgroup else "bundled",
                 "before": match.group(0),
                 "after": replacement,
-                "line": full.count("\n", 0, start) + 1,
+                "line": lines.line_at(start),
                 "start": start,
             })
         return replacement
@@ -567,6 +590,7 @@ def expand(text: str, cfg: dict | None = None,
     pattern, chosen = _expander(settings)
     counts: dict[str, int] = {}
     ambiguous: dict[str, int] = {}
+    lines = LineCounter(text)
 
     def replace(match: re.Match[str]) -> str:
         abbr = match.group(0)
@@ -581,7 +605,7 @@ def expand(text: str, cfg: dict | None = None,
         counts[abbr] = counts.get(abbr, 0) + 1
         if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
             changes.append({"rule": abbr, "before": abbr, "after": meaning,
-                            "line": text.count("\n", 0, match.start()) + 1,
+                            "line": lines.line_at(match.start()),
                             "start": match.start()})
         return meaning
 

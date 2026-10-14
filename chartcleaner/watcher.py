@@ -91,7 +91,11 @@ class FolderWatcher:
                         watcher._pending[src.resolve()] = time.monotonic()
 
             self.status.state = "starting"
-            self.spec.out_dir.mkdir(parents=True, exist_ok=True)
+            # Inline rather than store.ensure_dir: this module defers its store
+            # import into the per-file handler (see _process).
+            out_dir = self.spec.out_dir
+            if not out_dir.is_dir():
+                out_dir.mkdir(parents=True, exist_ok=True)
             self._observer = Observer()
             self._observer.schedule(Handler(), str(self.spec.watch_dir),
                                     recursive=self.spec.recursive)
@@ -149,7 +153,7 @@ class FolderWatcher:
         pipeline = Pipeline(self.config, custom_dir=self.custom_dir)
         result = pipeline.run(ing.text)
         out_name = f"{path.stem}{_CLEANED_SUFFIX}.txt"
-        self.spec.out_dir.mkdir(parents=True, exist_ok=True)
+        store.ensure_dir(self.spec.out_dir)
         (self.spec.out_dir / out_name).write_text(result.text, encoding="utf-8")
         store.append_run(result.to_history_dict(f"watch:{self.spec.watch_dir.name}"))
         self.status.processed += 1

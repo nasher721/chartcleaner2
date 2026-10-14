@@ -12,10 +12,11 @@ import re
 import textwrap
 import threading
 import time
+from functools import lru_cache
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
-from .abbreviations import MAX_TRACKED_CHANGES, abbreviate, expand
+from .abbreviations import MAX_TRACKED_CHANGES, LineCounter, abbreviate, expand
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
@@ -36,6 +37,11 @@ DEFAULT_NLP_ENTITIES = {
     "PHONE_NUMBER": "[REDACTED_PHONE]",
     "EMAIL_ADDRESS": "[REDACTED_EMAIL]",
 }
+
+# Presidio's own PhoneRecognizer default set. Each region costs one full scan of
+# the chart, so a US-only chart can set nlp_redaction.phone_regions to ["US"] to
+# skip the other seven scans (see _limit_phone_regions).
+DEFAULT_PHONE_REGIONS = ("US", "GB", "DE", "FR", "IL", "IN", "CA", "BR")
 
 DEFAULT_WHITESPACE = {
     "crlf_to_lf": False,
@@ -135,9 +141,24 @@ def get_stage_options(cfg: dict, sid: str) -> dict:
 # Regex Stage Runners
 # ---------------------------------------------------------------------------
 
+# One owner for pattern compilation and rule ids. The same ~170 config rules
+# run on every clean, so they are compiled and hashed once per process instead
+# of once per run. Both caches are bounded (a user can edit rules while the app
+# is open); a miss just recompiles.
+@lru_cache(maxsize=4096)
+def _rule_id(pattern: str) -> str:
+    return hashlib.sha1(pattern.encode("utf-8")).hexdigest()[:10]
+
+
 def rule_id(pattern: str) -> str:
     """Stable short id for a rule pattern (used to group per-rule statistics)."""
-    return hashlib.sha1(pattern.encode("utf-8")).hexdigest()[:10]
+    return _rule_id(pattern)
+
+
+@lru_cache(maxsize=4096)
+def _compiled(pattern: str, flags: int) -> re.Pattern:
+    """Memoized ``re.compile`` so a rule is compiled once, not once per run."""
+    return re.compile(pattern, flags)
 
 
 def _tracking(ctx: Any) -> bool:
@@ -158,6 +179,7 @@ def _subn_tracked(
     rid = rule_id(pattern)
     keep = [e.casefold() for e in exceptions or []]
     skipped = 0
+    lines = LineCounter(text)
 
     def repl(match: re.Match) -> str:
         nonlocal skipped
@@ -172,7 +194,7 @@ def _subn_tracked(
                 "rule_id": rid,
                 "before": found,
                 "after": after,
-                "line": text.count("\n", 0, match.start()) + 1,
+                "line": lines.line_at(match.start()),
             })
         return after
 
@@ -210,10 +232,16 @@ def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | No
     return details
 
 
-def run_regex_list(
-    text: str, cfg: dict, ctx: CleanContext, key: str, flags: int, sid: str | None = None
+def _apply_rules(
+    text: str, cfg: dict, ctx: CleanContext, rules: list[tuple[str, str]], flags: int,
+    sid: str | None, *, phi: bool = False,
 ) -> tuple[str, int, dict]:
-    """Execute a list of regex patterns and delete matches."""
+    """Run ``(pattern, replacement)`` rules in order, tracking hits/changes/slow rules.
+
+    Both regex stages share this shape: "delete what the pattern matches" is just
+    a pair with an empty replacement, so they only differ in the rule list and
+    the flags.
+    """
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags &= ~re.IGNORECASE
     changes: list[dict] | None = [] if _tracking(ctx) else None
@@ -221,35 +249,29 @@ def run_regex_list(
     hits: dict[str, int] = {}
     slow: dict[str, float] = {}
     total = 0
-    for pattern in cfg[key]:
-        r = re.compile(pattern, flags=flags)
-        text, n = _timed_subn(r, "", text, changes, pattern, keep, slow)
+    for pattern, replacement in rules:
+        text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
+                              keep, slow)
         if n:
             hits[rule_id(pattern)] = n
         total += n
-    return text, total, _with_tracking({}, hits, changes, slow)
+    details = {"phi": {"pattern_redactions": total}} if phi else {}
+    return text, total, _with_tracking(details, hits, changes, slow)
+
+
+def run_regex_list(
+    text: str, cfg: dict, ctx: CleanContext, key: str, flags: int, sid: str | None = None
+) -> tuple[str, int, dict]:
+    """Execute a list of regex patterns and delete matches."""
+    return _apply_rules(text, cfg, ctx, [(p, "") for p in cfg[key]], flags, sid)
 
 
 def run_regex_pairs(
     text: str, cfg: dict, ctx: CleanContext, key: str, phi: bool = False, sid: str | None = None
 ) -> tuple[str, int, dict]:
     """Execute a list of [pattern, replacement] pairs."""
-    flags = re.IGNORECASE
-    if sid and get_stage_options(cfg, sid).get("case_sensitive"):
-        flags = 0
-    changes: list[dict] | None = [] if _tracking(ctx) else None
-    keep = _exceptions(cfg, sid)
-    hits: dict[str, int] = {}
-    slow: dict[str, float] = {}
-    total = 0
-    for pattern, replacement in (cfg.get(key) or []):
-        r = re.compile(pattern, flags=flags)
-        text, n = _timed_subn(r, replacement, text, changes, pattern, keep, slow)
-        if n:
-            hits[rule_id(pattern)] = n
-        total += n
-    details = {"phi": {"pattern_redactions": total}} if phi else {}
-    return text, total, _with_tracking(details, hits, changes, slow)
+    rules = [(p, r) for p, r in (cfg.get(key) or [])]
+    return _apply_rules(text, cfg, ctx, rules, re.IGNORECASE, sid, phi=phi)
 
 
 def run_learned(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
@@ -334,8 +356,12 @@ def run_unicode(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict
         if not options.get(opt):
             continue
         for old, new in pairs:
-            text, k = re.subn(re.escape(old), new, text)
-            total += k
+            # Literal (non-regex) replacements: str.replace swaps substrings
+            # directly and is much cheaper than a regex pass per character.
+            n = text.count(old)
+            if n:
+                text = text.replace(old, new)
+                total += n
     return text, total, {}
 
 
@@ -489,7 +515,7 @@ def _run_regex_headers(
     total = 0
     for h in headers:
         pat = rf"^\s*({h})(\s*:)?\s*$" if keep_colon else rf"^\s*({h})\s*:?\s*$"
-        r = re.compile(pat, re.IGNORECASE | re.MULTILINE)
+        r = _compiled(pat, re.IGNORECASE | re.MULTILINE)
         text, n = r.subn(make_replacement, text)
         total += n
     return text, total, {}
@@ -511,7 +537,7 @@ def run_timestamps(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, d
         if not isinstance(p, str) or not p:
             continue
         try:
-            r = re.compile(p, re.IGNORECASE)
+            r = _compiled(p, re.IGNORECASE)
         except re.error:
             ctx.log(f"bad timestamp pattern skipped: {p!r}")
             continue
@@ -680,8 +706,9 @@ class PresidioEngineCache:
         self._anonymizer: Any = None
         self._lock = threading.Lock()
 
-    def get_engines(self, entities_key: tuple, allow: frozenset, threshold: float | None):
-        sig = (entities_key, allow, threshold)
+    def get_engines(self, entities_key: tuple, allow: frozenset, threshold: float | None,
+                    phone_regions: tuple[str, ...] | None = None):
+        sig = (entities_key, allow, threshold, phone_regions)
         if self._signature == sig:
             return self._analyzer, self._anonymizer
         with self._lock:
@@ -704,6 +731,8 @@ class PresidioEngineCache:
             nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
             analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
             _disable_expensive_spacy_pipes(analyzer.nlp_engine)
+            if phone_regions:
+                _limit_phone_regions(analyzer, phone_regions)
             anonymizer = AnonymizerEngine()
         except Exception as e:
             raise NlpUnavailable(f"Could not initialize the NLP engine ({e}).") from e
@@ -734,6 +763,43 @@ def _disable_expensive_spacy_pipes(nlp_engine: Any) -> None:
         pass  # fall back to the untouched full pipeline
 
 
+def _phone_regions(ncfg: dict) -> tuple[str, ...] | None:
+    """``nlp_redaction.phone_regions`` normalized, or None for Presidio's default.
+
+    Every configured region adds a full scan of the chart to the phone
+    recognizer, so ``["US"]`` is a large speed-up for a US-only chart. A missing
+    or empty value keeps every region Presidio ships with, and a value equal to
+    that default is treated as "unset" so the engine cache stays shared.
+    """
+    raw = ncfg.get("phone_regions")
+    if not isinstance(raw, (list, tuple)):
+        return None
+    regions = tuple(str(r).strip().upper() for r in raw if str(r).strip())
+    if not regions or regions == DEFAULT_PHONE_REGIONS:
+        return None
+    return regions
+
+
+def _limit_phone_regions(analyzer: Any, regions: tuple[str, ...]) -> None:
+    """Point Presidio's PhoneRecognizer at ``regions`` only.
+
+    Unknown region codes are dropped; if none survive, the recognizer is left
+    untouched so the stage still works.
+    """
+    try:
+        import phonenumbers
+        from presidio_analyzer.predefined_recognizers import PhoneRecognizer
+    except Exception:
+        return
+    valid = set(phonenumbers.SUPPORTED_REGIONS)
+    chosen = tuple(r for r in regions if r in valid)
+    if not chosen:
+        return
+    for rec in getattr(getattr(analyzer, "registry", None), "recognizers", []):
+        if isinstance(rec, PhoneRecognizer):
+            rec.supported_regions = chosen
+
+
 _PRESIDIO_CACHE = PresidioEngineCache()
 
 
@@ -752,7 +818,7 @@ def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     threshold = ncfg.get("score_threshold")
 
     analyzer, anonymizer = _PRESIDIO_CACHE.get_engines(
-        tuple(sorted(entities.items())), allow, threshold
+        tuple(sorted(entities.items())), allow, threshold, _phone_regions(ncfg)
     )
 
     results = analyzer.analyze(text=text, entities=list(entities), language="en")

@@ -57,7 +57,7 @@ def _private_key():
     key = Ed25519PrivateKey.generate()
     raw = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
                             serialization.NoEncryption())
-    path.parent.mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(path.parent)
     secure_store.write_text(path, base64.b64encode(raw).decode("ascii"))
     return key
 
@@ -163,7 +163,7 @@ def trusted_keys() -> list[dict]:
 
 def _save_trusted(entries: list[dict]) -> None:
     path = _trusted_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(path.parent)
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
 
 

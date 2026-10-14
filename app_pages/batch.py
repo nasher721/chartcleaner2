@@ -180,7 +180,7 @@ def batch_page():
     def publish(results) -> None:
         """Save cleaned copies + a .zip, record history, and show the results."""
         out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
-        out_dir.mkdir(parents=True, exist_ok=True)
+        store.ensure_dir(out_dir)
         ok = [r for r in results if r.status == "ok"]
         for r in ok:
             (out_dir / f"{safe_stem(r.name)}_cleaned.txt").write_text(r.cleaned, encoding="utf-8")

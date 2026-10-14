@@ -80,7 +80,7 @@ def remember(text: str, source: str = "", prefs: dict | None = None, *, tag: str
             set_tag(files[-1], tag)
         return files[-1]  # the same chart cleaned again
     d = recent_dir()
-    d.mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(d)
     # File names sort by this stamp, so it must grow even when the clock doesn't
     # (Windows' clock can return the same value for back-to-back saves).
     stamp = time.time_ns()

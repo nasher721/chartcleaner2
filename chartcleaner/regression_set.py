@@ -66,7 +66,7 @@ def add(input_text: str, expected: str, label: str = "", *, mode: str = "clean",
     item = KnownGood(id=chart_id, label=label.strip() or f"Chart {time.strftime('%b %d %H:%M')}",
                      ts=time.strftime("%Y-%m-%dT%H:%M:%S"), input=input_text, expected=expected,
                      mode=mode, preset=preset)
-    _dir().mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(_dir())
     secure_store.write_text(_path(chart_id), json.dumps(item.__dict__, ensure_ascii=False))
     return item
 

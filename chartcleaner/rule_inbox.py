@@ -66,7 +66,7 @@ def dismissed() -> set[str]:
 def dismiss(item_id: str) -> None:
     ids = dismissed() | {item_id}
     store.ensure_dirs()
-    store.INBOX_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(store.INBOX_STATE_FILE.parent)
     store.INBOX_STATE_FILE.write_text(json.dumps({"dismissed": sorted(ids)}) + "\n",
                                       encoding="utf-8")
 

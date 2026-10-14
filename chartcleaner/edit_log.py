@@ -64,7 +64,7 @@ def _load() -> dict:
 
 def _save(data: dict) -> None:
     from . import secure_store
-    store.EDIT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    store.ensure_dir(store.EDIT_LOG_FILE.parent)
     secure_store.write_text(store.EDIT_LOG_FILE, json.dumps(data, ensure_ascii=False))
 
 
