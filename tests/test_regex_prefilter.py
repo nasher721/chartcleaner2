@@ -93,9 +93,10 @@ def test_case_trouble_set_covers_every_character_ignorecase_relates_to_ascii():
         extra = _casefix._EXTRA_CASES
     except ImportError:  # pragma: no cover - Python 3.10
         import sre_compile
-        extra = {k: (v,) for k, v in getattr(sre_compile, "_ignorecase_fixes", {}).items()}
+        extra = getattr(sre_compile, "_ignorecase_fixes", {})
     for cp, others in extra.items():
-        group = {cp, *others}
+        # 3.11+ maps to a tuple of code points; keep this robust to a bare int.
+        group = {cp, *(others if isinstance(others, (tuple, list)) else (others,))}
         if any(c < 0x80 for c in group):
             related |= {chr(c) for c in group if c >= 0x80}
     assert related <= CASE_TROUBLE
