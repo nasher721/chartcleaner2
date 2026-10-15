@@ -1782,11 +1782,16 @@ async def clean_page():
             txt = ui.textarea("Highlighted text (edit it down to exactly what should change)",
                               value=selected) \
                 .props("outlined input-style='min-height: 90px'").classes("w-full cc-mono")
-            mode = ui.radio(
-                {LEARN_REMOVE_TEXT: "Remove this text wherever it appears",
-                 LEARN_REMOVE_LINES: "Remove whole line(s) that are exactly this text",
-                 LEARN_REPLACE: "Replace this text with…"},
-                value=LEARN_REMOVE_TEXT).props("dense")
+            # A "block" rule only makes sense for a multi-line selection.
+            mode_options = {
+                LEARN_REMOVE_TEXT: "Remove this text wherever it appears",
+                LEARN_REMOVE_LINES: "Remove whole line(s) that are exactly this text",
+            }
+            if "\n" in (selected or ""):
+                mode_options[LEARN_REMOVE_BLOCK] = (
+                    "Remove this whole block (any spacing/line breaks)")
+            mode_options[LEARN_REPLACE] = "Replace this text with…"
+            mode = ui.radio(mode_options, value=LEARN_REMOVE_TEXT).props("dense")
             repl = ui.textarea("Replace with (used by the last option only)",
                                value="").props("outlined dense autogrow").classes("w-full")
             hit_lbl = ui.label("").classes("text-xs opacity-80")
@@ -1838,10 +1843,14 @@ async def clean_page():
                 if not snippet:
                     ui.notify("Nothing to learn — the highlighted text is empty.", type="warning")
                     return
-                if m == LEARN_REPLACE and not (repl.value or "").strip():
-                    ui.notify("Enter the replacement text, or pick one of the remove options.",
-                              type="warning")
-                    return
+            if m == LEARN_REPLACE and not (repl.value or "").strip():
+                ui.notify("Enter the replacement text, or pick one of the remove options.",
+                          type="warning")
+                return
+            if m == LEARN_REMOVE_BLOCK and not learned_pattern(snippet, m):
+                ui.notify("A block rule needs at least two lines — switch to another option "
+                          "or add a second line.", type="warning")
+                return
                 try:
                     cfg = load_config(common.CONFIG_PATH)
                     pair = [learned_pattern(snippet, m),

@@ -12,11 +12,13 @@ import re
 import textwrap
 import threading
 import time
+from collections import deque
 from functools import lru_cache
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Callable
 
 from .abbreviations import MAX_TRACKED_CHANGES, LineCounter, abbreviate, expand
+from .section_parser import parse_clinical_sections
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
@@ -103,6 +105,13 @@ DEFAULT_LINE_LENGTH = {
     "marker": "…",
 }
 
+DEFAULT_FUZZY_LINE = {
+    "enabled": False,
+    "threshold": 92,
+    "min_chars": 8,
+    "window": 50,
+}
+
 UNICODE_REPLACEMENTS = {
     "quotes": [("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
                ("\u201a", ","), ("\u201e", '"')],
@@ -167,14 +176,18 @@ def _tracking(ctx: Any) -> bool:
 
 def _subn_tracked(
     regex: re.Pattern, replacement: str, text: str, changes: list[dict] | None, pattern: str,
-    exceptions: list[str] | None = None,
+    exceptions: list[str] | None = None, scope: Callable[[int], bool] | None = None,
+    table_lines: set[int] | None = None,
 ) -> tuple[str, int]:
     """``regex.subn`` that also records each change while ``changes`` is a list.
 
     A match containing any of ``exceptions`` (case-insensitive) is left as is
-    and not counted: the user said "never remove this".
+    and not counted: the user said "never remove this". ``scope(pos)`` returns
+    whether a match at that offset is in scope (section-scoped removal).
+    ``table_lines`` is a set of line-start offsets that must be left untouched
+    (table-safe whitespace).
     """
-    if changes is None and not exceptions:
+    if changes is None and not exceptions and scope is None and table_lines is None:
         return regex.subn(replacement, text)
     rid = rule_id(pattern)
     keep = [e.casefold() for e in exceptions or []]
@@ -184,9 +197,25 @@ def _subn_tracked(
     def repl(match: re.Match) -> str:
         nonlocal skipped
         found = match.group(0)
-        if keep and any(k in found.casefold() for k in keep):
+        if keep:
+            # "Never remove" protects the whole line the match sits on, not just
+            # the matched fragment (a rule may match a word inside a longer line).
+            ls = text.rfind("\n", 0, match.start()) + 1
+            le = text.find("\n", match.start())
+            if le == -1:
+                le = len(text)
+            line_text = text[ls:le].casefold()
+            if any(k in line_text for k in keep):
+                skipped += 1
+                return found
+        if scope is not None and not scope(match.start()):
             skipped += 1
             return found
+        if table_lines is not None:
+            ls = text.rfind("\n", 0, match.start()) + 1
+            if ls in table_lines:
+                skipped += 1
+                return found
         after = match.expand(replacement)
         if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
             changes.append({
@@ -207,14 +236,74 @@ def _exceptions(cfg: dict, sid: str | None) -> list[str]:
     return [v for v in values if isinstance(v, str) and v.strip()] if isinstance(values, list) else []
 
 
+def _is_table_line(line: str) -> bool:
+    """A line that should keep its internal spacing (pipe/tab or fixed-width)."""
+    if "|" in line or "\t" in line:
+        return True
+    return len(re.findall(r" {2,}", line)) >= 3
+
+
+def _table_line_starts(text: str) -> set[int]:
+    """Offsets of line starts that look like aligned tables / monospace blocks."""
+    starts: set[int] = set()
+    pos = 0
+    for line in text.split("\n"):
+        if _is_table_line(line):
+            starts.add(pos)
+        pos += len(line) + 1
+    return starts
+
+
+def _section_spans(text: str) -> list[tuple[int, int, str]]:
+    """(start, end, domain) for each clinical section parsed from the chart."""
+    parsed = parse_clinical_sections(text)
+    return [(s.start_pos, s.end_pos, s.domain) for s in parsed.sections]
+
+
+def _build_scope(cfg: dict, sid: str | None, text: str) -> Callable[[int], bool] | None:
+    """Return an in-scope predicate for section-scoped removal, or None.
+
+    Scope lives in ``stage_options.<sid>.scope`` as
+    ``{"mode": "only"|"except", "sections": [taxonomy keys]}``. With ``mode``
+    "only", a match is kept only inside the listed sections; with "except" it is
+    kept everywhere except them. Sections absent from the chart (preamble) count
+    as domain "preamble".
+    """
+    if not sid:
+        return None
+    scope = get_stage_options(cfg, sid).get("scope")
+    if not isinstance(scope, dict):
+        return None
+    mode = scope.get("mode", "all")
+    if mode == "all":
+        return None
+    sections = {str(s).strip().casefold() for s in scope.get("sections", [])}
+    if not sections:
+        return None
+    spans = _section_spans(text)
+
+    def in_scope(pos: int) -> bool:
+        domain = "preamble"
+        for start, end, dom in spans:
+            if start <= pos < end:
+                domain = dom
+                break
+        inside = domain in sections
+        return inside if mode == "only" else not inside
+
+    return in_scope
+
+
 # A rule taking at least this long on one chart lands in details["slow_rules"]
 # (rule id -> ms); the Statistics page's rule health reads it.
 SLOW_RULE_MS = 25.0
 
 
-def _timed_subn(regex, replacement, text, changes, pattern, keep, slow: dict[str, float]):
+def _timed_subn(regex, replacement, text, changes, pattern, keep, slow: dict[str, float],
+                scope: Callable[[int], bool] | None = None,
+                table_lines: set[int] | None = None):
     started = time.perf_counter()
-    out, n = _subn_tracked(regex, replacement, text, changes, pattern, keep)
+    out, n = _subn_tracked(regex, replacement, text, changes, pattern, keep, scope, table_lines)
     ms = (time.perf_counter() - started) * 1000
     if ms >= SLOW_RULE_MS:
         slow[rule_id(pattern)] = round(ms, 1)
@@ -240,18 +329,23 @@ def _apply_rules(
 
     Both regex stages share this shape: "delete what the pattern matches" is just
     a pair with an empty replacement, so they only differ in the rule list and
-    the flags.
+    the flags. ``scope`` (section restriction) and ``preserve_tables`` (leave
+    table lines alone) are read from ``stage_options[<sid>]`` when present.
     """
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags &= ~re.IGNORECASE
     changes: list[dict] | None = [] if _tracking(ctx) else None
     keep = _exceptions(cfg, sid)
+    scope = _build_scope(cfg, sid, text)
+    table_lines = (
+        _table_line_starts(text) if sid and get_stage_options(cfg, sid).get("preserve_tables") else None
+    )
     hits: dict[str, int] = {}
     slow: dict[str, float] = {}
     total = 0
     for pattern, replacement in rules:
         text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
-                              keep, slow)
+                              keep, slow, scope, table_lines)
         if n:
             hits[rule_id(pattern)] = n
         total += n
@@ -693,6 +787,49 @@ def run_fuzzy_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, 
     return "\n\n".join(deduped), dropped, {"paragraphs_kept": len(deduped)}
 
 
+def run_fuzzy_line_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
+    """Collapse near-duplicate lines (e.g. copy-forwarded signature stamps).
+
+    Unlike :func:`run_fuzzy_dedup` (which works on blank-line separated
+    paragraphs), this folds individual lines that are nearly identical to a
+    recently kept line, keeping only the first. The comparison window bounds the
+    cost on long charts; default off so existing output is unchanged.
+    """
+    fcfg = cfg.get("fuzzy_line_dedup") or {}
+    if not fcfg.get("enabled", False):
+        return text, 0, {}
+    try:
+        from rapidfuzz import fuzz as rf_fuzz
+    except Exception:
+        ctx.log("fuzzy_line_dedup: rapidfuzz unavailable; stage skipped.")
+        return text, 0, {}
+
+    threshold = int(fcfg.get("threshold", DEFAULT_FUZZY_LINE["threshold"]))
+    min_chars = int(fcfg.get("min_chars", DEFAULT_FUZZY_LINE["min_chars"]))
+    window = int(fcfg.get("window", DEFAULT_FUZZY_LINE["window"]))
+
+    lines = text.split("\n")
+    if len(lines) <= 1:
+        return text, 0, {}
+
+    recent: deque[str] = deque(maxlen=max(1, window))
+    dropped = 0
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if len(stripped) < min_chars:
+            kept.append(line)
+            continue
+        low = stripped.lower()
+        if any(rf_fuzz.ratio(low, cand) >= threshold for cand in recent):
+            dropped += 1
+        else:
+            kept.append(line)
+            recent.append(low)
+
+    return "\n".join(kept), dropped, {"lines_kept": len(kept)}
+
+
 # ---------------------------------------------------------------------------
 # Privacy & PHI Runners
 # ---------------------------------------------------------------------------
@@ -956,6 +1093,7 @@ RUNNERS: dict[str, Callable] = {
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
     "fuzzy": run_fuzzy_dedup,
+    "fuzzy_line": run_fuzzy_line_dedup,
     "headers": run_headers,
     "caps": run_caps,
     "bullets": run_bullets,
@@ -984,6 +1122,7 @@ KIND_TO_RUNNER = {
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
     "fuzzy_dedup": "fuzzy",
+    "fuzzy_line_dedup": "fuzzy_line",
     "headers": "headers",
     "caps_normalize": "caps",
     "bullets": "bullets",

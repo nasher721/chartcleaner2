@@ -244,6 +244,7 @@ def count_matches(pattern: str, text: str, flags: int) -> int:
 LEARN_REMOVE_TEXT = "remove_text"
 LEARN_REMOVE_LINES = "remove_lines"
 LEARN_REPLACE = "replace"
+LEARN_REMOVE_BLOCK = "remove_block"
 
 
 def learned_pattern(text: str, mode: str) -> str:
@@ -252,6 +253,9 @@ def learned_pattern(text: str, mode: str) -> str:
     remove_text: literal match anywhere (multi-line safe).
     remove_lines: only match when whole line(s) equal the text, and swallow
     the line break so no blank line is left behind.
+    remove_block: a multi-line block — each non-empty line is matched literally
+    but the gaps between lines accept any whitespace, so the rule removes the
+    block even if spacing or line breaks differ next time.
     replace: literal match anywhere, paired with a replacement string.
     """
     text = (text or "").replace("\r\n", "\n").strip("\n")
@@ -260,6 +264,11 @@ def learned_pattern(text: str, mode: str) -> str:
         return ("(?im)^[ \\t]*"
                 + r"[ \t]*\r?\n[ \t]*".join(parts)
                 + r"[ \t]*\n?")
+    if mode == LEARN_REMOVE_BLOCK:
+        block = [re.escape(line.strip()) for line in text.split("\n") if line.strip()]
+        if len(block) < 2:
+            return ""
+        return r"\s+".join(block)
     return r"\n".join(parts)
 
 

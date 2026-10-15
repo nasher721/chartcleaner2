@@ -21,9 +21,72 @@ def text_rules_page():
     from chartcleaner.abbreviation_editor import render as render_abbreviations
     from chartcleaner.learned_editor import render_learned_editor
     from chartcleaner.rule_sharing import render_rule_sharing
+    from chartcleaner import rule_health, store
 
     def load_current() -> dict:
         return load_config(common.CONFIG_PATH)
+
+    def render_rule_health(holder: "ui.column") -> None:
+        """Surface dead / over-broad / slow regex rules from run history."""
+        holder.clear()
+        with holder:
+            cfg = load_current()
+            try:
+                runs = store.load_runs()
+            except Exception:
+                runs = []
+            rows = rule_health.report(cfg, runs)
+            if not rows:
+                return
+            flagged = [r for r in rows if r["status"] in ("never matched", "very broad", "slow")]
+            ui.separator()
+            with ui.expansion(
+                f"Rule health ({len(flagged)} need attention of {len(rows)} rules)",
+                icon="health_and_safety", value=bool(flagged),
+            ).classes("w-full"):
+                ui.label(
+                    "From your last cleaned charts. 'Never matched' = dead weight; "
+                    "'very broad' = deletes a large share of lines (verify it isn't "
+                    "removing real content); 'slow' = took long to run. Remove a rule "
+                    "here, or scope it on the Pipeline page."
+                ).classes("text-sm opacity-70")
+                cols = [
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                    {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
+                    {"name": "rule", "label": "Rule", "field": "rule", "align": "left"},
+                    {"name": "hits", "label": "Hits", "field": "hits"},
+                    {"name": "runs", "label": "Runs", "field": "runs"},
+                    {"name": "last", "label": "Last", "field": "last", "align": "left"},
+                ]
+                table_rows = [{
+                    "status": r["status"],
+                    "stage": r["stage"],
+                    "rule": (r["pattern"][:90] + ("…" if len(r["pattern"]) > 90 else "")),
+                    "hits": r["hits"],
+                    "runs": r["runs"],
+                    "last": (r["last_hit"][:10] if r["last_hit"] else "—"),
+                } for r in rows]
+                ui.table(columns=cols, rows=table_rows, row_key="rule").classes("w-full") \
+                    .props("flat dense wrap-cells")
+                for r in flagged:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        ui.label(f"[{r['status']}] {r['stage']}: {r['pattern'][:70]}") \
+                            .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
+                        if r["risks"]:
+                            ui.label("⚠ regex risk").classes("text-xs text-orange-600")
+                        ui.button("Remove rule", icon="delete",
+                                  on_click=lambda e, r=r: remove_health_rule(r, holder)) \
+                            .props("flat dense")
+
+    def remove_health_rule(row: dict, holder: "ui.column") -> None:
+        cfg = load_current()
+        key = row["key"]
+        lst = cfg.get(key)
+        if isinstance(lst, list) and 0 <= row["index"] < len(lst):
+            lst.pop(row["index"])
+            save_config_with_backup(cfg)
+            ui.notify(f"Removed rule from {key}.", type="positive")
+        render_rule_health(holder)
 
     with shell("My text rules", "/rules", measure=True):
         ui.label("Manage what you remove, replace and abbreviate. Changes save immediately.") \
@@ -51,6 +114,9 @@ def text_rules_page():
             holder.clear()
             with holder:
                 renderer(load_current, save_config_with_backup)
+                if name == "Remove & replace":
+                    health_holder = ui.column().classes("w-full")
+                    render_rule_health(health_holder)
 
         tabs.on_value_change(lambda e: render_tab(e.value))
         render_tab("Remove & replace")

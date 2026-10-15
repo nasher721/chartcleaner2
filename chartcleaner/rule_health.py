@@ -48,21 +48,25 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
             stage = next((st for st in run.get("stages") or [] if st.get("id") == sid), None)
             if stage and not stage.get("skipped") and not stage.get("error"):
                 details = stage.get("details") or {}
-                ran.append((run, details.get("rule_hits") or {}, details.get("slow_rules") or {}))
+                ran.append((run, details.get("rule_hits") or {}, details.get("slow_rules") or {},
+                            int(details.get("lines_before") or 0)))
         for index, entry in enumerate(cfg.get(key) or []):
             pattern = entry[0] if pairs else entry
             if not isinstance(pattern, str):
                 continue
             rid = rule_id(pattern)
-            hits = [(run, h.get(rid, 0)) for run, h, _slow in ran]
-            timings = [float(slow[rid]) for _run, _h, slow in ran if rid in slow]
-            total = sum(n for _r, n in hits)
-            last = max((r.get("ts", "") for r, n in hits if n), default="")
-            shares = [n / max(1, int(r.get("lines_before") or 0)) for r, n in hits]
+            # per-run: (matches for this rule, lines in the chart before cleaning)
+            per = [(h.get(rid, 0), lb) for _run, h, _slow, lb in ran]
+            hits = [(run, n) for (run, _h, _slow, _lb), (n, _lb) in zip(ran, per)]
+            timings = [float(slow[rid]) for _run, _h, slow, _lb in ran if rid in slow]
+            total = sum(n for n, _lb in per)
+            last = max((r.get("ts", "") for (r, _h, _slow, _lb), (n, _lb) in zip(ran, per) if n),
+                       default="")
+            shares = [n / max(1, lb) for n, lb in per]
             avg_share = sum(shares) / len(shares) if shares else 0.0
-            if timings and (len(timings) >= 2 or max(timings) >= very_slow_ms) and len(hits) < min_runs:
+            if timings and (len(timings) >= 2 or max(timings) >= very_slow_ms) and len(per) < min_runs:
                 status = "slow"
-            elif len(hits) < min_runs:
+            elif len(per) < min_runs:
                 status = "not enough runs yet"
             elif total == 0:
                 status = "never matched"
@@ -73,7 +77,7 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
             else:
                 status = "ok"
             rows.append({"stage": sid, "key": key, "index": index, "pattern": pattern,
-                         "runs": len(hits), "hits": total, "last_hit": last,
+                         "runs": len(per), "hits": total, "last_hit": last,
                          "avg_share": round(avg_share, 3), "status": status,
                          "max_ms": max(timings, default=0.0),
                          "risks": regex_risks(pattern)})

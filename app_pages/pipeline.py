@@ -6,6 +6,7 @@ from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from chartcleaner.service import result_cache as service_result_cache
 from chartcleaner.compactors import neuro as neuro_compactor
+from chartcleaner.section_parser import SECTION_TAXONOMY
 
 
 STAGE_EDITORS = {
@@ -19,6 +20,7 @@ STAGE_EDITORS = {
     "headers": ("headers", "clinical_headers"),
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
     "fuzzy_dedup": ("fuzzy", "fuzzy_dedup"),
+    "fuzzy_line_dedup": ("fuzzy_line", "fuzzy_line_dedup"),
     "nlp_redaction": ("nlp", None),
     "tokenize_phi": ("tokenize", "tokenization"),
     "unicode_normalize": ("unicode", "unicode_normalize"),
@@ -101,6 +103,7 @@ STAGE_DESCRIPTIONS = {
     "whitespace": "Trims trailing spaces and collapses 3+ blank lines by default; seven further switches (CRLF, leading indent, tabs, double spaces, edge trim…).",
     "duplicate_notes": "Folds near-duplicate Epic note blocks (same note pasted twice) by comparing bodies.",
     "fuzzy_dedup": "Collapses paragraphs that are nearly identical (copy-forwarded text).",
+    "fuzzy_line_dedup": "Collapses individual lines that are nearly identical (copy-forwarded signature stamps, repeated headers).",
     "headers": "Lines matching one of these names become Markdown headings. Choose the heading level, bold style, colon retention, or restrict to ALL-CAPS lines. Optionally let medspaCy detect section titles instead.",
     "caps_normalize": "Off by default. Rewrites long ALL-CAPS lines into sentence case, preserving chosen acronyms.",
     "bullets": "Normalizes •, * and - bullet prefixes to a marker you choose. Optionally converts numbered lists and drops empty bullets.",
@@ -309,6 +312,8 @@ def pipeline_page():
             return bool((draft.get("duplicate_note_detection") or {}).get("enabled", True))
         if sid == "fuzzy_dedup":
             return bool((draft.get("fuzzy_dedup") or {}).get("enabled", True))
+        if sid == "fuzzy_line_dedup":
+            return bool((draft.get("fuzzy_line_dedup") or {}).get("enabled", False))
         so = (draft.get("stage_options") or {}).get(sid)
         if isinstance(so, dict) and "enabled" in so:
             return bool(so["enabled"])
@@ -333,6 +338,8 @@ def pipeline_page():
             draft.setdefault("duplicate_note_detection", {})["enabled"] = flag
         elif sid == "fuzzy_dedup":
             draft.setdefault("fuzzy_dedup", {})["enabled"] = flag
+        elif sid == "fuzzy_line_dedup":
+            draft.setdefault("fuzzy_line_dedup", {})["enabled"] = flag
         else:
             draft.setdefault("stage_options", {}).setdefault(sid, {})["enabled"] = flag
         refresh_stages()
@@ -580,6 +587,14 @@ def pipeline_page():
             elif control == "select":
                 ui.select(choices, label=label, value=o.get(opt) or next(iter(choices)),
                           on_change=lambda e, k=opt: o.update({k: e.value})).classes("w-full")
+            elif control == "int":
+                def set_int(e, k=opt):
+                    try:
+                        o.update({k: int(e.value)})
+                    except (TypeError, ValueError):
+                        pass
+                ui.input(label, value=str(o.get(opt, FORM_DEFAULTS.get(key, {}).get(opt))),
+                         on_change=set_int).props("outlined dense").classes("w-32")
             elif control == "multi":
                 ui.select(choices, label=label, multiple=True, value=list(o.get(opt) or []),
                           on_change=lambda e, k=opt: o.update({k: list(e.value or [])})) \
@@ -617,6 +632,39 @@ def pipeline_page():
                     ui.label(f"⚠ malformed entry #{i}").classes("text-red-500 text-xs")
             ui.button("Add " + ("pair" if is_pairs else "pattern"), icon="add", on_click=add_row) \
                 .props("outline dense")
+
+            # Optional section scope for removal rule lists (F1: section-scoped removal).
+            if sid in ("metadata_lines", "boilerplate", "learned_rules"):
+                so = draft.setdefault("stage_options", {}).setdefault(sid, {})
+                sc = so.setdefault("scope", {"mode": "all", "sections": []})
+                sec_opts = {k: k.replace("_", " ").capitalize() for k in SECTION_TAXONOMY}
+                ui.separator()
+                ui.label("Section scope (optional)").classes("text-sm font-medium")
+                ui.label("Limit these rules to certain sections. 'Only' applies inside them; "
+                         "'Except' applies everywhere else.").classes("text-xs opacity-60")
+
+                def set_mode(e, s=so):
+                    s.setdefault("scope", {})["mode"] = e.value
+                    refresh_stages()
+
+                def set_secs(e, s=so):
+                    s.setdefault("scope", {})["sections"] = list(e.value or [])
+
+                ui.select({"all": "Everywhere", "only": "Only in these sections",
+                           "except": "Everywhere except these sections"},
+                          value=sc.get("mode", "all"), on_change=set_mode).classes("min-w-[260px]")
+                sec_sel = ui.select(sec_opts, multiple=True, value=list(sc.get("sections", [])),
+                                    label="Sections", on_change=set_secs).props("use-chips") \
+                    .classes("min-w-[320px] flex-grow")
+                sec_sel.set_visibility(sc.get("mode", "all") != "all")
+
+            # Table-safe whitespace for literal replacements (F3).
+            if sid == "literal_replacements":
+                so = draft.setdefault("stage_options", {}).setdefault(sid, {})
+                ui.separator()
+                ui.switch("Preserve table spacing (skip | / tab / aligned columns)",
+                          value=bool(so.get("preserve_tables")),
+                          on_change=lambda e, s=so: s.__setitem__("preserve_tables", e.value))
 
         elif kind == "tokenize":
             t = draft.setdefault("tokenization", {})
@@ -845,6 +893,17 @@ def pipeline_page():
                           on_change=lambda e: f.update(threshold=int(e.value or 95)))
                 ui.number("min paragraph chars", value=f.get("min_chars", 100), format="%.0f",
                           on_change=lambda e: f.update(min_chars=int(e.value or 100)))
+
+        elif kind == "fuzzy_line":
+            f = draft.setdefault("fuzzy_line_dedup", {})
+            with ui.grid().classes("grid-cols-2 gap-3 w-full"):
+                ui.number("similarity threshold %", value=f.get("threshold", 92),
+                          min=50, max=100, format="%.0f",
+                          on_change=lambda e: f.update(threshold=int(e.value or 92)))
+                ui.number("min line chars", value=f.get("min_chars", 8), format="%.0f",
+                          on_change=lambda e: f.update(min_chars=int(e.value or 8)))
+                ui.number("compare window", value=f.get("window", 50), format="%.0f",
+                          on_change=lambda e: f.update(window=int(e.value or 50)))
 
         elif kind == "clinical_identifiers":
             ci = draft.setdefault("clinical_identifiers", {})

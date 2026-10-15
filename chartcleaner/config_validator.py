@@ -25,6 +25,7 @@ KNOWN_CONFIG_KEYS = frozenset(
     | {
         "duplicate_note_detection",
         "fuzzy_dedup",
+        "fuzzy_line_dedup",
         "nlp_redaction",
         "nlp_allow_list",
         "wrap_output",
@@ -492,6 +493,7 @@ class ConfigValidator:
         if not isinstance(so, dict):
             self.errors.append("stage_options: must be an object mapping stage id -> options")
             return
+        scope_sids = ("metadata_lines", "boilerplate", "learned_rules")
         for sid, opts in so.items():
             if not isinstance(opts, dict):
                 self.errors.append(f"stage_options.{sid}: must be an object")
@@ -503,10 +505,36 @@ class ConfigValidator:
             if "exceptions" in opts and not (isinstance(opts["exceptions"], list) and all(
                     isinstance(x, str) for x in opts["exceptions"])):
                 self.errors.append(f"stage_options.{sid}.exceptions: must be a list of text")
+            if "preserve_tables" in opts and not isinstance(opts["preserve_tables"], bool):
+                self.errors.append(f"stage_options.{sid}.preserve_tables: must be true/false")
+            if sid in scope_sids and "scope" in opts:
+                scope = opts["scope"]
+                if (not isinstance(scope, dict)
+                        or scope.get("mode") not in ("all", "only", "except")
+                        or not isinstance(scope.get("sections", []), list)
+                        or not all(isinstance(x, str) for x in scope.get("sections", []))):
+                    self.errors.append(
+                        f"stage_options.{sid}.scope: must be "
+                        f'{{"mode": "all"|"only"|"except", "sections": [names]}}')
 
     def _validate_deduplication(self) -> None:
         self._validate_duplicate_notes()
         self._validate_fuzzy_dedup()
+        self._validate_fuzzy_line_dedup()
+
+    def _validate_fuzzy_line_dedup(self) -> None:
+        f = self.cfg.get("fuzzy_line_dedup") or {}
+        if not isinstance(f, dict):
+            self.errors.append("fuzzy_line_dedup: must be an object")
+            return
+        if not isinstance(f.get("enabled", False), bool):
+            self.errors.append("fuzzy_line_dedup.enabled: must be true/false")
+        t = f.get("threshold", 92)
+        if not isinstance(t, int) or not 50 <= t <= 100:
+            self.warnings.append("fuzzy_line_dedup.threshold: expected integer 50–100")
+        m = f.get("min_chars", 8)
+        if not isinstance(m, int) or m < 0:
+            self.warnings.append("fuzzy_line_dedup.min_chars: expected non-negative integer")
 
     def _validate_duplicate_notes(self) -> None:
         d = self.cfg.get("duplicate_note_detection") or {}

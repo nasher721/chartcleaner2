@@ -35,6 +35,7 @@ from .compactors import vitals as vitals_compactor
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
+    DEFAULT_FUZZY_LINE,
     DEFAULT_HEADER_OPTIONS,
     DEFAULT_LINE_LENGTH,
     DEFAULT_NLP_ENTITIES,
@@ -103,6 +104,7 @@ BUILTIN_STAGE_IDS = [
     "whitespace",
     "duplicate_notes",
     "fuzzy_dedup",
+    "fuzzy_line_dedup",
     "headers",
     "caps_normalize",
     "bullets",
@@ -120,6 +122,7 @@ STAGE_ANCHORS: dict[str, str] = {
     "med_normalize": "lab_compaction",
     "vitals_summary": "med_normalize",
     "neuro_summary": "vitals_summary",
+    "fuzzy_line_dedup": "fuzzy_dedup",
 }
 
 STAGE_LABELS = {
@@ -144,6 +147,7 @@ STAGE_LABELS = {
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
     "fuzzy_dedup": "Fuzzy paragraph dedup",
+    "fuzzy_line_dedup": "Fuzzy line dedup",
     "headers": "Header promotion",
     "caps_normalize": "ALL-CAPS normalization",
     "bullets": "Bullet normalization",
@@ -173,6 +177,7 @@ STAGE_KINDS = {
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
     "fuzzy_dedup": "fuzzy",
+    "fuzzy_line_dedup": "fuzzy_line",
     "headers": "headers",
     "caps_normalize": "caps",
     "bullets": "bullets",
@@ -244,6 +249,7 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "section_filter": DEFAULT_SECTIONS,
         "caps_normalize": DEFAULT_CAPS,
         "line_length": DEFAULT_LINE_LENGTH,
+        "fuzzy_line_dedup": DEFAULT_FUZZY_LINE,
         "imaging_impression": imaging_compactor.DEFAULTS,
         "hospital_day": hospital_day_compactor.DEFAULTS,
         "lab_compaction": labs_compactor.DEFAULTS,
@@ -423,6 +429,7 @@ class Pipeline:
         "clinical_identifiers": ("clinical_identifiers", False),
         "duplicate_notes": ("duplicate_note_detection", True),
         "fuzzy_dedup": ("fuzzy_dedup", True),
+        "fuzzy_line_dedup": ("fuzzy_line_dedup", False),
     }
 
     def _builtin_enabled(self, sid: str) -> bool:
