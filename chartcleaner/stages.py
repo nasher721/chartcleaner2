@@ -61,6 +61,7 @@ from .stage_nlp import (
     run_clinical_identifiers,
     run_nlp,
     run_tokenize,
+    warm as warm_nlp,
 )
 from .stage_regex import run_learned, run_regex_list, run_regex_pairs
 from .stage_sections import (

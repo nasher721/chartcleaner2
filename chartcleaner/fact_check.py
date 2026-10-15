@@ -84,12 +84,16 @@ _MASKS = [
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b"),
 ]
 _BP = re.compile(r"(?<![\d/.])(\d{2,3})/(\d{2,3})(?![\d/])")
+# Every fact sits on one line (``_S`` is whitespace but not a newline): a
+# number ending one line never pairs with a "C" or "mg" starting the next, and
+# FactTracker can count facts line by line.
+_S = r"[^\S\n]"
 _UNITS = (
-    r"mcg|mg|g|kg|ng|pg|lbs?|mL|ml|L|units?|mEq|mmol|mOsm|mm\s?Hg|cm\s?H2O|"
-    r"%|°\s?[CF]|[CF](?![A-Za-z])|bpm|cm|mm|IU|K/u[Ll]|K/µ[Ll]|x\s?10"
+    rf"mcg|mg|g|kg|ng|pg|lbs?|mL|ml|L|units?|mEq|mmol|mOsm|mm{_S}?Hg|cm{_S}?H2O|"
+    rf"%|°{_S}?[CF]|[CF](?![A-Za-z])|bpm|cm|mm|IU|K/u[Ll]|K/µ[Ll]|x{_S}?10"
 )
 _WITH_UNIT = re.compile(
-    rf"(?<![\w.])(?P<num>[<>]?\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|[<>]?\d+(?:\.\d+)?)\s?(?P<unit>(?:{_UNITS})(?:/[A-Za-z0-9.]+)*)(?![A-Za-z0-9])")
+    rf"(?<![\w.])(?P<num>[<>]?\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|[<>]?\d+(?:\.\d+)?){_S}?(?P<unit>(?:{_UNITS})(?:/[A-Za-z0-9.]+)*)(?![A-Za-z0-9])")
 
 _EXTRA_LABELS = (
     "gcs", "nihss", "mrs", "hunt-hess", "hunt hess", "fisher", "icp", "cpp", "evd", "fio2", "peep",
@@ -118,8 +122,8 @@ _DRUG_STEMS = ("dipine", "olol", "pril", "sartan", "statin", "mycin", "micin", "
 _WORD = re.compile(r"(?<![A-Za-z])[A-Za-z][A-Za-z-]{2,}(?![A-Za-z])")
 _KEYWORD_WORDS = {"allergy": "allergy", "allergies": "allergy", "allergic": "allergy",
                   "nkda": "NKDA", "dnr": "DNR", "dni": "DNI"}
-_KEYWORD_PHRASES = re.compile(r"(?<![A-Za-z])(?:(full\s+code)|(comfort\s+(?:care|measures)))(?![A-Za-z])",
-                              re.IGNORECASE)
+_KEYWORD_PHRASES = re.compile(
+    rf"(?<![A-Za-z])(?:(full{_S}+code)|(comfort{_S}+(?:care|measures)))(?![A-Za-z])", re.IGNORECASE)
 
 
 def _norm_number(raw: str) -> str:
@@ -198,6 +202,29 @@ def fact_counts(text: str) -> Counter:
     "Sodium 141 mmol/L" → "Na 141" keeps the fact.
     """
     return Counter(key for key, _, _, _ in _fact_spans(_mask(text)))
+
+
+class _LineFactCounts:
+    """``fact_counts`` that only scans lines it hasn't seen before.
+
+    Facts never span lines, so a chart's counts are the sum of its lines'
+    counts. A stage usually rewrites a handful of lines, so the per-stage
+    snapshot rescans those and looks the rest up.
+    """
+
+    def __init__(self) -> None:
+        self._memo: dict[str, Counter] = {}
+
+    def __call__(self, text: str) -> Counter:
+        total: Counter = Counter()
+        memo = self._memo
+        for line, times in Counter(text.split("\n")).items():
+            counts = memo.get(line)
+            if counts is None:
+                counts = memo[line] = fact_counts(line)
+            for key, n in counts.items():
+                total[key] += n * times
+        return total
 
 
 @dataclass
@@ -584,7 +611,8 @@ class FactTracker:
     def __init__(self, text: str):
         self.text = text
         self.facts = extract_facts(text)
-        self.start = fact_counts(text)
+        self.start = Counter(f.key for f in self.facts)
+        self._counts = _LineFactCounts()
         self.current = self.start
         self.previous = text
         self.drops: list[tuple[str, str, Counter]] = []  # (stage id, label, decreases)
@@ -592,7 +620,7 @@ class FactTracker:
         self.added: list[tuple[str, str, Counter]] = []  # values new to the chart, per stage
 
     def after_stage(self, stage_id: str, label: str, text: str) -> None:
-        now = fact_counts(text)
+        now = self._counts(text)
         dec = Counter({k: v - now.get(k, 0) for k, v in self.current.items() if v > now.get(k, 0)})
         if dec:
             self.drops.append((stage_id, label, dec))
@@ -609,16 +637,16 @@ class FactTracker:
         self.previous = text
 
     def report(self, final_text: str) -> FactReport:
-        rep = check(self.text, final_text, self.drops, facts=self.facts, start=self.start)
+        end = self.current if final_text == self.previous else self._counts(final_text)
+        rep = check(self.text, final_text, self.drops, facts=self.facts, start=self.start, end=end)
         rep.meaning = self.meaning
-        rep.introduced = self._introduced(final_text)
+        rep.introduced = self._introduced(final_text, end)
         self._plausibility(rep, final_text)
         return rep
 
-    def _introduced(self, final_text: str) -> list[FactLoss]:
+    def _introduced(self, final_text: str, final: Counter) -> list[FactLoss]:
         if not self.added:
             return []
-        final = fact_counts(final_text)
         facts = extract_facts(final_text)
         out = []
         for stage_id, label, new in self.added:
@@ -642,7 +670,8 @@ class FactTracker:
 
 
 def check(before: str, after: str, drops: list[tuple[str, str, Counter]] | None = None, *,
-          facts: list[Fact] | None = None, start: Counter | None = None) -> FactReport:
+          facts: list[Fact] | None = None, start: Counter | None = None,
+          end: Counter | None = None) -> FactReport:
     """Compare facts in ``before`` and ``after``.
 
     ``drops`` is the per-stage decrease list from :class:`FactTracker`; without
@@ -650,7 +679,7 @@ def check(before: str, after: str, drops: list[tuple[str, str, Counter]] | None 
     """
     facts = extract_facts(before) if facts is None else facts
     start = fact_counts(before) if start is None else start
-    end = fact_counts(after)
+    end = fact_counts(after) if end is None else end
     after_lines = {ln.strip() for ln in after.split("\n")}
     by_key: dict[str, list[Fact]] = {}
     for f in facts:

@@ -77,7 +77,7 @@ def _packages() -> list[Check]:
     return out
 
 
-def _spacy_model(deep: bool) -> list[Check]:
+def _spacy_model(deep: bool, cfg: dict | None = None) -> list[Check]:
     if find_spec("en_core_web_sm") is None:
         return [Check("spacy_model", "spaCy model en_core_web_sm", "fail",
                       "Not installed — name redaction (NLP) is skipped until it is",
@@ -85,8 +85,10 @@ def _spacy_model(deep: bool) -> list[Check]:
     checks = [Check("spacy_model", "spaCy model en_core_web_sm", "ok", "Installed")]
     if deep:
         try:
-            from .stages import _PRESIDIO_CACHE, DEFAULT_NLP_ENTITIES
-            _PRESIDIO_CACHE.get_engines(tuple(sorted(DEFAULT_NLP_ENTITIES.items())), frozenset(), None)
+            from .stage_nlp import warm
+            # The saved config's engine key, so the check leaves the engines a
+            # clean will reuse instead of evicting them.
+            warm(cfg if isinstance(cfg, dict) else {}, analyze=False)
             checks.append(Check("nlp_engine", "NLP engine loads", "ok", "Presidio + spaCy started"))
         except Exception as exc:
             checks.append(Check("nlp_engine", "NLP engine loads", "fail", str(exc)))
@@ -208,7 +210,7 @@ def _update_signing() -> Check:
 def run_checks(*, deep: bool = False, ai: bool = True) -> list[Check]:
     """Every check, in the order the page shows them. ``deep`` also loads the NLP engine."""
     config_check, cfg = _config()
-    checks = [_python(), _venv(), *_packages(), *_spacy_model(deep), config_check, _encryption(),
+    checks = [_python(), _venv(), *_packages(), *_spacy_model(deep, cfg), config_check, _encryption(),
               _data_dir(), _api_token(), *_launchers(), _update_signing()]
     if ai:
         checks.insert(len(checks) - 1, _local_ai(cfg))

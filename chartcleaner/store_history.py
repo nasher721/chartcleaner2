@@ -11,6 +11,7 @@ keeps working exactly as before.
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 __all__ = [
@@ -41,12 +42,66 @@ def append_run(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def load_runs() -> list[dict]:
-    if not _store().STATS_FILE.exists():
-        return []
+class _RunsCache:
+    """Parsed history, extended by only the lines appended since the last read.
+
+    History is append-only, so every page that reads it (Statistics, Pipeline,
+    Rules) would otherwise re-parse every run ever recorded — a cost that grows
+    with each clean. The cache remembers how many bytes it has parsed and a
+    fingerprint of the bytes just before that point; if the file was replaced
+    or rewritten (cleared, edited, a different path) it parses from scratch.
+    """
+
+    FINGERPRINT = 256
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.reset(None)
+
+    def reset(self, path) -> None:
+        self.path = path
+        self.offset = 0
+        self.head = b""
+        self.tail = b""
+        self.runs: list[dict] = []
+        self.bad = 0
+
+    def read(self, path) -> tuple[list[dict], int]:
+        with self.lock, path.open("rb") as f:
+            size = f.seek(0, 2)
+            if path != self.path or size < self.offset or not self._unchanged(f):
+                self.reset(path)
+            f.seek(self.offset)
+            data = f.read()
+            # Only complete lines are cached; a half-written last line is parsed
+            # for this read alone (as before) and again once it is finished.
+            done = data.rfind(b"\n") + 1
+            runs, bad = _parse_runs(data[:done])
+            self.runs.extend(runs)
+            self.bad += bad
+            self.offset += done
+            if self.offset:
+                f.seek(0)
+                self.head = f.read(min(self.offset, self.FINGERPRINT))
+                f.seek(self.offset - len(self.head))
+                self.tail = f.read(len(self.head))
+            partial, partial_bad = _parse_runs(data[done:])
+            return self.runs + partial, self.bad + partial_bad
+
+    def _unchanged(self, f) -> bool:
+        if not self.offset:
+            return True
+        f.seek(0)
+        if f.read(len(self.head)) != self.head:
+            return False
+        f.seek(self.offset - len(self.tail))
+        return f.read(len(self.tail)) == self.tail
+
+
+def _parse_runs(data: bytes) -> tuple[list[dict], int]:
     runs: list[dict] = []
     bad = 0
-    for line in _store().STATS_FILE.read_text(encoding="utf-8").splitlines():
+    for line in data.decode("utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -56,6 +111,20 @@ def load_runs() -> list[dict]:
                 runs.append(obj)
         except json.JSONDecodeError:
             bad += 1
+    return runs, bad
+
+
+_RUNS = _RunsCache()
+
+
+def load_runs() -> list[dict]:
+    path = _store().STATS_FILE
+    try:
+        cached, bad = _RUNS.read(path)
+    except FileNotFoundError:
+        return []
+    # Fresh dicts: callers may annotate a run without touching the cache.
+    runs = [dict(r) for r in cached]
     if bad:
         runs.append({"ts": "", "source": f"({bad} corrupt history line(s) skipped)",
                      "chars_before": 0, "chars_after": 0})
@@ -67,6 +136,8 @@ def clear_runs() -> int:
     count = len(load_runs())
     if _store().STATS_FILE.exists():
         _store().STATS_FILE.unlink()
+    with _RUNS.lock:
+        _RUNS.reset(None)
     return count
 
 
