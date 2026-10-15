@@ -669,7 +669,9 @@ def status_tag(text: str, status: str = "info", *, tooltip: str | None = None,
                on_click=None, classes: str = ""):
     """A mechanical state readout: status square + ALL-CAPS mono label.
 
-    Colour marks the state; the tag chrome stays monochrome.
+    Colour marks the state; the tag chrome stays monochrome. When ``on_click``
+    is given the tag becomes a real keyboard control (Tab + Enter/Space), not
+    just a click target — screen-reader users get the tooltip as its name.
     """
     el = ui.element("div").classes(
         f"cc-pill{' cc-pill--btn' if on_click else ''} {classes}".strip())
@@ -677,8 +679,11 @@ def status_tag(text: str, status: str = "info", *, tooltip: str | None = None,
         el.tooltip(tooltip)
     if on_click is not None:
         el.on("click", on_click)
+        el.props(f"role=button tabindex=0 aria-label=\"{tooltip or text}\"")
+        el.on("keydown.enter", lambda _e: el.run_method("click"))
+        el.on("keydown.space", lambda _e: el.run_method("click"))
     with el:
-        ui.element("span").classes("cc-dot") \
+        ui.element("span").classes("cc-dot").props("aria-hidden=true") \
             .style(f"color: {_STATUS_COLORS.get(status, _STATUS_COLORS['info'])}")
         ui.label(text)
     return el

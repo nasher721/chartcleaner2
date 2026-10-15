@@ -197,6 +197,11 @@ class ConfigError(Exception):
 # Configuration Helpers
 # ---------------------------------------------------------------------------
 
+def _reject_constant(name: str):
+    """``json.loads`` hook that refuses NaN/Infinity — not valid JSON."""
+    raise ValueError(f"{name} is not valid JSON")
+
+
 def load_config(path: str | Path) -> dict:
     """Load and parse JSON configuration from file path."""
     path = Path(path)
@@ -205,8 +210,11 @@ def load_config(path: str | Path) -> dict:
     except FileNotFoundError as e:
         raise ConfigError(f"Config file not found: {path}") from e
     try:
-        cfg = json.loads(raw)
-    except json.JSONDecodeError as e:
+        # parse_constant rejects NaN/Infinity, which json.loads otherwise
+        # accepts even though they are not valid JSON and would poison the
+        # numeric config options (thresholds, window sizes, score cut-offs).
+        cfg = json.loads(raw, parse_constant=_reject_constant)
+    except (json.JSONDecodeError, ValueError) as e:
         raise ConfigError(f"Invalid JSON in {path}: {e}") from e
     if not isinstance(cfg, dict):
         raise ConfigError(f"{path} must contain a JSON object.")

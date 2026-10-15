@@ -9,6 +9,7 @@ keeps working exactly as before.
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 import zipfile
@@ -44,13 +45,47 @@ def _store():
     return store
 
 
+def _coerce_pref(key: str, value, default):
+    """Keep ``value`` only when it has the same shape as the shipped default.
+
+    ``prefs.json`` is a plain file a user can hand-edit (or that a partial
+    write can truncate). A wrong-typed value must never reach the UI — a
+    string where a number belongs crashes the retention purge, and a string
+    where a bool belongs is silently truthy. Anything unexpected falls back to
+    the default, so a damaged file degrades to factory settings, not a break.
+    """
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else default
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        if isinstance(value, bool):  # bool is an int subclass; reject it
+            return default
+        if isinstance(value, (int, float)):
+            # json.loads accepts NaN/Infinity, which are invalid JSON and would
+            # poison arithmetic downstream (e.g. retention date math).
+            if isinstance(value, float) and not math.isfinite(value):
+                return default
+            return value
+        return default
+    if isinstance(default, str):
+        return value if isinstance(value, str) else default
+    if isinstance(default, dict):
+        return value if isinstance(value, dict) else default
+    if isinstance(default, list):
+        return value if isinstance(value, list) else default
+    if default is None:  # "unset" keys accept anything simple
+        return value if isinstance(value, (str, int, float, bool, type(None))) else default
+    return value
+
+
 def load_prefs() -> dict:
     prefs = dict(_store().DEFAULT_PREFS)
     if _store().PREFS_FILE.exists():
         try:
             stored = json.loads(_store().PREFS_FILE.read_text(encoding="utf-8"))
             if isinstance(stored, dict):
-                prefs.update({k: v for k, v in stored.items() if k in _store().DEFAULT_PREFS})
+                for k, v in stored.items():
+                    if k in _store().DEFAULT_PREFS:
+                        prefs[k] = _coerce_pref(k, v, _store().DEFAULT_PREFS[k])
         except (json.JSONDecodeError, OSError):
             pass
     return prefs

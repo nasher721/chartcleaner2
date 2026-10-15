@@ -362,8 +362,18 @@ Clipboard mode uses [`pyperclip`](https://pypi.org/project/pyperclip/). The app 
 | Regex errors on save | The Pipeline page validates before saving; fix the highlighted pattern. |
 | Windows "cannot run scripts" | Use `Run Chart Cleaner.bat` / `install.bat` (no PowerShell policy needed). |
 | No admin rights | Everything installs under this folder with per-user Python — no elevation needed. |
+| A screen shows "This screen couldn't load" | An unexpected error hit that page. Nothing was cleaned or saved; the traceback is in the panel and in `data/app.log`. Use Reload, or reach the rest of the app from the nav. |
 
 `python app.py --help` for all launch options.
+
+### Accessibility
+
+The interface ships with screen-reader and keyboard support: a "Skip to content"
+link, semantic landmarks (`main` / navigation / header / footer), `aria-current`
+on the active page, live regions for status, and Tab + Enter/Space activation for
+the status pills and the review diff's clickable changes. The diff tables carry
+screen-reader captions and column headers. Every route declares `lang="en"`, and
+`prefers-reduced-motion` is honoured.
 
 ---
 
@@ -396,7 +406,7 @@ regenerates it), and a build test that renders every app page.
 
 ```
 app.py                  # the desktop app entry point (NiceGUI, local web UI; routes in ROUTES)
-app_pages/              # one module per page + common.py (shared helpers) + updates.py
+app_pages/              # one module per page + common.py (shared helpers) + a11y.py (accessibility) + updates.py
 medical_cleaner.py      # CLI entrypoint (same engine)
 chartcleaner/
   engine.py             # stage pipeline + per-stage statistics + custom-rule loader

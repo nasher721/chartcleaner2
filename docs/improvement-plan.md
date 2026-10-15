@@ -6,6 +6,54 @@ This plan covers all 26 ideas from the improvement brainstorm. They are grouped
 into five phases. Every item lists the files it touches, the config it adds,
 the tests that prove it, and what "done" means.
 
+---
+
+## Phase 13 — Accessibility, resilience, boundary validation (2026-10-14)
+
+Status: **done**. Three cross-cutting refinements, no config changes, no change
+to cleaning output (`tests/golden` byte-identical).
+
+### A11y. Screen-reader and keyboard layer
+- **Files:** new `app_pages/a11y.py`; `app_pages/common.py` (shell), `app_pages/design_system.py`
+  (`status_tag`), `app.py` (`language="en"` at registration).
+- **What:** the design system renders much of its chrome as styled `div`s, and
+  several controls (status pills, the brand mark, diff spans) were mouse-only.
+  This adds a "Skip to content" link, `main`/`navigation`/`banner`/`contentinfo`
+  landmarks, `aria-current` on the active nav link, `role=status` live regions,
+  `aria-hidden` on decorative dots, and Tab + Enter/Space activation for the
+  clickable pills (`status_tag`) and the review diff's change spans. `<html lang="en">`
+  is set for every route. The review and pipeline diff tables gain a screen-reader
+  `<caption>` and column headers, with the change spans exposed as buttons.
+- **Tests:** `tests/test_a11y.py` (14).
+- **Visual impact:** none — the added header cells and dots are `cc-sr-only`
+  (clipped), the skip link is off-screen until focused, and the rest is ARIA
+  attributes. Verified against the served HTML.
+
+### Resil. Page error boundary
+- **Files:** `app_pages/common.py` (`guarded`, `_render_error_page`), `app.py`
+  (route registration), new `tests/test_error_boundary.py`.
+- **What:** an *unexpected* error in a page used to surface NiceGUI's bare 500.
+  `guarded()` wraps each route so the failure renders a calm recovery screen
+  (what happened, nothing was sent anywhere, Reload / Go to Clean / Go to Doctor,
+  a downloadable traceback) and appends the traceback to `data/app.log`. It only
+  catches the last-resort case — pages keep handling their own expected failures —
+  and re-raises the original error if even the recovery screen cannot render.
+- **Tests:** `tests/test_error_boundary.py` (5).
+
+### Valid. Boundary validation
+- **Files:** `chartcleaner/store_prefs.py` (`_coerce_pref`), `chartcleaner/engine.py`
+  (`load_config` + `_reject_constant`), new `tests/test_validation.py`.
+- **What:** `prefs.json` and `config.json` are user-editable. `load_prefs` now
+  keeps a stored value only when its shape matches the shipped default, so a
+  string where a number belongs (which crashed the retention purge) or a string
+  where a bool belongs (silently truthy) falls back to the default instead —
+  a damaged file degrades to factory settings, not a break. `load_config` refuses
+  `NaN`/`Infinity`, which `json.loads` accepts even though they are not valid
+  JSON and would poison numeric options.
+- **Tests:** `tests/test_validation.py` (11).
+
+---
+
 ## Ground rules (apply to every item)
 
 1. **Rules stay in JSON.** New behavior is driven by config groups in

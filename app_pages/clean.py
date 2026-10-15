@@ -616,6 +616,7 @@ async def clean_page():
         with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
             diff = ui.html(review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups))
             diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
+            diff.on("keydown", lambda e: inspect_change(e.args), js_handler=REVIEW_KEY_JS)
             diff.mark("review-diff")
         removed = removed_groups(result)
         if removed:

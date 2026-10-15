@@ -62,6 +62,8 @@ async def _strip_external_fonts(request, call_next):
 
 # Routes are registered here, not with decorators in app_pages: the test harness
 # re-runs app.py against an already-imported app_pages, and every run needs routes.
+# Each page is guarded so an unexpected error shows a recovery screen instead of
+# a bare NiceGUI 500 (see app_pages.common.guarded).
 ROUTES = {
     "/": clean_page,
     "/batch": batch_page,
@@ -74,7 +76,10 @@ ROUTES = {
     "/doctor": doctor_page,
 }
 for _path, _page in ROUTES.items():
-    ui.page(_path)(_page)
+    # language="en" sets <html lang="en">, which screen readers need to pick
+    # the right pronunciation rules (the a11y layer adds the rest of the
+    # semantics — landmarks, the skip link, keyboard-operable controls).
+    ui.page(_path, language="en")(common.guarded(_page))
 
 store.ensure_dirs()  # app.py may re-run (test harness) with relocated data dirs
 app.add_static_files("/exports", str(store.EXPORTS_DIR))

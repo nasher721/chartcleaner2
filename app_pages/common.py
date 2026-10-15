@@ -30,6 +30,8 @@ from pathlib import Path
 
 from nicegui import app, run, ui
 
+from app_pages import a11y
+
 from chartcleaner import __version__
 from chartcleaner import secure_store, store
 from chartcleaner.audit import (
@@ -307,6 +309,20 @@ async def read_upload(event) -> tuple[str, bytes]:
     return event.name, event.content.read()
 
 
+def _diff_table_start(caption: str, left: str, right: str) -> str:
+    """Open a diff table with a screen-reader caption and column headers.
+
+    The visual design has no header row, so the header cells are hidden from
+    sight (``cc-sr-only``) but still expose the two columns to assistive tech.
+    """
+    return ("<table class='cc-diff' style='width:100%; border-collapse:collapse'>"
+            f"<caption class='cc-sr-only'>{esc(caption)}</caption>"
+            "<thead><tr>"
+            f"<th class='cc-sr-only' scope='col'>{esc(left)}</th>"
+            f"<th class='cc-sr-only' scope='col'>{esc(right)}</th>"
+            "</tr></thead><tbody>")
+
+
 def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> str:
     if len(before) + len(after) > 600_000:
         return "<p>Diff too large to display (use a smaller input).</p>"
@@ -337,12 +353,17 @@ def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> st
                 cls = "cc-ins cc-flag" if (jl + 1) in flagged else "cc-ins"
                 rows.append(f"<tr><td class='cc-diff-left cc-del'>{left}</td>"
                             f"<td class='{cls}'>{right}</td></tr>")
-    return ("<table class='cc-diff' style='width:100%; border-collapse:collapse'>"
-            + "".join(rows) + "</table>")
+    return (_diff_table_start("Before and after the cleaning run", "Before", "After")
+            + "".join(rows) + "</tbody></table>")
 
 
 REVIEW_CLICK_JS = ("(e) => { const t = e.target.closest('[data-cc]'); "
                    "if (t) emit(t.dataset.cc); }")
+# Same delegation for the keyboard: the spans are focusable (tabindex=0), so
+# Enter or Space on one opens the same rule popover a click does.
+REVIEW_KEY_JS = ("(e) => { if (e.key !== 'Enter' && e.key !== ' ') return; "
+                 "const t = e.target.closest('[data-cc]'); "
+                 "if (t) { e.preventDefault(); emit(t.dataset.cc); } }")
 
 
 def _wrap_fragments(line: str, fragments: list[tuple[str, str, str]]) -> str:
@@ -363,8 +384,9 @@ def _wrap_fragments(line: str, fragments: list[tuple[str, str, str]]) -> str:
     out, cursor = [], 0
     for a, b, key, css in sorted(spans):
         out.append(esc(line[cursor:a]))
-        out.append(f"<span class='{css} cc-click' data-cc='{key}' title='Click for details'>"
-                   f"{esc(line[a:b])}</span>")
+        out.append(f"<span class='{css} cc-click' data-cc='{key}' tabindex='0' "
+                   f"role='button' title='Click for details' "
+                   f"aria-label='Review this change'>{esc(line[a:b])}</span>")
         cursor = b
     out.append(esc(line[cursor:]))
     return "".join(out)
@@ -426,8 +448,8 @@ def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
                 jl = j1 + k
                 cls = "cc-ins cc-flag" if (jl + 1) in flagged else "cc-ins"
                 rows.append(f"<tr><td class='cc-diff-left cc-del'>{lt}</td><td class='{cls}'>{rt}</td></tr>")
-    return ("<table class='cc-diff' style='width:100%; border-collapse:collapse'>"
-            + "".join(rows) + "</table>")
+    return (_diff_table_start("Before and after the cleaning run", "Before", "After")
+            + "".join(rows) + "</tbody></table>")
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +679,8 @@ def shell(title: str, active: str, *, measure: bool = False,
     # ships its colour utilities inside a later CSS cascade layer, so only a
     # last-in-document stylesheet wins the order battle at equal specificity.
     ui.add_body_html(CSS)
+    ui.add_body_html(a11y.SR_CSS)
+    a11y.skip_link()
     dark = ui.dark_mode(bool(PREFS.get("dark", True)))
     set_chart_theme(bool(PREFS.get("dark", True)))
     clear_charts()
@@ -677,16 +701,17 @@ def shell(title: str, active: str, *, measure: bool = False,
         set_chart_theme(dark.value)
         retheme_charts()
 
-    with ui.header().classes("cc-header"):
+    with ui.header().classes("cc-header").props("role=banner"):
         with ui.element("div").classes("cc-band"):
             with ui.row().classes("cc-shell cc-topbar w-full items-center justify-between no-wrap"):
                 with ui.row().classes("items-center gap-3 no-wrap"):
                     ui.button(icon="menu", on_click=lambda: drawer.toggle()) \
-                        .props("flat round aria-label='Toggle menu'") \
+                        .props("flat round aria-label='Toggle navigation menu'") \
                         .classes("cc-headbtn cc-mobile-only")
                     ui.html(BRAND_SVG)
-                    ui.label("Chart Cleaner").classes("cc-brand cursor-pointer") \
+                    brand = ui.label("Chart Cleaner").classes("cc-brand cursor-pointer") \
                         .on("click", lambda: ui.navigate.to("/"))
+                    a11y.activate_on_key(brand, role="link", label="Chart Cleaner home")
                     ui.label(f"v{__version__}").classes("cc-version")
                 with ui.row().classes("items-center gap-2 no-wrap"):
                     with ui.row().classes("cc-desktop-only items-center gap-2 no-wrap"):
@@ -694,24 +719,26 @@ def shell(title: str, active: str, *, measure: bool = False,
                     if actions is not None:
                         actions()
                     ui.button(icon="search", on_click=lambda: open_command_palette(commands)) \
-                        .props("flat round aria-label='Command palette'").classes("cc-headbtn") \
+                        .props("flat round aria-label='Open command palette'").classes("cc-headbtn") \
                         .mark("palette-button").tooltip(f"Command palette ({MOD}+K)")
                     ui.button(icon="keyboard", on_click=lambda: open_shortcuts_dialog(
                         [(c, d) for c, d, _ in page_shortcuts])) \
-                        .props("flat round aria-label='Keyboard shortcuts'").classes("cc-headbtn") \
-                        .tooltip(f"Keyboard shortcuts ({MOD}+/)")
+                        .props("flat round aria-label='Show keyboard shortcuts'") \
+                        .classes("cc-headbtn").tooltip(f"Keyboard shortcuts ({MOD}+/)")
                     dark_btn = ui.button(icon="light_mode" if dark.value else "dark_mode",
                                          on_click=toggle_dark) \
-                        .props("flat round aria-label='Toggle dark mode'").classes("cc-headbtn") \
-                        .mark("dark-toggle").tooltip("Light / dark")
+                        .props("flat round aria-label='Toggle light or dark mode'") \
+                        .classes("cc-headbtn").mark("dark-toggle").tooltip("Light / dark")
 
         # Desktop: the horizontal text nav. Mobile falls back to the drawer.
         with ui.element("div").classes("w-full"):
-            with ui.row().classes("cc-shell cc-navbar cc-desktop-only no-wrap"):
+            with ui.row().classes("cc-shell cc-navbar cc-desktop-only no-wrap") \
+                    .props("role=navigation aria-label='Primary'"):
                 for path, _icon, label in NAV:
                     link = ui.element("button").classes("cc-navlink")
                     if path == active_path:
                         link.classes("cc-navlink--active")
+                        link.props('aria-current="page"')
                     link.on("click", lambda p=path: ui.navigate.to(p))
                     with link:
                         ui.label(nav_text(path, label))
@@ -728,7 +755,7 @@ def shell(title: str, active: str, *, measure: bool = False,
         with ui.column().classes("p-4 gap-2 items-start"):
             _status_strip("drawer")
 
-    with ui.footer(fixed=False).classes("cc-footer"):
+    with ui.footer(fixed=False).classes("cc-footer").props("role=contentinfo"):
         with ui.element("div").classes("cc-shell"):
             ui.label("Runs entirely on this computer — 127.0.0.1 only. Not a guarantee of "
                      "de-identification; review output before sharing.")
@@ -764,7 +791,10 @@ def shell(title: str, active: str, *, measure: bool = False,
             if sub:
                 ui.label(sub).classes("cc-page-sub")
         ui.element("div").classes("cc-rule")
-        yield
+        # Everything a page adds lives in the main landmark, so the skip link
+        # and screen-reader landmark navigation land on the content itself.
+        with a11y.landmark("main", label=head):
+            yield
 
 
 def confirm_dialog(message: str, action) -> None:
@@ -774,6 +804,84 @@ def confirm_dialog(message: str, action) -> None:
             ui.button("Confirm", color="negative", on_click=lambda: (dlg.close(), action()))
             ui.button("Cancel", on_click=dlg.close).props("flat")
     dlg.open()
+
+
+# ---------------------------------------------------------------------------
+# error boundary — a page that raises shows a recovery screen, not a blank page
+# ---------------------------------------------------------------------------
+
+_error_page_js = """
+const a = document.createElement('a');
+a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(TRACEBACK);
+a.download = 'chart-cleaner-error.txt';
+document.body.appendChild(a); a.click(); a.remove();
+"""
+
+
+def _log_page_error(title: str, exc: BaseException) -> str:
+    """Append a page failure to data/app.log and return the traceback text."""
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        store.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with (store.DATA_DIR / "app.log").open("a", encoding="utf-8") as f:
+            f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Page failed: {title}\n{tb}\n")
+    except OSError:
+        pass  # logging must never mask the original error
+    return tb
+
+
+def _render_error_page(title: str, exc: BaseException) -> None:
+    """A calm, actionable recovery screen for an unhandled page error."""
+    tb = _log_page_error(title, exc)
+    with ui.column().classes("cc-page"):
+        with ui.column().classes("cc-pagehead gap-0"):
+            ui.label("Error").classes("cc-eyebrow")
+            ui.label("This screen couldn't load").classes("cc-page-title")
+            ui.label("Nothing was cleaned or saved, and no chart text was sent anywhere. "
+                     "The details are in the log below — try again, or reload the app."
+                     ).classes("cc-page-sub")
+        with ui.element("div").classes("cc-tint cc-tint--danger p-4 w-full"):
+            ui.label(f"{type(exc).__name__}: {exc}").classes("font-mono text-sm break-all")
+        with ui.row().classes("items-center gap-2 flex-wrap"):
+            ui.button("Reload the app", icon="refresh",
+                      on_click=lambda: ui.navigate.reload()).props("outline")
+            ui.button("Go to Clean", icon="cleaning_services",
+                      on_click=lambda: ui.navigate.to("/")).props("outline")
+            ui.button("Go to Doctor", icon="medical_services",
+                      on_click=lambda: ui.navigate.to("/doctor")).props("outline")
+            ui.button("Download details", icon="download",
+                      on_click=lambda: ui.run_javascript(
+                          _error_page_js.replace("TRACEBACK", json.dumps(tb)))).props("flat")
+        with ui.expansion("Technical details", icon="bug_report").classes("w-full"):
+            with ui.scroll_area().classes("w-full max-h-72 border rounded cc-panel p-2"):
+                ui.html(f"<pre style='white-space:pre-wrap;font-size:11px'>{esc(tb)}</pre>")
+
+
+def guarded(page_fn):
+    """Wrap a page function so an unexpected error renders a recovery screen.
+
+    Pages already handle their own expected failures; this is the last line of
+    defence for the *unexpected* one — a bad config, a missing optional
+    dependency, a bug. Without it, NiceGUI answers with its own bare 500 page
+    and the user sees nothing useful. Registered in ``app.ROUTES``.
+    """
+    import functools
+
+    @functools.wraps(page_fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return page_fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — the boundary must catch everything
+            title = getattr(page_fn, "__name__", "page")
+            try:
+                _render_error_page(title, exc)
+            except Exception:
+                # The recovery screen itself failed (almost certainly NiceGUI is
+                # not set up yet): re-raise the original so it is seen and logged.
+                raise exc from None
+            return None
+
+    return wrapper
 
 
 # ===========================================================================
