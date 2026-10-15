@@ -154,8 +154,8 @@ def generate(n: int = 25, seed: int = 42) -> list[dict[str, Any]]:
 
         body = [
             f"Progress Notes by Dr. {provider_last}, MD (NPI: {npi}, DEA: {dea}) on {dob[:5]}/2026",
-            f"Editor: SYSTEM, (build 4.2)",
-            f"Version 1 of 1",
+            "Editor: SYSTEM, (build 4.2)",
+            "Version 1 of 1",
             "",
             f"Patient Name: {name}",
             f"MRN: {mrn}",

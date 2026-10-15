@@ -64,7 +64,7 @@ def test_streaming_and_pull_parse_ndjson(monkeypatch):
     pull = b"\n".join(json.dumps(x).encode() for x in (
         {"status": "pulling manifest"}, {"status": "downloading", "total": 100, "completed": 50},
         {"status": "success"}))
-    monkeypatch.setattr(local_llm.urllib.request, "urlopen",
+    monkeypatch.setattr(local_llm, "_urlopen",
                         _fake_urlopen({"/api/generate": stream, "/api/pull": pull}))
     client = LocalLlmClient("http://127.0.0.1:11434")
     assert list(client.generate_stream("p", model="m")) == ["Na ", "141"]
@@ -76,7 +76,7 @@ def test_streaming_and_pull_parse_ndjson(monkeypatch):
 
 
 def test_pull_reports_ollama_errors(monkeypatch):
-    monkeypatch.setattr(local_llm.urllib.request, "urlopen",
+    monkeypatch.setattr(local_llm, "_urlopen",
                         _fake_urlopen({"/api/pull": json.dumps({"error": "not found"}).encode()}))
     with pytest.raises(RuntimeError, match="not found"):
         LocalLlmClient("http://127.0.0.1:11434").pull("nope")
@@ -85,7 +85,7 @@ def test_pull_reports_ollama_errors(monkeypatch):
 def test_health_reports_models_and_recommended(monkeypatch):
     tags = {"models": [{"name": "llama3.1:latest", "size": 4_900_000_000, "modified_at": "2026-09-20T10:00",
                         "details": {"family": "llama", "parameter_size": "8B"}}]}
-    monkeypatch.setattr(local_llm.urllib.request, "urlopen",
+    monkeypatch.setattr(local_llm, "_urlopen",
                         _fake_urlopen({"/api/tags": tags, "/api/version": {"version": "0.12.0"}}))
     h = health("http://127.0.0.1:11434")
     assert h["reachable"] and h["version"] == "0.12.0" and h["has_recommended"]
@@ -94,7 +94,7 @@ def test_health_reports_models_and_recommended(monkeypatch):
 
 
 def test_health_when_down_or_off_machine(monkeypatch):
-    monkeypatch.setattr(local_llm.urllib.request, "urlopen", _fake_urlopen({}))
+    monkeypatch.setattr(local_llm, "_urlopen", _fake_urlopen({}))
     h = health("http://127.0.0.1:11434")
     assert not h["reachable"] and "not running" in h["error"]
     h = health("http://8.8.8.8:11434")
@@ -147,3 +147,34 @@ def test_summary_and_answer_carry_citations():
     from chartcleaner import service
     out = service.ask("meds?", CHART, config={}, client=StreamClient(["Nimodipine 60 mg"]))
     assert out["citations"][0]["start"] >= 0
+
+
+def test_client_ignores_proxy_environment(monkeypatch):
+    """A configured HTTP proxy must never see chart text bound for the loopback daemon."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"version": "9.9.9"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        # An unreachable proxy with no NO_PROXY exemption: plain urlopen would go there.
+        for name in ("HTTP_PROXY", "http_proxy"):
+            monkeypatch.setenv(name, "http://10.255.255.1:3128")
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        client = LocalLlmClient(f"http://127.0.0.1:{server.server_port}", timeout=2.0)
+        assert client.version() == "9.9.9"
+    finally:
+        server.shutdown()
+        server.server_close()

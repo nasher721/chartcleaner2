@@ -62,6 +62,23 @@ def test_dates_take_the_chart_year_and_reference():
     assert chart_dates.day_number(date(2026, 9, 12), ref) == 4
 
 
+def test_drug_names_starting_with_a_month_are_not_dates():
+    ref = date(2026, 10, 14)
+    assert chart_dates.find_dates("Decadron 4 mg IV q6h, Octreotide 25 mcg/hr, Marked 2+ edema",
+                                  ref) == []
+    assert chart_dates.parse_date("September 3, 2026") == date(2026, 9, 3)
+    assert chart_dates.parse_date("Sept. 3", ref) == date(2026, 9, 3)
+    assert chart_dates.parse_date("June 30", ref) == date(2026, 6, 30)
+    assert chart_dates.parse_date("Dec 4", ref) == date(2025, 12, 4)
+
+
+def test_reference_date_ignores_future_and_two_digit_birth_years():
+    chart = "DOB 3/4/52\nProgress note 09/15/2026\nf/u clinic 01/10/2099\n"
+    assert chart_dates.parse_date("3/4/52") == date(1952, 3, 4)
+    assert chart_dates.parse_date("9/15/26") == date(2026, 9, 15)
+    assert chart_dates.reference_date(chart) == date(2026, 9, 15)
+
+
 # --- devices -------------------------------------------------------------------
 
 def test_devices_with_days_sites_and_removal():

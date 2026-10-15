@@ -61,7 +61,6 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
             rid = rule_id(pattern)
             # per-run: (matches for this rule, lines in the chart before cleaning)
             per = [(h.get(rid, 0), lb) for _run, h, _slow, lb in ran]
-            hits = [(run, n) for (run, _h, _slow, _lb), (n, _lb) in zip(ran, per)]
             timings = [float(slow[rid]) for _run, _h, slow, _lb in ran if rid in slow]
             total = sum(n for n, _lb in per)
             last = max((r.get("ts", "") for (r, _h, _slow, _lb), (n, _lb) in zip(ran, per) if n),

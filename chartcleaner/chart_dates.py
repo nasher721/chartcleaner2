@@ -10,7 +10,7 @@ the chart rather than the computer's clock.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 __all__ = ["DATE_RE", "find_dates", "parse_date", "reference_date", "day_number"]
 
@@ -20,15 +20,18 @@ _MONTHS = {m: i for i, m in enumerate(
 DATE_RE = re.compile(
     r"(?<![\d/])(?P<iso>\d{4}-\d{2}-\d{2})(?!\d)"
     r"|(?<![\d/.])(?P<m>0?[1-9]|1[0-2])/(?P<d>0?[1-9]|[12]\d|3[01])(?:/(?P<y>\d{4}|\d{2}))?(?![\d/])"
-    r"|(?<![A-Za-z])(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(?P<d2>\d{1,2})"
+    # Only real month spellings: "Decadron 4 mg" / "Octreotide 25" are not dates.
+    r"|(?<![A-Za-z])(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?"
+    r"|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?![A-Za-z])"
+    r"\.?\s+(?P<d2>\d{1,2})"
     r"(?:,?\s+(?P<y2>\d{4}))?(?!\d)")
 
 
 def _build(y: int | None, m: int, d: int, ref: date | None) -> date | None:
     try:
         if y is not None:
-            if y < 100:
-                y += 2000
+            if y < 100:  # "3/4/52" is 1952, "9/15/26" is 2026
+                y += 2000 if y <= date.today().year % 100 + 1 else 1900
             return date(y, m, d)
         base = ref or date.today()
         found = date(base.year, m, d)
@@ -69,11 +72,16 @@ def parse_date(raw: str, ref: date | None = None) -> date | None:
 
 
 def reference_date(text: str, fallback: date | None = None) -> date:
-    """The latest date that carries a year (the chart's "today")."""
+    """The latest date that carries a year (the chart's "today").
+
+    Dates after today's real date are skipped: a scheduled follow-up
+    ("f/u 12/01/2026") is not when the chart was written.
+    """
+    latest_possible = datetime.now().date() + timedelta(days=1)
     full = []
     for m in DATE_RE.finditer(text):
         found, had_year = _from_match(m, None)
-        if found and had_year and found.year >= 1990:
+        if found and had_year and 1990 <= found.year and found <= latest_possible:
             full.append(found)
     if full:
         return max(full)

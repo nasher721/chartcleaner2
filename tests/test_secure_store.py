@@ -140,3 +140,64 @@ async def test_settings_card_saves_retention(user):
     box.set_value(3)
     assert store.load_prefs()["retention_days"] == 3
     assert isinstance(box, ui.number)
+
+
+def test_file_written_during_keystore_outage_stays_readable(tmp_path, monkeypatch):
+    """Keychain locked once → file key used; later runs (keychain back) still read it."""
+    from cryptography.fernet import Fernet
+
+    keychain = Fernet.generate_key()
+    monkeypatch.setenv(secure_store.BACKEND_ENV, "keychain")
+    monkeypatch.setattr(secure_store, "_cache", {})
+    monkeypatch.setattr(secure_store, "_keychain_key", lambda: (_ for _ in ()).throw(OSError("locked")))
+    secure_store.write_text(tmp_path / "x.enc", "Jane Doe")
+
+    monkeypatch.setattr(secure_store, "_cache", {})
+    monkeypatch.setattr(secure_store, "_keychain_key", lambda: keychain)
+    assert secure_store.read_text(tmp_path / "x.enc") == "Jane Doe"
+    secure_store.write_text(tmp_path / "y.enc", "new")
+    assert secure_store.read_text(tmp_path / "y.enc") == "new"
+
+
+def test_keychain_lookup_failure_never_replaces_the_key(monkeypatch):
+    """Only "item not found" creates a key; a locked keychain must not overwrite it."""
+    import subprocess as sp
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[1])
+        return sp.CompletedProcess(cmd, 51, "", "User interaction is not allowed.")
+
+    monkeypatch.setattr(secure_store.subprocess, "run", fake_run)
+    with pytest.raises(OSError, match="interaction"):
+        secure_store._keychain_key()
+    assert calls == ["find-generic-password"]
+
+
+def test_keychain_creates_key_only_when_missing(monkeypatch):
+    import subprocess as sp
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[1] == "find-generic-password":
+            return sp.CompletedProcess(cmd, 44, "", "could not be found")
+        return sp.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(secure_store.subprocess, "run", fake_run)
+    key = secure_store._keychain_key()
+    assert calls[1][1] == "add-generic-password" and "-U" not in calls[1]
+    assert calls[1][-1] == key.decode("ascii")
+
+
+def test_same_second_token_maps_do_not_collide(monkeypatch):
+    """Two runs in one second keep separate maps; the newest is the second run's."""
+    frozen = 1_800_000_000.25
+    monkeypatch.setattr(time, "time", lambda: frozen)
+    first = store.save_token_map({"Jane Doe": "[[T1]]"}, "a")
+    second = store.save_token_map({"John Roe": "[[T1]]"}, "b")
+    assert first != second
+    assert store.load_token_map(first) == {"Jane Doe": "[[T1]]"}
+    assert tokens.newest_token_map()[1] == {"John Roe": "[[T1]]"}

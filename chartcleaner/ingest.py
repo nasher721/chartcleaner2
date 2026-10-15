@@ -98,21 +98,23 @@ _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 def _docx_stdlib(path: Path) -> str:
+    too_large = IngestError("document.xml is implausibly large — refusing to parse.")
     try:
         with zipfile.ZipFile(path) as z:
-            xml_bytes = z.read("word/document.xml")
+            # Check before decompressing: a tiny zip can expand to gigabytes.
+            if z.getinfo("word/document.xml").file_size > _DOCX_XML_MAX_BYTES:
+                raise too_large
+            with z.open("word/document.xml") as member:
+                xml_bytes = member.read(_DOCX_XML_MAX_BYTES + 1)  # the header can lie
     except (zipfile.BadZipFile, KeyError, OSError) as e:
         raise IngestError(f"Could not read .docx ({e}). Is it a real Word file?") from e
     if len(xml_bytes) > _DOCX_XML_MAX_BYTES:
-        raise IngestError("document.xml is implausibly large — refusing to parse.")
+        raise too_large
     # stdlib ElementTree has no entity-expansion hardening; a DTD with internal
     # entities (billion laughs) would exhaust memory. document.xml never
-    # legitimately carries a DTD, so reject one outright.
-    head = xml_bytes[:4096].lstrip()
-    if head.startswith(b"<?xml"):
-        nl = head.find(b"\n")
-        head = head[nl + 1:] if nl >= 0 else head
-    if head[:len(b"<!DOCTYPE")] == b"<!DOCTYPE" or b"<!ENTITY" in xml_bytes[:65536]:
+    # legitimately carries a DTD (and text content escapes "<"), so reject one
+    # wherever it appears.
+    if b"<!DOCTYPE" in xml_bytes or b"<!ENTITY" in xml_bytes:
         raise IngestError("document.xml contains DTD/entity declarations — refusing to parse.")
     try:
         root = ElementTree.fromstring(xml_bytes)

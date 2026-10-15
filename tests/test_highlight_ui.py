@@ -284,3 +284,22 @@ async def test_never_remove_saves_an_exception_for_every_regex_stage(user, clean
     for sid in ("metadata_lines", "boilerplate", "learned_rules", "literal_replacements"):
         assert options[sid]["exceptions"] == ["K 6.1 called"]
     assert _chart_textarea(user).value == text
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_learn_dialog_save_rule_writes_learned_rule(user, clean_fixture):
+    """"More…" → "Save rule" must actually persist the rule (regression: the
+    save body was dedented out of save_learned and never ran)."""
+    from nicegui import ui
+
+    _cfg, path = clean_fixture
+    text = "Keep remove"
+    cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
+                              summary=None, qa=[])
+    await _open_clean(user, "/highlight-learn")
+    _act(user, _selection(text, "remove"), "more")
+    await user.should_see("Learn a rule from highlighted text")
+    user.find("Save rule").click()
+    saved = load_config(path)
+    assert saved["learned_rules"] == [[common.learned_pattern("remove", common.LEARN_REMOVE_TEXT), ""]]
+    assert saved["stage_options"]["learned_rules"]["enabled"] is True

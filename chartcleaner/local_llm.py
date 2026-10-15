@@ -39,6 +39,15 @@ _NUMBER_OR_DOSE_RE = re.compile(
 )
 _DATE_RE = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
 
+# Chart text goes only to the loopback daemon, never through a proxy: a plain
+# urlopen honors HTTP(S)_PROXY / the macOS system proxy, and without a NO_PROXY
+# entry for 127.0.0.1 it would hand the whole prompt to the proxy host.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    return _NO_PROXY_OPENER.open(req, timeout=timeout)
+
 
 @dataclass
 class GroundingResult:
@@ -132,7 +141,7 @@ class LocalLlmClient:
         """Check if local Ollama daemon is active."""
         try:
             req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
+            with _urlopen(req, timeout=1.5) as resp:
                 return resp.status == 200
         except Exception:
             return False
@@ -141,7 +150,7 @@ class LocalLlmClient:
         """List locally downloaded models in Ollama."""
         try:
             req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with _urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return [m["name"] for m in data.get("models", [])]
         except Exception:
@@ -151,7 +160,7 @@ class LocalLlmClient:
         """Ollama's version string ("" when unknown)."""
         try:
             req = urllib.request.Request(f"{self.base_url}/api/version", method="GET")
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with _urlopen(req, timeout=2.0) as resp:
                 return str(json.loads(resp.read().decode("utf-8")).get("version") or "")
         except Exception:
             return ""
@@ -160,7 +169,7 @@ class LocalLlmClient:
         """``[{"name", "size_gb", "modified", "family", "parameters"}]`` for pulled models."""
         try:
             req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with _urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except Exception:
             return []
@@ -186,7 +195,7 @@ class LocalLlmClient:
         req = urllib.request.Request(f"{self.base_url}/api/pull", data=data,
                                      headers={"Content-Type": "application/json"}, method="POST")
         ok = False
-        with urllib.request.urlopen(req, timeout=max(self.timeout, 3600)) as resp:
+        with _urlopen(req, timeout=max(self.timeout, 3600)) as resp:
             for raw in resp:
                 line = raw.decode("utf-8").strip()
                 if not line:
@@ -214,7 +223,7 @@ class LocalLlmClient:
         req = urllib.request.Request(
             f"{self.base_url}/api/generate", data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with _urlopen(req, timeout=self.timeout) as resp:
             for raw in resp:
                 line = raw.decode("utf-8").strip()
                 if not line:
@@ -253,7 +262,7 @@ class LocalLlmClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+        with _urlopen(req, timeout=self.timeout) as resp:
             res = json.loads(resp.read().decode("utf-8"))
             return res.get("response", "").strip()
 
