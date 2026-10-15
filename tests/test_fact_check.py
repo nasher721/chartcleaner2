@@ -83,6 +83,27 @@ def test_dedup_loss_ignored_while_value_still_present():
     assert check("Na 141\nNa 141", "Na 141", drops).losses == []
 
 
+def test_med_normalize_brand_drop_is_by_design():
+    assert stage_category("med_normalize") == "by_design"
+    drops = [("med_normalize", "Medication list cleanup", Counter({"drug:nimodipine": 1}))]
+    report = check("Nimodipine 60 mg", "60 mg", drops)
+    assert [(x.display, x.category) for x in report.losses] == [("Nimodipine", "by_design")]
+    assert report.status == "ok"
+
+
+def test_med_normalize_dose_drop_still_alerts():
+    drops = [("med_normalize", "Medication list cleanup", Counter({"n:60": 1}))]
+    report = check("Nimodipine 60 mg", "Nimodipine", drops)
+    assert [(x.display, x.category) for x in report.losses] == [("60 mg", "unexpected")]
+    assert report.status == "alert"
+
+
+def test_fuzzy_line_dedup_is_dedup_category():
+    assert stage_category("fuzzy_line_dedup") == "by_design"
+    drops = [("fuzzy_line_dedup", "Fuzzy line dedup", Counter({"n:141": 1}))]
+    assert check("Na 141\nNa 141", "Na 141", drops).losses == []
+
+
 def test_abbreviating_a_drug_is_not_a_loss():
     drops = [("medical_abbreviations", "Medical abbreviations", Counter({"drug:acetaminophen": 1}))]
     assert check("acetaminophen 650 mg", "APAP 650 mg", drops).losses == []

@@ -76,7 +76,7 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
                         ui.label(STAGE_LABELS.get(row["stage"], row["stage"])).classes("text-xs w-40")
                         ui.label(row["pattern"][:90]).classes("text-xs cc-mono flex-grow break-all")
                         ui.label(f"{row['hits']} hits / {row['runs']} runs").classes("text-xs w-32")
-                        if row["status"] == "never matched":
+                        if row["status"] in ("never matched", "slow"):
                             ui.button("Remove", icon="delete",
                                       on_click=lambda r=row: confirm_dialog(
                                           f"Remove this {STAGE_LABELS.get(r['stage'], r['stage'])} rule?",

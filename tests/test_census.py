@@ -71,6 +71,59 @@ def test_removed_code_status_is_flagged():
     assert report.beds[0].safety_flags == ["Code status: removed by a cleaning rule"]
 
 
+def test_changed_since_yesterday_lists_new_units():
+    prev = "Date of Service: 10/11/2026\nPlan:\n- Follow up blood cx.\n"
+    new = "Date of Service: 10/12/2026\nPlan:\n- Follow up blood cx.\n- Start heparin gtt.\n"
+    fresh = census.changed_since(new, prev)
+    assert fresh == ["Date of Service: 10/12/2026", "- Start heparin gtt."]
+    assert census.changed_since(new, new) == []
+    assert census.changed_since(new, None) == []
+
+
+def test_build_attaches_previous_chart_delta():
+    records = [
+        {"tag": "B1", "ts": "2026-10-12T07:30:00",
+         "text": QUIET + "- Start heparin gtt.\n"},
+        {"tag": "B1", "ts": "2026-10-11T07:30:00", "text": QUIET},
+    ]
+    report = census.build(_cfg(), records=records, clean=_as_is)
+    card = report.beds[0]
+    assert card.delta_total == 1 and card.delta == ["- Start heparin gtt."]
+    assert card.delta_since == "2026-10-11T07:30:00"
+    assert "~ 1 new/changed line" in card.to_text()
+    assert card.to_dict()["delta_total"] == 1
+
+
+def test_corrupt_record_becomes_an_error_card():
+    report = census.build(_cfg(), records=[
+        {"tag": "B1", "text": QUIET},
+        {"tag": "B2"},  # damaged: no text at all
+        {"tag": "B3", "text": 42},  # damaged: not a string
+    ], clean=_as_is)
+    by_tag = {b.tag: b for b in report.beds}
+    assert by_tag["B1"].error == "" and by_tag["B1"].allergies == "NKDA"
+    assert by_tag["B2"].error.startswith("ValueError") and "could not read" in by_tag["B2"].to_text()
+    assert by_tag["B3"].error.startswith("ValueError")
+
+
+def test_unreadable_stored_files_are_skipped(tmp_path, monkeypatch):
+    from chartcleaner import secure_store, store
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    recent_charts.remember(QUIET, "test", {}, tag="G20-9")
+    # damage every stored file (wrong key / garbage): decrypt failure must skip, not raise
+    for p in recent_charts._files():
+        p.write_bytes(b"not a chart store")
+    assert recent_charts.load() == []
+    assert census.build(_cfg()).empty
+
+
+def test_census_markdown_export_reuses_exporters():
+    from chartcleaner.exporters import to_markdown
+    report = census.build(_cfg(), records=[{"tag": "B1", "text": QUIET}], clean=_as_is)
+    md = to_markdown(report.to_text(), source="Census")
+    assert md.startswith("---") and "G20" not in md and "B1" in md
+
+
 def test_no_tagged_charts():
     assert census.build(_cfg(), records=[{"text": QUIET}]).empty
     assert census.build(_cfg(), records=[]).to_text() == ""

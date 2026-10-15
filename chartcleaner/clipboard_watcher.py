@@ -9,6 +9,12 @@ only announced (``"notify"``). The original is kept so :meth:`undo` can put it
 back. The watcher never re-cleans its own output.
 
 The clipboard functions are injectable so tests never touch the real one.
+
+"Pause while the app window is focused" was considered and dropped (Phase 12
+W1): the watcher runs server-side/CLI-side and cannot see window focus, and a
+clipboard-content heuristic cannot detect focus either — it would only add
+false pauses. The digest suppression above (never re-cleaning own output plus
+``undo``) already covers the feedback loop that pause was meant to prevent.
 """
 
 from __future__ import annotations

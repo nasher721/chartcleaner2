@@ -117,7 +117,8 @@ def test_validator_warns_about_risky_rules():
 
 
 def test_slow_rules_are_recorded_and_reported(monkeypatch):
-    monkeypatch.setattr(stages, "SLOW_RULE_MS", 0.0)
+    from chartcleaner import stage_core
+    monkeypatch.setattr(stage_core, "SLOW_RULE_MS", 0.0)
     cfg = load_default_config()
     cfg["boilerplate"] = [r"needle"]
     result = Pipeline(cfg).run("a needle here\n" + "plain line\n" * 20, fact_check=False)

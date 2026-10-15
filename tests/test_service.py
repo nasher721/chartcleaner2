@@ -10,6 +10,34 @@ from chartcleaner.engine import Pipeline, load_default_config
 TEXT = "Printed by Jane Doe on 01/02/2024\nPatient has Hypertension.\n"
 
 
+def test_insight_order_is_canonical_and_shared():
+    # Phase 12 H2: one display order; INSIGHTS membership and the
+    # format_output block both derive from it (trends keeps its own block).
+    assert service.INSIGHTS == service.INSIGHT_ORDER
+    assert service.INSIGHT_ORDER[:2] == ("safety", "conflicts")
+    assert set(service.INSIGHTS) == {"problems", "devices", "micro", "overnight", "trends",
+                                     "pending", "bundle", "safety", "stale", "conflicts"}
+    out, _ = service.format_output(CHART, insights=True)
+    heads = [m for m in ("Safety header", "Possible contradictions", "Overnight",
+                         "To do / pending", "Possibly stale", "Antibiotics", "Cultures",
+                         "ICU bundle", "Problem-oriented")
+             if m in out]
+    assert len(heads) >= 3  # the fixture must exercise ordering, not just safety
+    assert heads == sorted(heads, key=out.index)
+    assert out.startswith("Safety header")
+
+
+CHART = """Date of Service: 09/15/2026
+Code status: full code
+Allergies: Penicillin (rash)
+Plan:
+- Extubate tomorrow if SBT passes.
+- Blood cultures pending.
+- Heparin gtt per nomogram.
+- POC Glucose 108.
+"""
+
+
 @pytest.fixture()
 def paths(tmp_path, monkeypatch):
     data = tmp_path / "data"

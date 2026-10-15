@@ -99,8 +99,8 @@ def test_history_never_contains_tracked_text():
 
 
 def test_tracking_is_capped(monkeypatch):
-    from chartcleaner import stages
-    monkeypatch.setattr(stages, "MAX_TRACKED_CHANGES", 3)
+    from chartcleaner import stage_core
+    monkeypatch.setattr(stage_core, "MAX_TRACKED_CHANGES", 3)
     cfg = base(literal_replacements=[[r"x", "y"]])
     st = [s for s in clean_text("x" * 10, cfg, wrap=False, track_changes=True).stages
           if s.id == "literal_replacements"][0]

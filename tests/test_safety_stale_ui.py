@@ -38,10 +38,11 @@ async def test_safety_strip_and_insight_blocks(user: User, page):
     assert CLEAN_STATE["safety"].changed
     assert [s.text for s in CLEAN_STATE["stale"].lines] == ["Plan to extubate tmrw.", "MRI pending."]
     assert CLEAN_STATE["fact_ack"] is False
-    # the default rules drop "Code status:" lines; the header says so instead of "not stated"
+    # Phase 12 T1: live "Code status:" statements survive cleaning, so the
+    # header states the value (and the change) instead of "removed by cleaning".
     code = CLEAN_STATE["safety"].get("Code status")
-    assert code.status == "removed by cleaning"
-    assert "Code status: DNR/DNI after family meeting" in code.removed
+    assert code.status == "changed"
+    assert "DNR/DNI" in code.line
 
 
 def _force_alert(monkeypatch):

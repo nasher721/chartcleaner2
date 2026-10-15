@@ -125,9 +125,37 @@ def test_removed_lines_from_a_fact_report():
     from chartcleaner.engine import Pipeline, load_default_config
     cfg = load_default_config()
     cfg["nlp_redaction"] = {"enabled": False}
+    # Live code-status statements survive cleaning (Phase 12 T1; "meeting"
+    # may be abbreviated to "mtg" by the abbreviations stage).
     result = Pipeline(cfg).run("Code status: DNR/DNI after family meeting\nAllergies: NKDA\n", wrap=False)
-    assert "Code status: DNR/DNI after family meeting" in safety.removed_lines(result.fact_check)
+    assert "Code status: DNR/DNI after family" in result.text
+    assert not any("Code status" in ln for ln in safety.removed_lines(result.fact_check))
     assert safety.removed_lines(None) == []
+
+
+def test_live_code_status_survives_but_history_is_removed():
+    from chartcleaner.engine import Pipeline, load_default_config
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": False}
+    live = "Code status: DNR/DNI after family meeting\n"
+    assert "Code status: DNR/DNI after family" in Pipeline(cfg).run(live, wrap=False).text
+    history = "Code Status History: Full 10/01 \u2192 DNR 10/03\n"
+    assert "Code Status History" not in Pipeline(cfg).run(history, wrap=False).text
+    changed = "Code Status: Full 10/01 \u2192 DNR 10/03\n"
+    assert "Code Status" not in Pipeline(cfg).run(changed, wrap=False).text
+    for plain in ("Code status: Full code\n", "Code status: DNR\n"):
+        assert plain.strip() in Pipeline(cfg).run(plain, wrap=False).text
+
+
+def test_safety_reports_live_code_status_as_stated():
+    from chartcleaner.engine import Pipeline, load_default_config
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": False}
+    result = Pipeline(cfg).run("Code status: DNR/DNI after family meeting\nAllergies: NKDA\n", wrap=False)
+    rep = safety.build(result.text, removed=safety.removed_lines(result.fact_check))
+    code = _items(rep)["Code status"]
+    assert code.status in (safety.FOUND, safety.CHANGED)
+    assert "DNR/DNI" in code.line and code.line.startswith("Code status:")
 
 
 # --- stale copied-forward lines -------------------------------------------------------

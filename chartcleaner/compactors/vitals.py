@@ -18,9 +18,10 @@ A row whose readings can't all be parsed keeps the whole block as written.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
-DEFAULTS: dict[str, Any] = {"enabled": False}
+DEFAULTS: dict[str, Any] = {"enabled": False, "window_hours": 0}
 
 VITALS = {  # label spellings -> short name
     "bp": "BP", "blood pressure": "BP", "nibp": "BP", "art bp": "Art BP", "abp": "Art BP",
@@ -38,6 +39,39 @@ _HD = r"(?:[ \t]*\((?:HD|POD)#[^)]*\))?"  # tolerate hospital-day labels added e
 _DATE_ROW = re.compile(rf"^[ \t]*(?:\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?{_HD}(?:[ \t]+\d{{3,4}})?[ \t]*){{2,}}$")
 _IO = re.compile(r"^[ \t]*(?P<kind>Intake|Output|Net)[ \t:]+(?P<sign>[-+]?)(?P<value>\d[\d,]*)\s*(?:ml|mL)\b",
                  re.IGNORECASE)
+# one header column: a date with an optional clock time ("10/01", "10/01/2026",
+# "10/01 0800", "10/01 08:00"). A hospital-day label after the date is ignored.
+_DATE_COL = re.compile(r"(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?(?:[ \t]+(\d{3,4}|\d{1,2}:\d{2}))?")
+
+
+def _column_times(header: str) -> list[datetime] | None:
+    """One datetime per header column, or None when any column won't parse."""
+    cols = _DATE_COL.findall(header)
+    if len(cols) < 2:
+        return None
+    years = [int(y) if y else 0 for _, _, y, _ in cols]
+    default_year = max(years) if max(years) > 0 else 2000
+    out: list[datetime] = []
+    for month, day, year, clock in cols:
+        try:
+            y = int(year) if year else default_year
+            y += 2000 if y < 100 else 0
+            hh, mm = 0, 0
+            if clock:
+                digits = clock.replace(":", "")
+                hh, mm = (int(digits[:-2]), int(digits[-2:])) if len(digits) > 2 else (int(digits), 0)
+            out.append(datetime(y, int(month), int(day), hh, mm))
+        except ValueError:
+            return None
+    return out
+
+
+def _window(values: list, times: list[datetime], hours: float) -> list:
+    """The trailing values inside ``hours`` of the latest column (all, if none)."""
+    latest = max(times)
+    keep = [i for i, t in enumerate(times)
+            if (latest - t).total_seconds() <= hours * 3600 + 1]
+    return [v for i, v in enumerate(values) if i in keep] if keep else values
 
 
 def _readings(short: str, rest: str) -> list[float] | list[tuple[int, int]] | None:
@@ -88,19 +122,38 @@ def run(text: str, cfg: dict, ctx: Any = None) -> tuple[str, int, dict]:
     options = {**DEFAULTS, **(cfg.get("vitals_summary") or {})}
     if not options.get("enabled"):
         return text, 0, {}
+    try:
+        window_hours = float(options.get("window_hours") or 0)
+    except (TypeError, ValueError):
+        window_hours = 0
     lines = text.split("\n")
     out: list[str] = []
     blocks = 0
     i = 0
     while i < len(lines):
-        start = i + 1 if _DATE_ROW.match(lines[i]) else i
+        header = lines[i] if _DATE_ROW.match(lines[i]) else None
+        start = i + 1 if header else i
         rows, j = [], start
         while j < len(lines) and (row := _vitals_row(lines[j])):
             rows.append(row)
             j += 1
         if len(rows) >= 2:
             readings = max(len(v) for _s, v in rows)
-            out.append(f"Vitals ({readings} readings): " + "; ".join(_summary(s, v) for s, v in rows))
+            label = f"Vitals ({readings} readings)"
+            # With window_hours, keep only the trailing readings inside the
+            # window (parsed from the header date row). Anything unparseable
+            # falls back to the full min/max/last summary.
+            if window_hours > 0 and header:
+                times = _column_times(header)
+                if times and all(len(v) == len(times) for _s, v in rows):
+                    sliced = [(s, _window(v, times, window_hours)) for s, v in rows]
+                    if all(len(v) >= 2 for _s, v in sliced):
+                        kept = max(len(v) for _s, v in sliced)
+                        rows = sliced
+                        readings = kept
+                        label = (f"Vitals ({kept} of {len(times)} readings, "
+                                 f"last {window_hours:g}h)")
+            out.append(label + ": " + "; ".join(_summary(s, v) for s, v in rows))
             blocks += 1
             i = j
             continue

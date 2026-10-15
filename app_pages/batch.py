@@ -19,6 +19,7 @@ def batch_page():
     tmp_dir = Path(tempfile.mkdtemp(prefix="cc_batch_"))
     out_ref: dict = {"dir": None, "zip": None, "results": [], "filter": "all"}
     progress = {"done": 0, "total": 0, "current": ""}
+    ai_stream = {"partial": ""}  # worker threads only write; the timer below reads
 
     # ---- handlers (defined before the UI that references them) -------------
     def set_running(flag: bool) -> None:
@@ -33,8 +34,10 @@ def batch_page():
         total = progress["total"] or 1
         progress_bar.set_value(progress["done"] / total,
                                f"{progress['done']} / {progress['total']}")
-        progress_label.set_text(f"{progress['done']} of {progress['total']} done"
-                                + (f" — last: {progress['current']}" if progress["current"] else ""))
+        note = f" — last: {progress['current']}" if progress["current"] else ""
+        if ai_stream["partial"]:
+            note += f" — AI: {ai_stream['partial'][:90]}…"
+        progress_label.set_text(f"{progress['done']} of {progress['total']} done{note}")
 
     def refresh_pending() -> None:
         if pending:
@@ -223,7 +226,13 @@ def batch_page():
                                                 "custom_prompt": ""}}
 
                 def summarize_fn(chart: str) -> str:
-                    return summarize(chart, llm_cfg).text
+                    ai_stream["partial"] = ""
+                    try:
+                        return summarize(
+                            chart, llm_cfg,
+                            on_token=lambda t: ai_stream.update(partial=t)).text
+                    finally:
+                        ai_stream["partial"] = ""
 
             def report(done: int, total: int, result) -> None:
                 progress.update(done=done, total=total, current=result.name)

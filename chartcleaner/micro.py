@@ -58,7 +58,7 @@ _STOP = re.compile(r"\b(?:stopped|discontinued|d/c'?d|dc'?d|completed|course com
 
 _SPECIMEN = re.compile(
     r"(?<![A-Za-z])(?P<spec>blood|urine|sputum|csf|wound|bal|bronchoalveolar lavage|"
-    r"tracheal aspirate|respiratory|stool|c\.?\s?diff(?:icile)?|mrsa nares)\s*"
+    r"tracheal aspirate|respiratory|stool|c\.?\s?diff(?:icile)?|mrsa nares|bcx)\s*"
     r"(?:cx|cultures?|gram stain|pcr|swab)?s?\b(?=.{0,60}?(?:cx|culture|pending|growth|positive|"
     r"negative|grew|growing|gram|ngtd|\bpcr\b|nares))", re.IGNORECASE)
 _RESULT = re.compile(
@@ -155,7 +155,7 @@ def _specimen_name(raw: str) -> str:
     if key.startswith("cdiff"):
         return "C. diff"
     return {"csf": "CSF", "bal": "BAL", "bronchoalveolarlavage": "BAL",
-            "mrsanares": "MRSA nares"}.get(key, raw.strip().capitalize())
+            "mrsanares": "MRSA nares", "bcx": "Blood"}.get(key, raw.strip().capitalize())
 
 
 _ALLERGY = re.compile(r"\ballerg(?:y|ies|ic)\b|\bALLG\b", re.IGNORECASE)

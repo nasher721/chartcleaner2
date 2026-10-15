@@ -125,7 +125,8 @@ never touched.
   repeating (copied-forward lines count once; names are skipped).
 - **Specialty packs** add Neuro ICU, Critical Care, Cardiology, Medicine or
   Nursing abbreviations; Remove takes out only what the pack added.
-- **Import / export CSV** moves your abbreviations to and from a spreadsheet.
+- **Import / export CSV** moves your abbreviations to and from a spreadsheet
+  (columns: Abbreviation, Expanded version, Enabled, Pack, Sections).
 - After a clean, the result's **Abbreviations** tab lists every abbreviation
   applied, with **Change** and **Disable** to fix one and clean again.
 
@@ -139,6 +140,8 @@ AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 - *Medication list cleanup* — `atorvastatin 40 mg PO daily`, without brand names,
   dispense/refill, dates or providers; held/discontinued marked; doses never dropped.
 - *Vitals & I/O summary* — flowsheet rows → ranges and last values; I/O → one line.
+  Set *Only the last N hours* to window dated flowsheets to recent readings
+  (without dates it still summarizes everything as min/max/last).
 - *Neuro ICU summaries* — neuro checks (`GCS 13–15 (last 13); Pupils 3 brisk → 3
   sluggish`), EVD blocks (`EVD: 10 cm H2O, open; output 45 mL over 4 readings; ICP
   8–22 (last 22; 1 reading >20)`), serial sodium (`Na checks: 141 → 143 → 145`) and
@@ -161,9 +164,17 @@ with units, lab/vital/score values, medications, allergies and code status are
 counted before and after each stage, and anything that disappeared is listed
 with the stage that removed it (red when a reformatting stage lost it). The note
 type is detected; Settings → *Note types* can clean each type with its own
-preset. Statistics → *Rule health* lists rules that never match or touch too
-much. Settings → *Check my learned rules* confirms highlighted rules still do
+preset. Statistics → *Rule health* lists rules that never match, touch too
+much, or run slow (slow ones can be removed in one click). Settings → *Check my learned rules* confirms highlighted rules still do
 what they were taught.
+
+**Census.** Tag charts with a bed (e.g. `G20-1`) when cleaning and the Census
+page rolls every bed up for pre-rounds: allergies, code status, contradictions,
+to-do, devices, antibiotics, bundle gaps — plus what changed since the previous
+chart for that bed. Copy or download the rollup as text or Markdown
+(`clean-chart --census` prints it). Live "Code status: …" statements are kept
+so the safety header can report them; only history/audit-shaped lines
+(`Code Status History`, change words, timestamps) are removed.
 
 Stages run top-to-bottom (you can reorder them in the app):
 

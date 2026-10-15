@@ -805,16 +805,15 @@ Branch `claude/safety-header-stale-lines`.
   after pending), note-template placeholders `{{safety}}` / `{{stale}}`, `/api/v1/insights`,
   MCP `chart_insights` and CLI `--insights`.
 
-Open question: the default `metadata_lines` rule `^\s*Code Status(?: History)?…` removes every
-"Code status: …" line, real statements included ("Code status: DNR/DNI after family meeting").
-The safety header now reports it as removed, but the rule itself is unchanged pending a decision.
+Decided in Phase 12: the rule is now history-only (see Phase 12 T1) — live
+"Code status: …" statements survive so the safety header reports them as stated.
 
 
 
 # Phase 11 (2026-10-14) — contradictions in the chart, census page
 
 Branch `claude/contradictions-census`. From the brainstorm's top three (the Code Status rule
-decision stays open, see Phase 10).
+decision has since shipped in Phase 12, see below).
 
 - [x] **Possible contradictions** — `chartcleaner/conflicts.py` (insight `conflicts`). Pairs of
   latest-note lines that can't both be true, quoted verbatim; nothing is changed. Checks: the same
@@ -838,3 +837,59 @@ decision stays open, see Phase 10).
   CLI `--census`. Not exposed over the API/MCP (it reads every stored chart).
 - [x] **Antibiotics** — `micro.py` no longer counts drugs on allergy lines ("ALLG: Penicillin
   (hives)", lines under an "Allergies" heading) as antibiotics.
+
+
+# Phase 12 (2026-10-15) — trust gaps, deferred follow-ups, module splits
+
+Shipped from `.omo/plans/phase-12-next-improvements.md` (direct implementation;
+subagent delegation was unavailable — Anthropic credit exhausted — so the
+orchestrator implemented each item with the same verification gates).
+
+- [x] **T1 Code Status decision** — the `metadata_lines` rule is history-only:
+  `Code Status History` plus lines with change words (changed/was/previously/
+  prior/former/updated/revised/history), arrows or timestamps are removed; live
+  statements ("Code status: DNR", "Code status: Full code") survive so the
+  safety header reports them as stated. Strict pattern kept in the Pipeline
+  stage description.
+- [x] **T2 fact-check categories** — `med_normalize` → `BY_DESIGN_STAGES`
+  (brand-name drops), `fuzzy_line_dedup` → `DEDUP_STAGES`; numeric (`n:`) losses
+  from `med_normalize` still alert as `unexpected` (doses are never dropped by
+  design).
+- [x] **T3 insight abbrev-forms audit** — `bundle` (VTE `hep gtt`, Glucose `glu`),
+  `pending` (`tmrw`/`tmw` planned + when-hints, `rpt` follow-up, consult
+  lookahead), `micro` (`BCx` → Blood) now match abbreviated output; new
+  `tests/test_insight_abbrev_forms.py` asserts semantic parity ON vs OFF.
+  `safety`/`stale`/`conflicts`/`devices`/`overnight`/`trends` needed no change;
+  `problems` differs only in verbatim wording (documented delta).
+- [x] **W1 deferred follow-ups** — `vitals_summary.window_hours` (0 = all;
+  header date-row windowed, else min/max/last fallback; validated; `int`
+  control in `STAGE_FORMS`); slow-rule Remove now offered for `slow` rows and
+  `rule_health` falls back to run-level `lines_before` so slow rules report
+  `slow` (previously misreported as very broad); abbreviation CSV gains a
+  `Sections` (`;`-joined, legacy files still import); batch one-liners stream
+  via `summarize(on_token=)` into a dict the progress timer reads; watcher
+  focus-pause dropped with reason (server can't see focus; digest suppression
+  already prevents loops).
+- [x] **W2 census upgrades** — Copy/Download whole census as text + Markdown
+  (`exporters.to_markdown`, pruned exports dir); per-bed "changed since"
+  delta (`census.changed_since`, delta_engine sentence semantics;
+  `delta/delta_total/delta_since` on the card, CLI included); corrupt records
+  become error cards, unreadable stored files stay skipped; census-off-REST/MCP
+  reason documented in `docs/integrations.md`.
+- [x] **H1 module splits** — `stages.py` → `stage_core`/`stage_regex`/
+  `stage_cleanup`/`stage_sections`/`stage_dedup`/`stage_nlp` (facade keeps
+  `RUNNERS`/`KIND_TO_RUNNER`; patch `stage_core.SLOW_RULE_MS` /
+  `MAX_TRACKED_CHANGES`); `store.py` → `store_history`/`store_prefs`/
+  `store_data` (path constants stay on `store`; submodules read via lazy
+  accessor); `config_validator.py` → `config_schema_base` + Regex/Options/
+  Review/Pipeline mixins. Golden byte-identical, full suite green.
+- [x] **H2 insight ordering** — canonical `service.INSIGHT_ORDER` (`INSIGHTS`
+  aliases it; `format_output(insights=True)` renders it minus `trends`, which
+  keeps its own block).
+- [ ] **H3 real-Mac checks** — human-only, still open (no Mac on hand):
+  Quick Action install via `install.sh --services`, watcher Undo macOS
+  notification, `build_app.sh` smoke test, rest of `docs/integrations.md`
+  manual checks.
+
+
+

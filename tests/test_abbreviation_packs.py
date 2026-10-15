@@ -49,7 +49,7 @@ def test_csv_round_trip_and_preview_statuses():
     cfg = with_custom({}, "left side weakness", "LSW")
     cfg, _, _ = packs.install(cfg, "Nursing")
     text = packs.export_csv(cfg)
-    assert text.splitlines()[0] == "Abbreviation,Expanded version,Enabled,Pack"
+    assert text.splitlines()[0] == "Abbreviation,Expanded version,Enabled,Pack,Sections"
     rows = packs.preview_import(text, cfg)
     assert {r["status"] for r in rows} == {"same"}
 
@@ -65,3 +65,25 @@ def test_csv_round_trip_and_preview_statuses():
 def test_csv_needs_columns():
     with pytest.raises(ValueError):
         packs.preview_import("a,b\n1,2\n", {})
+
+
+def test_csv_round_trips_per_entry_sections():
+    from chartcleaner.abbreviations import normalize_settings
+    group = normalize_settings(None)
+    group["custom"] = [{"term": "my term", "replacement": "MT", "enabled": True,
+                        "sections": ["Medications", "Plan"]}]
+    cfg = {"abbreviations": group}
+    text = packs.export_csv(cfg)
+    assert text.splitlines()[1].endswith(",Medications; Plan")
+    rows = packs.preview_import(text, cfg)
+    assert [r["status"] for r in rows] == ["same"]
+    assert rows[0]["sections"] == ["Medications", "Plan"]
+    fresh = {"abbreviations": normalize_settings(None)}
+    new_cfg, applied = packs.apply_import(fresh, packs.preview_import(text, fresh))
+    assert applied == 1
+    entry = new_cfg["abbreviations"]["custom"][0]
+    assert entry["sections"] == ["Medications", "Plan"]
+    # legacy files without the column still import
+    legacy = "Abbreviation,Expanded version\nMT,my term\n"
+    rows = packs.preview_import(legacy, {"abbreviations": normalize_settings(None)})
+    assert rows[0]["sections"] == [] and rows[0]["status"] == "new"

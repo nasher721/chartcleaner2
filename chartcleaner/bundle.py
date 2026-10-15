@@ -34,6 +34,7 @@ ITEMS: dict[str, tuple[str, str]] = {
     "VTE prophylaxis": (
         r"\b(?:dvt|vte)\s*(?:ppx|prophylaxis|proph)\b|\bchemo-?prophylaxis\b|\bchemical ppx\b"
         r"|\bheparin\s+(?:5,?000|7,?500|sq|subq|sc|s\.c\.|gtt|drip|infusion)\b"
+        r"|\bhep\s+(?:gtt|drip|infusion)\b"
         r"|\benoxaparin\b|\blovenox\b|\bapixaban\b|\beliquis\b|\brivaroxaban\b|\bxarelto\b"
         r"|\bsequential compression\b|\banticoagulat\w*",
         r"\bSQH\b|\bSCDs?\b"),
@@ -46,7 +47,7 @@ ITEMS: dict[str, tuple[str, str]] = {
         r"|\bnepro\b|\bjevity\b|\bosmolite\b|\bglucerna\b|\bdysphagia\b|\bswallow\w*",
         r"\bTFs?\b|\bPEG\b(?! ?3350)|\bSLP\b"),
     "Glucose control": (
-        r"\bglucose\b|\binsulin\b|\bsliding scale\b|\bfsbg\b|\baccu-?chek\w*|\bfingerstick\w*"
+        r"\bglucose\b|\bglu\b|\binsulin\b|\bsliding scale\b|\bfsbg\b|\baccu-?chek\w*|\bfingerstick\w*"
         r"|\bhyperglycemi\w*|\bblood sugar",
         r"\bSSI\b|\bBG\b|\bPOC ?G\b"),
     "Bowel regimen": (

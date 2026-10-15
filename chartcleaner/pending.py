@@ -33,7 +33,7 @@ GROUPS: dict[str, re.Pattern] = {
         r"|sent (?:for|to (?:lab|path)))\b", re.IGNORECASE),
     "Consults": re.compile(
         r"\bconsult(?:ed|s)?\b(?=[^.\n]{0,60}\b(?:pending|placed|called|paged|requested|to see|recs|"
-        r"recommendations|following|will see|in AM|today|tomorrow)\b)"
+        r"recommendations|following|will see|in AM|today|tomorrow|tmrw|tmw)\b)"
         r"|\b(?:will|to|please) consult\b|\b(?:await|appreciate|f/u|follow up|pending)\s+\w*\s*(?:recs|recommendations)\b",
         re.IGNORECASE),
     "If / then": re.compile(
@@ -48,10 +48,10 @@ GROUPS: dict[str, re.Pattern] = {
         r"|(?:\bfollow|(?<!ed )\bfollowing(?!\s+(?:an?|the|his|her|their|this|that)\b))"
         r"\s+(?!(?:simple |complex |\w+ )?(?:commands?|directions?|instructions?)\b)"
         r"[a-z]\w*|\bre-?check\b"
-        r"|\brepeat\s+\w+|\btrend(?:ing)?\b(?!s?:)|\bserial\s+\w+|\bq\s?\d{1,2}\s?h(?:r|rs)?\s+(?:checks?|labs?|na|"
+        r"|\b(?:repeat|rpt)\s+\w+|\btrend(?:ing)?\b(?!s?:)|\bserial\s+\w+|\bq\s?\d{1,2}\s?h(?:r|rs)?\s+(?:checks?|labs?|na|"
         r"sodium|neuro checks?|bmp|cbc)\b", re.IGNORECASE),
     "Planned": re.compile(
-        r"\b(?:tomorrow|in (?:the )?am|this (?:afternoon|evening)|tonight|scheduled|planned for|"
+        r"\b(?:tomorrow|tmrw|tmw|in (?:the )?am|this (?:afternoon|evening)|tonight|scheduled|planned for|"
         r"plan(?:ning)? (?:for|to)|will (?:obtain|order|get|start|begin|send|need|discuss|place|remove|"
         r"pull|wean|extubate|transition|transfer|re-?image|repeat|check|stop|d/c|discontinue|resume|"
         r"restart|hold|consider|arrange|schedule)|to be (?:done|placed|removed|scheduled)|pre-?op|"
@@ -65,7 +65,7 @@ GROUPS: dict[str, re.Pattern] = {
 _NOT_TODO = re.compile(r"\b(?:no (?:longer )?pending|nothing pending|none pending|no f/u needed|"
                        r"no follow[- ]?up needed|resulted|finalized)\b", re.IGNORECASE)
 _HEADING = re.compile(r"^\s*(?:#{1,6}\s*)?[A-Za-z][A-Za-z /&]{1,40}:\s*$")
-_WHEN = re.compile(r"\b(?:tomorrow|in (?:the )?am|this (?:afternoon|evening)|tonight|today|"
+_WHEN = re.compile(r"\b(?:tomorrow|tmrw|tmw|in (?:the )?am|this (?:afternoon|evening)|tonight|today|"
                    r"(?:at|by)\s+\d{3,4}\b|(?:at|by)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|"
                    r"q\s?\d{1,2}\s?h\w*|in \d+\s*(?:h|hr|hrs|hours|days?)\b|on \d{1,2}/\d{1,2})",
                    re.IGNORECASE)

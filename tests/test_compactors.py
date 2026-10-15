@@ -210,6 +210,27 @@ def test_vitals_rows_with_text_are_left_alone():
     assert vitals.run(text, {"vitals_summary": ON})[0] == text
 
 
+def test_vitals_window_hours_keeps_recent_readings():
+    out, n, _ = vitals.run(FLOWSHEET, {"vitals_summary": {**ON, "window_hours": 6}})
+    assert out.splitlines()[0] == (
+        "Vitals (2 of 3 readings, last 6h): BP 118/70–141/82 (last 118/70); HR 92–104 (last 92); "
+        "T 37.6–38.4 °C (last 37.6); SpO2 94–96% (last 96)")
+    assert n == 2
+
+
+def test_vitals_window_hours_falls_back_without_times():
+    text = "BP: 132/78 141/82 118/70\nPulse: 88 104 92\n"
+    out, _, _ = vitals.run(text, {"vitals_summary": {**ON, "window_hours": 6}})
+    assert out.splitlines()[0].startswith("Vitals (3 readings):")
+
+
+def test_vitals_window_hours_validated():
+    errors, _ = validate_config(base(vitals_summary={"enabled": True, "window_hours": -1}))
+    assert any("vitals_summary.window_hours" in e for e in errors)
+    errors, _ = validate_config(base(vitals_summary={"enabled": True, "window_hours": 24}))
+    assert not any("vitals_summary" in e for e in errors)
+
+
 def test_new_stages_follow_anchors_and_are_off_by_default():
     order = [s.id for s in Pipeline(base()).stages]
     assert order.index("sections") < order.index("imaging_impression") < order.index("lab_compaction") \

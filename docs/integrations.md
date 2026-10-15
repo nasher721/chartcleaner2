@@ -90,13 +90,19 @@ Routes:
 - `/api/v1/abbreviate`, `/api/v1/expand`
 - `/api/v1/restore` — puts real values back into text with `[[Tn]]` tokens, using the newest saved token map (REST only: the MCP server deliberately has no restore tool, so an AI client can't read the PHI back)
 - `/api/v1/prompt`, with `template`
-- `/api/v1/insights`, with optional `which` (`["problems", "devices", "micro", "overnight", "trends", "pending", "bundle", "safety", "stale"]`)
+- `/api/v1/insights`, with optional `which` (`["safety", "conflicts", "overnight", "pending", "stale", "devices", "micro", "bundle", "problems", "trends"]` — the canonical `service.INSIGHT_ORDER`)
 - `/api/v1/note`, with `template` (a note template: `Systems note ([N] [CV] [R] …)`, `Interval note`, …)
 - `/api/v1/patients` — splits a patient list and cleans each patient
 - `/api/v1/daily-note`, with `previous` (yesterday's chart) or `tag` (the bed tag of a stored chart)
 
 The API only answers this computer, rejects requests from web pages, needs the
 token, and caps requests at 5 MB.
+
+The census (`/census` page, `clean-chart --census`) is deliberately **not** on
+the REST or MCP API: building it reads *every* stored chart at once, so one
+call would sweep the whole encrypted recent-chart store into a single response.
+Use the page (Copy / Download as text or Markdown, per-bed or whole census) or
+the CLI flag instead.
 
 ## Browser extension (Chrome / Edge) — for Epic web and Haiku
 1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
@@ -120,6 +126,7 @@ until you use the menu. Hospital browser policies may block unpacked extensions.
 ./clean-chart --check-known-good          # re-check your known-good charts (exit 1 on a change)
 ./clean-chart --doctor                    # check the installation (exit 1 when something is broken)
 ./clean-chart --census                    # one block per bed tag: allergies, code status, contradictions, to-do
+                                           # (also "changed since yesterday" per bed, and Copy/Download on the page)
 ```
 
 ## Prompts, exports and notes

@@ -37,6 +37,12 @@ class FakeClient:
         self.prompts.append(prompt)
         return self.response
 
+    def generate_stream(self, prompt: str, model: str = "", **kw):
+        self.calls += 1
+        self.prompts.append(prompt)
+        for word in self.response.split(" "):
+            yield word + " "
+
 
 def test_merge_llm_config_overrides_defaults():
     merged = merge_llm_config({"local_llm": {"model": "qwen2.5", "grounding_threshold": 80}})
@@ -120,6 +126,15 @@ def test_summarize_bad_endpoint_url_maps_to_unavailable():
     # LlmUnavailableError so the UI can show a friendly message.
     with pytest.raises(LlmUnavailableError, match="loopback"):
         summarize(SOURCE, {"local_llm": {"base_url": "http://10.0.0.9:11434"}})
+
+
+def test_summarize_streams_partial_text_via_on_token():
+    partials: list[str] = []
+    res = summarize(SOURCE, {}, client=FakeClient(response="On metoprolol 25 mg."),
+                    on_token=partials.append)
+    assert res.text == "On metoprolol 25 mg."
+    assert partials and partials[-1].strip() == "On metoprolol 25 mg."
+    assert all(b.startswith(a) for a, b in zip(partials, partials[1:]))
 
 
 def test_presets_all_bake_in_grounded_instruction():

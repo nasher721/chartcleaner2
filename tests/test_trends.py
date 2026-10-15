@@ -84,9 +84,11 @@ def test_service_and_format_output():
 
 
 def test_cli_trends_flag(tmp_path):
+    import os
+    env = {**os.environ, "PYTHONUTF8": "1"}  # the chart carries →/↑; don't depend on console locale
     proc = subprocess.run([sys.executable, str(ROOT / "medical_cleaner.py"), "--stdin", "--stdout",
                            "--trends"], input=CHART, capture_output=True, text=True, cwd=ROOT,
-                          timeout=120)
+                          timeout=120, encoding="utf-8", env=env)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.startswith("Lab trends (09/13")
 

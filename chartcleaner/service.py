@@ -15,7 +15,7 @@ from typing import Any
 from . import store
 from .engine import Pipeline, RunResult, load_config
 
-__all__ = ["FORMATS", "INSIGHTS", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
+__all__ = ["FORMATS", "INSIGHTS", "INSIGHT_ORDER", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
            "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text",
            "daily_note", "split_patients", "clean_patients", "note", "census"]
 
@@ -58,8 +58,7 @@ def _check_format(fmt: str) -> None:
 def _compose(text: str, fmt: str, delta: bool, block: str, insights: bool) -> tuple[str, Any]:
     """format_output's body once the trends block is known."""
     if insights:
-        extra = insights_text(text, ("safety", "conflicts", "overnight", "pending", "stale", "devices", "micro", "bundle",
-                                     "problems"))
+        extra = insights_text(text, [n for n in INSIGHT_ORDER if n != "trends"])
         block = f"{block}\n\n{extra}".strip() if extra else block
     delta_res = None
     out = text
@@ -93,8 +92,13 @@ def trends_text(text: str, config: dict | None = None) -> str:
 
 
 # name -> module with build(text) returning a report with to_text()/to_dict()
-INSIGHTS = ("problems", "devices", "micro", "overnight", "trends", "pending", "bundle", "safety", "stale",
-            "conflicts")
+# Canonical display order (Phase 12 H2): safety first — the facts that hurt
+# most when buried — then contradictions, then the rest. INSIGHTS doubles as
+# the membership list; format_output(insights=True) renders this order minus
+# "trends", which has its own block and flag.
+INSIGHT_ORDER = ("safety", "conflicts", "overnight", "pending", "stale", "devices", "micro", "bundle",
+                 "problems", "trends")
+INSIGHTS = INSIGHT_ORDER
 
 
 def _insight_report(name: str, text: str):

@@ -23,9 +23,10 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Callable
 
-__all__ = ["BedCard", "CensusReport", "build", "build_card"]
+__all__ = ["BedCard", "CensusReport", "build", "build_card", "changed_since"]
 
 MAX_TODO = 6
+MAX_DELTA = 4
 
 
 @dataclass
@@ -42,6 +43,9 @@ class BedCard:
     antibiotics: list[str] = field(default_factory=list)
     bundle_gaps: list[str] = field(default_factory=list)
     stale: int = 0
+    delta: list[str] = field(default_factory=list)     # newest units absent from the previous chart
+    delta_total: int = 0
+    delta_since: str = ""                              # date/ts of the previous chart compared
     error: str = ""
 
     @property
@@ -74,6 +78,12 @@ class BedCard:
             out.append("  Not mentioned: " + ", ".join(self.bundle_gaps))
         if self.stale:
             out.append(f"  {self.stale} possibly stale line{'s' if self.stale != 1 else ''}")
+        if self.delta_total:
+            since = f" since {self.delta_since}" if self.delta_since else ""
+            out.append(f"  ~ {self.delta_total} new/changed line{'s' if self.delta_total != 1 else ''}{since}")
+            out.extend(f"    + {line}" for line in self.delta)
+            if self.delta_total > len(self.delta):
+                out.append(f"    … {self.delta_total - len(self.delta)} more")
         for item in self.todo:
             out.append(f"  - [ ] {item}")
         if self.todo_total > len(self.todo):
@@ -85,7 +95,9 @@ class BedCard:
                 "code_status": self.code_status, "safety_flags": list(self.safety_flags),
                 "conflicts": list(self.conflicts), "todo": list(self.todo), "todo_total": self.todo_total,
                 "devices_review": list(self.devices_review), "antibiotics": list(self.antibiotics),
-                "bundle_gaps": list(self.bundle_gaps), "stale": self.stale, "error": self.error,
+                "bundle_gaps": list(self.bundle_gaps), "stale": self.stale,
+                "delta": list(self.delta), "delta_total": self.delta_total,
+                "delta_since": self.delta_since, "error": self.error,
                 "attention": self.attention}
 
 
@@ -117,8 +129,33 @@ def _clean(text: str, cfg: dict) -> tuple[str, list[str]]:
     return result.text, removed_lines(result.fact_check)
 
 
+def changed_since(newest: str, previous: str | None) -> list[str]:
+    """Units (lines/sentences) in ``newest`` absent from ``previous`` — newest first.
+
+    Same sentence semantics as the copy-forward view
+    (:mod:`chartcleaner.delta_engine`): only a unit that literally repeats an
+    earlier one counts as old, so nothing new is ever dropped. No previous
+    chart (or identical texts) means no delta, never an error.
+    """
+    if not previous or not newest.strip() or newest == previous:
+        return []
+    from .delta_engine import _norm, _units
+
+    seen = {_norm(u) for p in previous.split("\n\n") for u in _units(p)}
+    if not seen:
+        return []
+    fresh: list[str] = []
+    for para in newest.split("\n\n"):
+        for unit in _units(para):
+            if len(unit) >= 4 and _norm(unit) not in seen:
+                seen.add(_norm(unit))
+                fresh.append(unit[:240])
+    return fresh
+
+
 def build_card(tag: str, text: str, cfg: dict, *, ts: str = "",
-               clean: Callable[[str, dict], tuple[str, list[str]]] | None = None) -> BedCard:
+               clean: Callable[[str, dict], tuple[str, list[str]]] | None = None,
+               previous: str | None = None, previous_ts: str = "") -> BedCard:
     """The card for one bed: clean ``text`` and read its insights."""
     from . import bundle, conflicts, devices, micro, pending, safety, stale
 
@@ -170,6 +207,14 @@ def build_card(tag: str, text: str, cfg: dict, *, ts: str = "",
     old = attempt(lambda: stale.build(cleaned))
     if old is not None:
         card.stale = len(old.lines)
+    try:
+        fresh = changed_since(text, previous)
+    except Exception:
+        fresh = []  # the delta must never break a card
+    if fresh:
+        card.delta = fresh[:MAX_DELTA]
+        card.delta_total = len(fresh)
+        card.delta_since = previous_ts
     return card
 
 
@@ -193,8 +238,26 @@ def build(cfg: dict | None = None, *, records: list[dict] | None = None,
         return CensusReport()
     cfg = cfg if cfg is not None else service.load_active_config()
     cards: list[BedCard] = []
+    previous: dict[str, dict] = {}
+    for rec in records:  # newest first: the second chart per tag is "yesterday"
+        tag = recent_charts.clean_tag(rec.get("tag"))
+        if tag and tag.casefold() not in previous and rec.get("text") != newest[tag.casefold()].get("text"):
+            previous[tag.casefold()] = rec
     for i, rec in enumerate(newest.values()):
-        cards.append(build_card(rec["tag"], rec["text"], cfg, ts=str(rec.get("ts") or ""), clean=clean))
+        key = rec["tag"].casefold()
+        prev = previous.get(key, {})
+        try:
+            text = rec.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("stored chart is damaged or unreadable")
+            cards.append(build_card(rec["tag"], text, cfg, ts=str(rec.get("ts") or ""), clean=clean,
+                                    previous=prev.get("text") if isinstance(prev.get("text"), str)
+                                    else None,
+                                    previous_ts=str(prev.get("ts") or "")))
+        except Exception as exc:  # a corrupt record never hides the other beds
+            card = BedCard(rec.get("tag") or "?", str(rec.get("ts") or ""))
+            card.error = f"{type(exc).__name__}: {exc}"[:200]
+            cards.append(card)
         if on_progress:
             on_progress(i + 1, len(newest))
     cards.sort(key=lambda c: (-c.attention, c.tag.casefold()))

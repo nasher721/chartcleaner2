@@ -48,8 +48,12 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
             stage = next((st for st in run.get("stages") or [] if st.get("id") == sid), None)
             if stage and not stage.get("skipped") and not stage.get("error"):
                 details = stage.get("details") or {}
+                # Per-stage details don't carry line counts; fall back to the
+                # run-level count so "very broad" shares stay meaningful and a
+                # genuinely slow rule isn't misreported as broad.
+                lines = details.get("lines_before") or run.get("lines_before") or 0
                 ran.append((run, details.get("rule_hits") or {}, details.get("slow_rules") or {},
-                            int(details.get("lines_before") or 0)))
+                            int(lines)))
         for index, entry in enumerate(cfg.get(key) or []):
             pattern = entry[0] if pairs else entry
             if not isinstance(pattern, str):

@@ -45,6 +45,32 @@ def census_page():
             return
         copy_to_clipboard(report.to_text(), "Census copied")
 
+    def copy_markdown() -> None:
+        report = state.get("report")
+        if report is None or report.empty:
+            ui.notify("Nothing to copy yet.")
+            return
+        copy_to_clipboard(to_markdown(report.to_text(), source="Census"),
+                          "Census Markdown copied")
+
+    def download(fmt: str) -> None:
+        report = state.get("report")
+        if report is None or report.empty:
+            ui.notify("Nothing to download yet.")
+            return
+        try:
+            name = f"census_{time.strftime('%Y%m%d_%H%M%S')}.{fmt}"
+            if fmt == "md":
+                content = to_markdown(report.to_text(), source="Census")
+            else:
+                content = report.to_text()
+            path = store.EXPORTS_DIR / name
+            store.ensure_dir(store.EXPORTS_DIR)
+            path.write_text(content, encoding="utf-8")
+            download_file(f"/exports/{name}", name)
+        except Exception as ex:
+            report_error("Census download failed", ex)
+
     def draw(report) -> None:
         cards.clear()
         n = len(report.beds)
@@ -107,6 +133,14 @@ def census_page():
                         ui.checkbox(item).props("dense").classes("text-xs")
                     if bed.todo_total > len(bed.todo):
                         ui.label(f"… {bed.todo_total - len(bed.todo)} more").classes("text-xs opacity-60")
+            if bed.delta_total:
+                since = f" since {bed.delta_since}" if bed.delta_since else ""
+                ui.label(f"~ {bed.delta_total} new/changed line{'s' if bed.delta_total != 1 else ''}"
+                         f"{since}").classes("text-xs font-semibold")
+                for line in bed.delta:
+                    ui.label(f"+ {line}").classes("text-xs cc-mono break-words")
+                if bed.delta_total > len(bed.delta):
+                    ui.label(f"… {bed.delta_total - len(bed.delta)} more").classes("text-xs opacity-60")
 
     with shell("Census — every bed at a glance", "/census"):
         ui.label("The newest chart for each bed tag, cleaned with your saved rules: allergies, code "
@@ -121,5 +155,11 @@ def census_page():
                 .mark("census-refresh")
             ui.button("Copy census", icon="content_copy", on_click=copy_all).props("flat") \
                 .mark("census-copy")
+            ui.button("Copy Markdown", icon="markdown", on_click=copy_markdown).props("flat") \
+                .mark("census-copy-md")
+            ui.button("Download .txt", icon="download",
+                      on_click=lambda: download("txt")).props("flat").mark("census-dl-txt")
+            ui.button("Download .md", icon="download",
+                      on_click=lambda: download("md")).props("flat").mark("census-dl-md")
         cards = ui.column().classes("w-full gap-3")
     ui.timer(0.05, refresh, once=True)

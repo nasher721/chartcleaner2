@@ -57,8 +57,9 @@ RULE_STAGES = frozenset({
 })
 BY_DESIGN_STAGES = frozenset({
     "sections", "imaging_impression", "vitals_summary", "lab_compaction", "neuro_summary",
+    "med_normalize",
 })
-DEDUP_STAGES = frozenset({"duplicate_notes", "fuzzy_dedup"})
+DEDUP_STAGES = frozenset({"duplicate_notes", "fuzzy_dedup", "fuzzy_line_dedup"})
 # Abbreviating swaps a drug or keyword for a standard short form on purpose.
 WORD_SAFE_STAGES = frozenset({"medical_abbreviations", "expand_abbreviations"})
 
@@ -670,6 +671,11 @@ def check(before: str, after: str, drops: list[tuple[str, str, Counter]] | None 
                 continue
             remaining -= take
             category = stage_category(stage_id)
+            if stage_id == "med_normalize" and key.startswith("n:"):
+                # Doses are never dropped by design: the compactor rewrites a
+                # block only when every line parses, so a vanished number is
+                # a real loss even though brand-name drops are expected.
+                category = "unexpected"
             if stage_id in DEDUP_STAGES and end.get(key, 0):
                 continue  # folded duplicate; the value is still in the output
             if stage_id in WORD_SAFE_STAGES and not key.startswith("n:"):

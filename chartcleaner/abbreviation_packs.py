@@ -27,7 +27,7 @@ __all__ = ["PACKS_DIR", "list_packs", "load_pack", "install", "uninstall", "inst
            "export_csv", "preview_import", "apply_import", "CSV_COLUMNS"]
 
 PACKS_DIR = Path(__file__).with_name("packs") / "abbreviations"
-CSV_COLUMNS = ["Abbreviation", "Expanded version", "Enabled", "Pack"]
+CSV_COLUMNS = ["Abbreviation", "Expanded version", "Enabled", "Pack", "Sections"]
 
 
 def _read(path: Path) -> dict:
@@ -106,7 +106,7 @@ def export_csv(cfg: dict | None) -> str:
     writer.writerow(CSV_COLUMNS)
     for item in group["custom"]:
         writer.writerow([item["replacement"], item["term"], "yes" if item["enabled"] else "no",
-                         item.get("pack", "")])
+                         item.get("pack", ""), "; ".join(item.get("sections") or [])])
     return buf.getvalue()
 
 
@@ -132,7 +132,10 @@ def preview_import(text: str, cfg: dict | None) -> list[dict]:
         replacement = (row.get("Abbreviation") or "").strip()
         enabled = _truthy(row.get("Enabled") or "yes")
         pack = (row.get("Pack") or "").strip()
-        out = {"term": term, "replacement": replacement, "enabled": enabled, "pack": pack}
+        sections = [s.strip() for s in (row.get("Sections") or "").replace(",", ";").split(";")
+                    if s.strip()]
+        out = {"term": term, "replacement": replacement, "enabled": enabled, "pack": pack,
+               "sections": sections}
         if not term or not replacement or term.casefold() in seen:
             out["status"] = "invalid"
         elif is_blocked(replacement, term):
@@ -141,7 +144,8 @@ def preview_import(text: str, cfg: dict | None) -> list[dict]:
             out["status"] = "new"
         else:
             old = current[term.casefold()]
-            same = old["replacement"] == replacement and old["enabled"] == enabled
+            same = (old["replacement"] == replacement and old["enabled"] == enabled
+                    and list(old.get("sections") or []) == sections)
             out["status"] = "same" if same else "changed"
         seen.add(term.casefold())
         rows.append(out)
@@ -160,6 +164,8 @@ def apply_import(cfg: dict, rows: list[dict]) -> tuple[dict, int]:
         entry = {"term": row["term"], "replacement": row["replacement"], "enabled": row["enabled"]}
         if row.get("pack"):
             entry["pack"] = row["pack"]
+        if row.get("sections"):
+            entry["sections"] = list(row["sections"])
         by_term[row["term"].casefold()] = entry
         applied += 1
     group["custom"] = list(by_term.values())

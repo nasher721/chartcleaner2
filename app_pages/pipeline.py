@@ -6,6 +6,7 @@ from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from chartcleaner.service import result_cache as service_result_cache
 from chartcleaner.compactors import neuro as neuro_compactor
+from chartcleaner.compactors import vitals as vitals_compactor
 from chartcleaner.section_parser import SECTION_TAXONOMY
 
 
@@ -40,10 +41,11 @@ STAGE_EDITORS = {
 
 
 # Options whose default is on (a switch must show what the stage will do).
-FORM_DEFAULTS = {"neuro_summary": neuro_compactor.DEFAULTS}
+FORM_DEFAULTS = {"neuro_summary": neuro_compactor.DEFAULTS,
+                 "vitals_summary": vitals_compactor.DEFAULTS}
 
 # Declarative option forms for the opt-in condensing stages:
-# (option, label, control, choices) — control is switch | text | select | multi | dates.
+# (option, label, control, choices) — control is switch | text | select | multi | dates | int.
 STAGE_FORMS: dict[str, list[tuple]] = {
     "hospital_day": [
         ("enabled", "Label dates with hospital day (HD#) and post-op day (POD#)", "switch", None),
@@ -65,6 +67,7 @@ STAGE_FORMS: dict[str, list[tuple]] = {
     ],
     "vitals_summary": [
         ("enabled", "Summarize vitals flowsheets and intake/output", "switch", None),
+        ("window_hours", "Only the last N hours of readings (0 = all readings)", "int", None),
     ],
     "neuro_summary": [
         ("enabled", "Condense Neuro ICU flowsheets", "switch", None),
@@ -81,7 +84,7 @@ STAGE_FORMS: dict[str, list[tuple]] = {
 }
 
 STAGE_DESCRIPTIONS = {
-    "metadata_lines": "Whole lines to delete (author/pager/version lines, Epic chrome). Case-insensitive regex per line.",
+    "metadata_lines": "Whole lines to delete (author/pager/version lines, Epic chrome). Case-insensitive regex per line. Code Status lines are history-only: 'Code Status History' and lines with change words (changed/was/previously/prior/former/updated/revised/history), arrows, or timestamps are removed; live statements ('Code status: DNR') survive for the safety header. Strict preset (remove all): ^\\s*Code Status(?: History)?[ \\t]*:?[^\n]*$\\n?",
     "boilerplate": "Blocks to delete anywhere (disclaimers, empty SmartSections). Dot matches newlines.",
     "tokenize_phi": "Reversible tokenization: swaps structured PHI for [[T1]]-style codes and saves the value→token map (Settings → Token maps). Runs before redaction, so enable it instead of — not on top of — the PHI patterns you want tokenized.",
     "phi_patterns": "Regex → replacement pairs for structured PHI (MRN, DOB, phone lines).",
