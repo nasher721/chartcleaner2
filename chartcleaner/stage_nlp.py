@@ -17,6 +17,7 @@ __all__ = [
     "DEFAULT_PHONE_REGIONS",
     "DEFAULT_CLINICAL_IDENTIFIERS",
     "PresidioEngineCache",
+    "warm",
     "run_nlp",
     "run_clinical_identifiers",
     "run_tokenize",
@@ -79,7 +80,7 @@ class PresidioEngineCache:
         try:
             nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
             analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-            _disable_expensive_spacy_pipes(analyzer.nlp_engine)
+            _disable_expensive_spacy_pipes(analyzer.nlp_engine, lean=threshold is None)
             if phone_regions:
                 _limit_phone_regions(analyzer, phone_regions)
             anonymizer = AnonymizerEngine()
@@ -97,17 +98,50 @@ class PresidioEngineCache:
         self._anonymizer = None
 
 
-def _disable_expensive_spacy_pipes(nlp_engine: Any) -> None:
-    """Drop the spaCy dependency parser from the loaded model.
+# Pipes that only feed token lemmas. en_core_web_sm's NER has its own
+# embedding layer (it doesn't listen to the shared tok2vec), so its entities
+# are identical without them.
+_LEMMA_PIPES = ("tok2vec", "tagger", "attribute_ruler", "lemmatizer")
+_LOWER_LEMMA = "chartcleaner_lower_lemma"
 
-    The redaction stage consumes PERSON/PHONE_NUMBER/EMAIL entities and token
-    lemmas (for context enhancement); none of them depend on the parser, and
+
+def _register_lower_lemma() -> None:
+    from spacy.language import Language
+
+    if not Language.has_factory(_LOWER_LEMMA):
+        @Language.component(_LOWER_LEMMA)
+        def _lower_lemma(doc):
+            for token in doc:
+                token.lemma_ = token.lower_
+            return doc
+
+
+def _disable_expensive_spacy_pipes(nlp_engine: Any, lean: bool = False) -> None:
+    """Drop spaCy pipes the redaction stage doesn't need.
+
+    The stage consumes PERSON/PHONE_NUMBER/EMAIL entities and token lemmas
+    (Presidio's context enhancement); none of them depend on the parser, and
     skipping it cuts spaCy annotation time by ~25% on long charts.
+
+    ``lean`` (no ``score_threshold``) also drops the tagger chain that only
+    produces lemmas — about 3/4 of the remaining spaCy time. Lemmas then
+    become the lowercased token: context words still match in the form they
+    are written ("Phone:", "cell"), only inflected ones ("called") stop
+    boosting. With no threshold a boost never decides whether something is
+    redacted, so the redacted spans are unchanged; with a threshold set the
+    full pipeline stays.
     """
     try:
         for nlp in (getattr(nlp_engine, "nlp", None) or {}).values():
             if "parser" in nlp.pipe_names:
                 nlp.disable_pipe("parser")
+            if lean and "ner" in nlp.pipe_names:
+                _register_lower_lemma()
+                for name in _LEMMA_PIPES:
+                    if name in nlp.pipe_names:
+                        nlp.disable_pipe(name)
+                if _LOWER_LEMMA not in nlp.pipe_names:
+                    nlp.add_pipe(_LOWER_LEMMA, last=True)
     except Exception:
         pass  # fall back to the untouched full pipeline
 
@@ -157,18 +191,38 @@ _ID_LABEL = re.compile(
     r"case|req(?:uisition)?|id)\b\s*(?:no\.?|number|num|#)?\s*[:#]?\s*\(?$", re.IGNORECASE)
 
 
+def _engines(cfg: dict):
+    """``(analyzer, anonymizer, entities, allow, threshold)`` for this config.
+
+    The one place the engine cache key is built: the startup warm-up and the
+    Doctor page must ask for exactly what a clean asks for, or the next clean
+    rebuilds the engines (seconds of model loading).
+    """
+    ncfg = cfg.get("nlp_redaction") or {}
+    entities: dict[str, str] = dict(ncfg.get("entities") or DEFAULT_NLP_ENTITIES)
+    allow = frozenset(t.lower() for t in (cfg.get("nlp_allow_list") or []))
+    threshold = ncfg.get("score_threshold")
+    analyzer, anonymizer = _PRESIDIO_CACHE.get_engines(
+        tuple(sorted(entities.items())), allow, threshold, _phone_regions(ncfg)
+    )
+    return analyzer, anonymizer, entities, allow, threshold
+
+
+def warm(cfg: dict, *, analyze: bool = True) -> None:
+    """Load the engines ``run_nlp`` will use for ``cfg``; ``analyze`` also runs
+    one tiny analysis so spaCy's first-call setup isn't paid by the first clean."""
+    analyzer, _anonymizer, entities, _allow, _threshold = _engines(cfg)
+    if analyze:
+        analyzer.analyze(text="Seen by Dr. John Smith; call 617-555-0123 or js@example.org.",
+                         entities=list(entities), language="en")
+
+
 def run_nlp(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     """Redact PHI entities using Presidio Analyzer and Anonymizer."""
     from presidio_anonymizer.entities import OperatorConfig
 
     ncfg = cfg.get("nlp_redaction") or {}
-    entities: dict[str, str] = dict(ncfg.get("entities") or DEFAULT_NLP_ENTITIES)
-    allow = frozenset(t.lower() for t in (cfg.get("nlp_allow_list") or []))
-    threshold = ncfg.get("score_threshold")
-
-    analyzer, anonymizer = _PRESIDIO_CACHE.get_engines(
-        tuple(sorted(entities.items())), allow, threshold, _phone_regions(ncfg)
-    )
+    analyzer, anonymizer, entities, allow, threshold = _engines(cfg)
 
     results = analyzer.analyze(text=text, entities=list(entities), language="en")
     if threshold is not None:

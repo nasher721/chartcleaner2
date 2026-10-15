@@ -35,7 +35,7 @@ def census_page():
         text = state["texts"].get(tag.casefold())
         if text is None:
             return
-        CLEAN_STATE.update(input=text, tag=tag, result=None, result_text="")
+        CLEAN_STATE.update(input=text, tag=tag, result=None, review_html=None, result_text="")
         ui.navigate.to("/")
 
     def copy_all() -> None:

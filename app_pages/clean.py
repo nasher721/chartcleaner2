@@ -114,7 +114,11 @@ async def clean_page():
             result, audit = await run.io_bound(work)
             extras = (await run.io_bound(extras_work, result.text, result.fact_check)
                       if mode == "clean" else {})
+            # The Review diff is the slowest part of drawing a result; build it
+            # here, off the event loop, so the page stays responsive.
+            review = await run.io_bound(review_html, text, result, audit)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
+                               review_html=(result, text, result.text, review),
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
                                timeline=extras.get("timeline"), problems=extras.get("problems"),
@@ -197,6 +201,12 @@ async def clean_page():
                     g["befores"].append(c["before"])
                     g["afters"].append(c["after"])
         return list(groups.values())
+
+    def flagged_lines(audit) -> set[int]:
+        return {f.line for f in audit.findings} if audit is not None and not audit.skipped else set()
+
+    def review_html(before: str, result, audit) -> str:
+        return review_diff_html(before, result.text, flagged_lines(audit), change_groups(result))
 
     def render_results() -> None:
         results_col.clear()
@@ -607,14 +617,19 @@ async def clean_page():
         if result.fact_check is not None and not single_pass:
             render_fact_check(result.fact_check)
         audit = CLEAN_STATE.get("audit")
-        flagged: set[int] = set()
+        flagged = flagged_lines(audit)
         if audit is not None and not audit.skipped:
-            flagged = {f.line for f in audit.findings}
             render_audit(audit)
         ui.label("Click struck-through or highlighted text to see which rule changed it — and "
                  "keep it, change it or switch the rule off.").classes("text-xs opacity-70")
         with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
-            diff = ui.html(review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups))
+            cached = CLEAN_STATE.get("review_html")
+            if (cached and cached[0] is result and cached[1] == CLEAN_STATE["input"]
+                    and cached[2] == result.text):
+                html = cached[3]
+            else:
+                html = review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups)
+            diff = ui.html(html)
             diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
             diff.on("keydown", lambda e: inspect_change(e.args), js_handler=REVIEW_KEY_JS)
             diff.mark("review-diff")
@@ -1388,7 +1403,7 @@ async def clean_page():
             ui.notify(f"Clipboard error: {e}", type="negative")
 
     def clear_all() -> None:
-        CLEAN_STATE.update(input="", result=None, result_text="", summary=None, qa=[])
+        CLEAN_STATE.update(input="", result=None, review_html=None, result_text="", summary=None, qa=[])
         AUTO_LAST["text"] = None
         input_area.set_value("")
         hide_selection_bar()
@@ -1469,7 +1484,7 @@ async def clean_page():
 
     # ---- teach from a selection (the selection toolbar) -----------------------
     def invalidate_output() -> None:
-        CLEAN_STATE.update(input=input_area.value, result=None, result_text="", audit=None,
+        CLEAN_STATE.update(input=input_area.value, result=None, review_html=None, result_text="", audit=None,
                            summary=None, qa=[], result_mode=None)
         AUTO_LAST["text"] = None
         render_results()
@@ -2300,7 +2315,7 @@ async def clean_page():
 
     # ---- UI ------------------------------------------------------------------
     def on_mode_change(e) -> None:
-        CLEAN_STATE.update(mode=e.value, result=None, result_text="", audit=None,
+        CLEAN_STATE.update(mode=e.value, result=None, review_html=None, result_text="", audit=None,
                            summary=None, qa=[], result_mode=None)
         AUTO_LAST["text"] = None
         render_results()
