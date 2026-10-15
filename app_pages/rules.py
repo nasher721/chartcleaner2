@@ -116,8 +116,21 @@ def text_rules_page():
         cfg = load_current()
         key = row["key"]
         lst = cfg.get(key)
-        if isinstance(lst, list) and 0 <= row["index"] < len(lst):
-            lst.pop(row["index"])
+        lst = lst if isinstance(lst, list) else []
+
+        def pattern_at(i: int):
+            entry = lst[i]
+            return entry[0] if isinstance(entry, (list, tuple)) and entry else entry
+
+        # The table can be stale (the rule editor above saves on its own), so
+        # find the rule by pattern instead of trusting the rendered index.
+        index = row["index"]
+        if not (0 <= index < len(lst) and pattern_at(index) == row["pattern"]):
+            index = next((i for i in range(len(lst)) if pattern_at(i) == row["pattern"]), -1)
+        if index < 0:
+            ui.notify("That rule is no longer in your rules.", type="warning")
+        else:
+            lst.pop(index)
             save_config_with_backup(cfg)
             ui.notify(f"Removed rule from {key}.", type="positive")
         render_rule_health(holder)

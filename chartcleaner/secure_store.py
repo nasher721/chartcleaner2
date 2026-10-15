@@ -97,16 +97,25 @@ def _file_key(directory: Path) -> bytes:
     return key
 
 
+# `security` exits with this when the item doesn't exist (errSecItemNotFound).
+_KEYCHAIN_NOT_FOUND = 44
+
+
 def _keychain_key() -> bytes:
     found = subprocess.run(
         ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"],
         capture_output=True, text=True, timeout=15)
     if found.returncode == 0 and found.stdout.strip():
         return found.stdout.strip().encode("ascii")
+    if found.returncode != _KEYCHAIN_NOT_FOUND:
+        # Locked keychain, denied access, …: the key may well exist. Creating a
+        # new one here would replace it and orphan every encrypted file.
+        raise OSError(found.stderr.strip() or f"security find-generic-password exited {found.returncode}")
     key = _new_key()
+    # No -U: never overwrite a key that appeared since the lookup.
     added = subprocess.run(
         ["security", "add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT,
-         "-U", "-w", key.decode("ascii")],
+         "-w", key.decode("ascii")],
         capture_output=True, text=True, timeout=15)
     if added.returncode != 0:
         raise OSError(added.stderr.strip() or "security add-generic-password failed")
@@ -177,14 +186,33 @@ def encrypt(data: bytes) -> bytes:
     return MAGIC + Fernet(_key()).encrypt(data)
 
 
+def _fallback_file_key() -> bytes | None:
+    """The data-folder key file, if one exists (left by a keystore fallback)."""
+    path = key_dir() / ".datakey"
+    try:
+        return path.read_bytes().strip() if path.is_file() else None
+    except OSError:
+        return None
+
+
 def decrypt(data: bytes) -> bytes:
     if not is_encrypted(data):
         return data
     from cryptography.fernet import Fernet, InvalidToken
+    token = data[len(MAGIC):]
     try:
-        return Fernet(_key()).decrypt(data[len(MAGIC):])
+        return Fernet(_key()).decrypt(token)
     except (InvalidToken, ValueError) as e:
-        raise DecryptError("encrypted with a key this machine doesn't have") from e
+        error = e
+    # Written while the keystore was unavailable (see _key's fallback): the
+    # file key still opens it once the keystore is back.
+    fallback = _fallback_file_key()
+    if fallback and fallback != _key():
+        try:
+            return Fernet(fallback).decrypt(token)
+        except (InvalidToken, ValueError):
+            pass
+    raise DecryptError("encrypted with a key this machine doesn't have") from error
 
 
 def write_text(path: str | Path, text: str) -> None:

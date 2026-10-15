@@ -136,7 +136,7 @@ def run_bullets(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict
         total += k
 
     if options.get("normalize_numbered"):
-        text, k = re.subn(rf"^\s*\d+[.)]\s+", style, text, flags=re.MULTILINE)
+        text, k = re.subn(r"^\s*\d+[.)]\s+", style, text, flags=re.MULTILINE)
         total += k
 
     text, k = re.subn(rf"^\s*{glyphs}\s+", style, text, flags=re.MULTILINE)

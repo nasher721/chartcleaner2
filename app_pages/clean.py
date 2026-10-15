@@ -1844,14 +1844,14 @@ async def clean_page():
                 if not snippet:
                     ui.notify("Nothing to learn — the highlighted text is empty.", type="warning")
                     return
-            if m == LEARN_REPLACE and not (repl.value or "").strip():
-                ui.notify("Enter the replacement text, or pick one of the remove options.",
-                          type="warning")
-                return
-            if m == LEARN_REMOVE_BLOCK and not learned_pattern(snippet, m):
-                ui.notify("A block rule needs at least two lines — switch to another option "
-                          "or add a second line.", type="warning")
-                return
+                if m == LEARN_REPLACE and not (repl.value or "").strip():
+                    ui.notify("Enter the replacement text, or pick one of the remove options.",
+                              type="warning")
+                    return
+                if m == LEARN_REMOVE_BLOCK and not learned_pattern(snippet, m):
+                    ui.notify("A block rule needs at least two lines — switch to another option "
+                              "or add a second line.", type="warning")
+                    return
                 try:
                     cfg = load_config(common.CONFIG_PATH)
                     pair = [learned_pattern(snippet, m),

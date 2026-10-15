@@ -214,6 +214,9 @@ def main():
         print(f"Port {requested} is used by another program — using {port} instead.")
 
     updates.SERVER_PORT = port
+    from chartcleaner.host_guard import LoopbackHostGuard, is_loopback_host
+    if is_loopback_host(args.host):
+        app.add_middleware(LoopbackHostGuard)
     ui.run(
         host=args.host,
         port=port,

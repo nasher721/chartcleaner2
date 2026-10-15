@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -29,6 +30,9 @@ __all__ = [
     "maybe_purge_old_data",
     "delete_all_chart_data",
 ]
+
+
+_TOKEN_SAVE_LOCK = threading.Lock()
 
 
 def _store():
@@ -50,13 +54,22 @@ def save_token_map(mapping: dict[str, str], source: str = "") -> Path:
     from . import secure_store
 
     _store().ensure_dirs()
-    dest = _store().TOKENS_DIR / f"tokens-{time.strftime('%Y%m%d-%H%M%S')}.enc"
-    if not dest.exists():  # two runs in the same second share the file
-        record = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "source": source,
-            "map": mapping,
-        }
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "source": source,
+        "map": mapping,
+    }
+    with _TOKEN_SAVE_LOCK:
+        # One file per run, even for runs in the same second (API, watcher,
+        # patient lists): "Restore" reads the newest map, so a shared file
+        # would put another chart's values back. Names still sort oldest-first.
+        now = time.time()
+        stem = f"tokens-{time.strftime('%Y%m%d-%H%M%S', time.localtime(now))}-{int(now % 1 * 1e6):06d}"
+        dest = _store().TOKENS_DIR / f"{stem}.enc"
+        n = 1
+        while dest.exists():
+            dest = _store().TOKENS_DIR / f"{stem}-{n:03d}.enc"
+            n += 1
         secure_store.write_text(dest, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     for old in _token_map_files()[:-_store().TOKEN_MAPS_TO_KEEP]:
         try:

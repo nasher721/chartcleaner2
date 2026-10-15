@@ -22,7 +22,7 @@ _STOP = {
     "have", "he", "her", "his", "if", "in", "into", "is", "it", "its", "of", "on", "or", "she",
     "that", "the", "their", "then", "there", "these", "they", "this", "to", "was", "were",
     "which", "while", "will", "with", "without", "would", "no", "not", "per", "than", "so",
-    "patient", "pt", "will", "also", "very", "any", "all", "some",
+    "patient", "pt", "also", "very", "any", "all", "some",
 }
 # Runs of letters (with inner hyphens/apostrophes) separated only by spaces.
 _CHUNK = re.compile(r"[A-Za-z][A-Za-z'\-]*(?:[ \t]+[A-Za-z][A-Za-z'\-]*)+")
