@@ -1558,10 +1558,7 @@ async def clean_page():
             if added:
                 rules.append(pair)
             cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})["enabled"] = True
-            errors, _ = validate_config(cfg)
-            if errors:
-                raise ValueError(errors[0])
-            save_config_with_backup(cfg)
+            save_config_with_backup(cfg)  # validates first
             if added:
                 remember_rule_example(pair, selection["text"], cfg)
             highlight["undo"] = dict(before=before, after=after, pair=pair, added=added,
@@ -1580,13 +1577,20 @@ async def clean_page():
 
     async def report_impact(sid: str, entry, taught_on: str) -> None:
         """After a rule is saved: say what it does to the other recent charts."""
+        # Quick Remove clicks each start a report; only the newest one is worth running.
+        gen = highlight["impact_gen"] = highlight.get("impact_gen", 0) + 1
+
         def work():
+            if gen != highlight["impact_gen"]:
+                return None
             return preview_rule(load_config(common.CONFIG_PATH), sid, entry,
                                 recent_charts.texts(20), skip_text=taught_on,
                                 examples=rule_examples.load())
         try:
             impact = await run.io_bound(work)
         except Exception:
+            return
+        if impact is None or gen != highlight["impact_gen"]:
             return
         if impact.charts_checked:
             msg = impact.headline

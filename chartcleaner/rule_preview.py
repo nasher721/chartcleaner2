@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import difflib
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .regex_risk import risks as regex_risks
@@ -92,8 +93,24 @@ def trial_config(cfg: dict, sid: str, entry) -> dict:
     return trial
 
 
+def _surplus(lines: list[str], other: list[str]) -> list[str]:
+    """Non-blank lines of ``lines`` that ``other`` has fewer copies of, in order."""
+    remaining = Counter(other)
+    out = []
+    for ln in lines:
+        if remaining.get(ln, 0) > 0:
+            remaining[ln] -= 1
+        elif ln.strip():
+            out.append(ln)
+    return out
+
+
 def _changed_lines(before: str, after: str) -> list[dict]:
+    # Only lines missing from the other side can have changed, so only those are
+    # aligned. Diffing whole charts is quadratic on copy-forward repeats (seconds
+    # per chart), and it ran on every "Remove" — long enough to drop the UI socket.
     a, b = before.splitlines(), after.splitlines()
+    a, b = _surplus(a, b), _surplus(b, a)
     out = []
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
         if tag == "equal":

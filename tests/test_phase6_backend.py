@@ -158,6 +158,19 @@ def test_preview_reports_other_charts_only():
     assert "1 line(s) in 1 of your 2" in impact.headline
 
 
+def test_preview_is_fast_on_long_copy_forward_charts():
+    # Whole-chart diffing was quadratic here (seconds per chart) and ran after
+    # every selection "Remove", stalling the UI until its socket dropped.
+    note = "\n".join(["Printed by Dr. Kim", "", "Plan: continue current care", "BP 120/80", ""] * 20)
+    texts = [note * 40] * 5  # ~4,000 lines each, nearly all repeats
+    import time
+    t0 = time.perf_counter()
+    impact = preview(cfg(), "learned_rules", ["Printed by Dr\\. \\w+", ""], texts)
+    assert time.perf_counter() - t0 < 2.0
+    assert impact.charts_changed == 5 and impact.lines_changed == 5 * 800
+    assert impact.samples == [{"before": "Printed by Dr. Kim", "after": ""}]
+
+
 def test_preview_flags_broken_learned_examples():
     c = cfg()
     c["learned_rules"] = [["foo", "bar"]]
