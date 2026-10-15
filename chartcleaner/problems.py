@@ -88,7 +88,7 @@ _STOP = {"and", "or", "of", "the", "with", "without", "s/p", "status", "post", "
          "continue", "continued", "grade", "stable", "improving", "worsening", "resolved",
          "place", "placed", "home", "regimen", "diet", "resumes", "only", "given", "today",
          "will", "discuss", "draining", "monitor", "monitoring", "plan", "management", "w", "w/",
-         "s/p", "follow", "f/u", "overread", "by", "dr", "pt", "patient", "x", "d", "q", "prn"}
+         "follow", "f/u", "overread", "by", "dr", "pt", "patient", "x", "d", "q", "prn"}
 _AP_HEADING = re.compile(r"^\s*(?:#{1,6}\s*)?(?:assessment\s*(?:&|and|/)\s*plan|a\s*/\s*p|impression\s*(?:&|and)\s*plan|"
                          r"assessment|plan|problem list|hospital course by problem)\s*:?\s*$",
                          re.IGNORECASE)

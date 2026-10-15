@@ -71,6 +71,21 @@ def test_docx_rejects_dtd_entities(tmp_path):
         load_file(tmp_path / "evil.docx")
 
 
+def test_docx_rejects_dtd_hidden_past_the_first_64k(tmp_path):
+    padding = "<!-- " + "x" * 70_000 + " -->"
+    _make_docx(tmp_path / "evil.docx", ["x"],
+               inject_prefix=f'<!DOCTYPE w [{padding}<!ENTITY a "aaaa">]>')
+    with pytest.raises(IngestError, match="DTD"):
+        load_file(tmp_path / "evil.docx")
+
+
+def test_docx_size_checked_before_decompressing(tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest, "_DOCX_XML_MAX_BYTES", 1000)
+    _make_docx(tmp_path / "big.docx", ["a" * 5000])
+    with pytest.raises(IngestError, match="implausibly large"):
+        load_file(tmp_path / "big.docx")
+
+
 def test_docx_rejects_garbage(tmp_path):
     (tmp_path / "bad.docx").write_bytes(b"not a zip")
     with pytest.raises(IngestError):
