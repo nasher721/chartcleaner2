@@ -1,0 +1,425 @@
+{
+    "_comment": "Known fixes for patterns shipped in older config.json files. Applied only where a config still holds the exact old pattern (Rules page → 'Apply pattern fixes', and frozen-build migration). new = null removes the rule.",
+    "fixes": [
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*(?:Frequency|Timing|Number of Occurrences|Order Comments|Linked Order|Dose|Route|Dispense|Refill|Auth\\.|Assoc\\. diagnoses|Referral Priority|Referral Type|Referral Reason|Number of Visits Requested|Expiration Date):\\s*.*$\\n?",
+            "new": "^[ \\t]*(?:Frequency|Timing|Number of Occurrences|Order Comments|Linked Order|Dose|Route|Dispense|Refill|Auth\\.|Assoc\\. diagnoses|Referral Priority|Referral Type|Referral Reason|Number of Visits Requested|Expiration Date):\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Present on Admission:\\s*(?:Yes|No|Unknown).*$\\n?",
+            "new": "^[ \\t]*Present on Admission:\\s*(?:Yes|No|Unknown).*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Filed:.*?Date of Service:.*?Status:.*$\\n?",
+            "new": "^[ \\t]*Filed:.*?Date of Service:.*?Status:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Editor:.*?(?:\\(.*?\\)|\\n)",
+            "new": "^[ \\t]*Editor:.*?(?:\\(.*?\\)[ \\t]*\\n?|\\n)",
+            "reason": "Removes 'Editor: name (date)' and its line ending; it used to leave an empty line behind, which the next rule's ^\\s* happened to swallow. Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Editor:\\s*.+$\\n?",
+            "new": "^[ \\t]*Editor:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Related Notes:.*$\\n?",
+            "new": "^[ \\t]*Related Notes:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Cosign Required:.*$\\n?",
+            "new": "^[ \\t]*Cosign Required:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Auth\\. provider:\\s*.+$\\n?",
+            "new": "^[ \\t]*Auth\\. provider:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Standing Status:\\s*.+$\\n?",
+            "new": "^[ \\t]*Standing Status:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Author:\\s*.+$\\n?",
+            "new": "^[ \\t]*Author:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Author Type:\\s*.+$\\n?",
+            "new": "^[ \\t]*Author Type:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Cosigner:\\s*.+$\\n?",
+            "new": "^[ \\t]*Cosigner:\\s*.+$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Version \\d+ of \\d+\\s*$\\n?",
+            "new": "^[ \\t]*Version \\d+ of \\d+\\s*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Enterprise Approved Secondary TF Product.*$\\n?",
+            "new": "^[ \\t]*Enterprise Approved Secondary TF Product.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*FOR RDs ONLY.*$\\n?",
+            "new": "^[ \\t]*FOR RDs ONLY.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Number of Liter Bags:.*$\\n?",
+            "new": "^[ \\t]*Number of Liter Bags:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Remain\\tInterval\\tExpires.*$\\n?",
+            "new": "^[ \\t]*Remain\\tInterval\\tExpires.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*ORD\\s*:\\s*\\d+.*$\\n?",
+            "new": "^[ \\t]*ORD\\s*:\\s*\\d+.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*PID\\s*:\\s*\\d+.*$\\n?",
+            "new": "^[ \\t]*PID\\s*:\\s*\\d+.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*MQ:\\s*.*$\\n?",
+            "new": "^[ \\t]*MQ:\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Overread By\\s*:.*$\\n?",
+            "new": "^[ \\t]*Overread By\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Edited By\\s*:.*$\\n?",
+            "new": "^[ \\t]*Edited By\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Acquired by\\s*:.*$\\n?",
+            "new": "^[ \\t]*Acquired by\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Referred By\\s*:.*$\\n?",
+            "new": "^[ \\t]*Referred By\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Test Reason\\s*:.*$\\n?",
+            "new": "^[ \\t]*Test Reason\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Location\\s*:\\s*\\d+\\s*:.*$\\n?",
+            "new": "^[ \\t]*Location\\s*:\\s*\\d+\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Procedure Date\\s*:.*$\\n?",
+            "new": "^[ \\t]*Procedure Date\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Edit Date\\s*:.*$\\n?",
+            "new": "^[ \\t]*Edit Date\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Pager:\\s*v?\\d+.*$\\n?",
+            "new": "^[ \\t]*Pager:\\s*v?\\d+.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Neurosurgery On-Call:\\s*\\d+.*$\\n?",
+            "new": "^[ \\t]*Neurosurgery On-Call:\\s*\\d+.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*(?:PATIENT IDENTITY VERIFICATION|PATIENT IDENTITY VERIFICATION COMPLETED USING TWO).*$\\n?",
+            "new": "^[ \\t]*PATIENT IDENTITY VERIFICATION.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line. The second alternative was already covered by the first."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*FALL SCREENING:.*$\\n?",
+            "new": "^[ \\t]*FALL SCREENING:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*PATIENT GENDER DATA:.*$\\n?",
+            "new": "^[ \\t]*PATIENT GENDER DATA:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*PATIENT RELEVANT IMPLANT DATA REVIEWED:.*$\\n?",
+            "new": "^[ \\t]*PATIENT RELEVANT IMPLANT DATA REVIEWED:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*PATIENT PRESENTS WITH AN IMPLANTABLE OR ATTACHED MEDICAL DEVICE:.*$\\n?",
+            "new": "^[ \\t]*PATIENT PRESENTS WITH AN IMPLANTABLE OR ATTACHED MEDICAL DEVICE:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*PERIPHERAL IV DATA:.*$\\n?",
+            "new": "^[ \\t]*PERIPHERAL IV DATA:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*RADIOLOGY DEPARTMENT:.*$\\n?",
+            "new": "^[ \\t]*RADIOLOGY DEPARTMENT:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*SIGNED BY:\\s*.*$\\n?",
+            "new": "^[ \\t]*SIGNED BY:\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Dictated by\\s*:.*$\\n?",
+            "new": "^[ \\t]*Dictated by\\s*:.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "(?i)^\\s*electronically signed by:\\s*.*$\\n?",
+            "new": "^[ \\t]*electronically signed by:\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line. The inline (?i) was redundant: this stage already ignores case."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*(?:Process Instructions Reviewed By|STAT Orders Reviewed by|Admitting Provider|Ordering Party|Full Code Order Discussed With|Surrogate Decision Maker Relationship|Requestor Contact Info|AK Location|Transferring to)::?\\s*.*$\\n?",
+            "new": "^[ \\t]*(?:Process Instructions Reviewed By|STAT Orders Reviewed by|Admitting Provider|Ordering Party|Full Code Order Discussed With|Surrogate Decision Maker Relationship|Requestor Contact Info|AK Location|Transferring to)::?\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*(?:Implement nurse driven protocol|Follow nursing urinary catheter|Indication for Catheter|Discontinue urinary catheter when|Curved \\(Coudé\\) Catheter|Connected? to|Inserted?(?: in Surgery)?|Date of Surgery|Patient has an Artificial|Irrigate|Condition for Release of Order|Assessment type|Reason for Social Work|Consult Type|Enter Reassessment date\\.?|Was the Nursing Swallow Screen|Is respiratory status stable|Is patent NPO|Case Classification|Add-On|Line Type|Arterial line location)::?\\s*.*$\\n?",
+            "new": "^[ \\t]*(?:Implement nurse driven protocol|Follow nursing urinary catheter|Indication for Catheter|Discontinue urinary catheter when|Curved \\(Coudé\\) Catheter|Connected? to|Inserted?(?: in Surgery)?|Date of Surgery|Patient has an Artificial|Irrigate|Condition for Release of Order|Assessment type|Reason for Social Work|Consult Type|Enter Reassessment date\\.?|Was the Nursing Swallow Screen|Is respiratory status stable|Is patent NPO|Case Classification|Add-On|Line Type|Arterial line location)::?\\s*.*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Code Status History[ \\t]*:?[^\n]*$\n?",
+            "new": "^[ \\t]*Code Status History[ \\t]*:?[^\n]*$\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Code Status[ \\t]*:?[^\n]*(?:\\b(?:changed|was|previously|prior|former|updated|revised|history)\\b|→|->|\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b|\\b\\d{1,2}:\\d{2}\\b)[^\n]*$\n?",
+            "new": "^[ \\t]*Code Status[ \\t]*:?[^\n]*(?:\\b(?:changed|was|previously|prior|former|updated|revised|history)\\b|→|->|\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b|\\b\\d{1,2}:\\d{2}\\b)[^\n]*$\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Final[ \\t]*$\\n?",
+            "new": "^[ \\t]*Final[ \\t]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Date Value[ \\t]*:?[^\\n]*$\\n?",
+            "new": "^[ \\t]*Date Value[ \\t]*:?[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Pre-op diagnosis[ \\t]*:[^\\n]*$\\n?",
+            "new": "^[ \\t]*Pre-op diagnosis[ \\t]*:[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Antimicrobial indication[ \\t]*:[^\\n]*$\\n?",
+            "new": "^[ \\t]*Antimicrobial indication[ \\t]*:[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Abnormal Labs Reviewed[ \\t]*$\\n?",
+            "new": "^[ \\t]*Abnormal Labs Reviewed[ \\t]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*This order was created via procedure documentation[ \\t]*$\\n?",
+            "new": "^[ \\t]*This order was created via procedure documentation[ \\t]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Placed in \"And\" Linked Group[ \\t]*$\\n?",
+            "new": "^[ \\t]*Placed in \"And\" Linked Group[ \\t]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Last Documented/Reviewed time[ \\t]*:[^\\n]*$\\n?",
+            "new": "^[ \\t]*Last Documented/Reviewed time[ \\t]*:[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Notify Physician or LIP within 24 hours[^\\n]*$\\n?",
+            "new": "^[ \\t]*Notify Physician or LIP within 24 hours[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "emr_line_metadata",
+            "old": "^\\s*Procedure[ \\t]+Component[ \\t]+Value[ \\t]+Units[ \\t]+Date/Time[ \\t]*$\\n?",
+            "new": "^[ \\t]*Procedure[ \\t]+Component[ \\t]+Value[ \\t]+Units[ \\t]+Date/Time[ \\t]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "boilerplate",
+            "old": "^\\s*\\{[^}\\n]{80,}\\}\\s*$\\n?",
+            "new": "^[ \\t]*\\{[^}\\n]{80,}\\}\\s*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "boilerplate",
+            "old": "^\\s*\\{[^}\\n]*::\\d+::[^}\\n]*\\}\\s*$\\n?",
+            "new": "^[ \\t]*\\{[^}\\n]*::\\d+::[^}\\n]*\\}\\s*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "boilerplate",
+            "old": "^\\s*Guyatt GH, et al\\. Chest 2012[^\\n]*$\\n?",
+            "new": "^[ \\t]*Guyatt GH, et al\\. Chest 2012[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "boilerplate",
+            "old": "^\\s*Nishimura RA, et al\\. JACC 2017[^\\n]*$\\n?",
+            "new": "^[ \\t]*Nishimura RA, et al\\. JACC 2017[^\\n]*$\\n?",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "epic_phi_patterns",
+            "old": "(?im)^\\s*PATIENT NAME:\\s*.+$",
+            "new": "(?im)^[ \\t]*PATIENT NAME:\\s*.+$",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "epic_phi_patterns",
+            "old": "(?im)^\\s*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$",
+            "new": "(?im)^[ \\t]*NAME\\s*:\\s*[A-Z][A-Z0-9 ,.'\\-]+$",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "epic_phi_patterns",
+            "old": "(?im)^\\s*Primary Emergency Contact:\\s*.+$",
+            "new": "(?im)^[ \\t]*Primary Emergency Contact:\\s*.+$",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "epic_phi_patterns",
+            "old": "(?im)^\\s*SIGNATURE:\\s*.+$",
+            "new": "(?im)^[ \\t]*SIGNATURE:\\s*.+$",
+            "reason": "Leading ^\\s* also matched the blank line(s) above, so removing a line merged it with the previous paragraph; ^[ \\t]* removes only the line."
+        },
+        {
+            "key": "boilerplate",
+            "old": "This SmartSection is not supported in the current editor:.*?(?=\\n|$)",
+            "new": "This SmartSection is not supported in the current editor[:.][^\\n]*",
+            "reason": "Merged with the '…editor.' variant; [^\\n]* is the same match without a per-character look-ahead."
+        },
+        {
+            "key": "boilerplate",
+            "old": "This SmartSection is not supported in the current editor\\..*?(?=\\n|$)",
+            "new": null,
+            "reason": "Merged into the '…editor[:.]' rule."
+        },
+        {
+            "key": "boilerplate",
+            "old": "Medication and Non-Pharmacologic VTE Prophylaxis/Anticoagulants[\\s\\S]*?VTE Prophylaxis:.*?(?=\\n|$)",
+            "new": "Medication and Non-Pharmacologic VTE Prophylaxis/Anticoagulants[\\s\\S]*?VTE Prophylaxis:[^\\n]*",
+            "reason": "[^\\n]* is the same match without a per-character look-ahead."
+        },
+        {
+            "key": "boilerplate",
+            "old": "\\.[A-Z0-9_]+\\[[^\\]\\n]*",
+            "new": "(?-i:\\.[A-Z][A-Z0-9_]*)\\[[^\\]\\n]*\\]?",
+            "reason": "Meant for unexpanded Epic SmartLinks (.LASTLABS[…]) but ran case-insensitively, so 'vitals.hr[1]' was cut to 'vitals]'. Now upper-case only, and the closing ] goes too."
+        },
+        {
+            "key": "boilerplate",
+            "old": "@[A-Z0-9_]+@",
+            "new": "(?-i:@[A-Z0-9_]+@)",
+            "reason": "Epic @TOKEN@ placeholders are upper case; the rule ran case-insensitively."
+        },
+        {
+            "key": "boilerplate",
+            "old": "\\[\\s*(?:\\d{4,}|[A-Z]{2,}\\d+[A-Z0-9]*|[A-Z]{6,}|SQ[A-Z]{2,})\\s*\\]",
+            "new": "\\[\\s*(?-i:\\d{4,}|[A-Z]{2,}\\d+[A-Z0-9]*|(?!(?:AB)?NORMAL\\b|POSITIVE\\b|NEGATIVE\\b|PENDING\\b|CRITICAL\\b|DETECTED\\b|REACTIVE\\b|NONREACTIVE\\b|RESISTANT\\b|SUSCEPTIBLE\\b|SENSITIVE\\b|INTERMEDIATE\\b|PRELIMINARY\\b|CORRECTED\\b|AMENDED\\b)[A-Z]{6,}|SQ[A-Z]{2,})\\s*\\]",
+            "reason": "Meant for Epic IDs like [SQLAB12], but ran case-insensitively, so results such as 'CXR [normal]' or 'culture [pending]' lost their result. Now upper-case only, and result words ([ABNORMAL], [CRITICAL], …) are kept."
+        },
+        {
+            "key": "boilerplate",
+            "old": "\\s*\\(\\s*[A-Z]{2}(?:\\s*,\\s*[A-Z]{2})+\\s*\\)",
+            "new": "\\s*\\((?-i:\\s*(?!(?:O[DSU]|A[DSU]|PO|IV|IM|SQ|SC|PR|NG|OG|SL|IO|GT|PT|OT|ST|CT|MR|US|LE|UE)\\b)[A-Z]{2}(?:\\s*,\\s*(?!(?:O[DSU]|A[DSU]|PO|IV|IM|SQ|SC|PR|NG|OG|SL|IO|GT|PT|OT|ST|CT|MR|US|LE|UE)\\b)[A-Z]{2})+\\s*)\\)",
+            "reason": "Ran case-insensitively and deleted clinical pairs: 'Eye drops (OD, OS)' lost its laterality, '(PO, IV)' its routes. Now upper-case only, and laterality / route / therapy / imaging codes are kept."
+        },
+        {
+            "key": "boilerplate",
+            "old": "\\s*\\(\\s*HCC\\s*\\)",
+            "new": "\\s*\\(\\s*(?:CMS\\s*/\\s*)?HCC\\s*\\)",
+            "reason": "Epic also tags problems '(CMS/HCC)'; that form is now removed too."
+        }
+    ]
+}

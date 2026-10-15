@@ -4,6 +4,7 @@ Filed: 09/15/2026 0712
 Date of Service: 09/15/2026
 Status: Signed
 Location 1: Neuroscience ICU Bed 4
+
 [REDACTED_NAME_LINE]
 [REDACTED_DOB]
 [REDACTED_ID]
@@ -61,5 +62,6 @@ Progress Notes by Sarah Chen, MD
 1. SAH, Hunt-Hess 2, Fisher 3, post-coiling d 4.
 - Continue nicardipine drip, titrate SBP < 160.
 - Nimodipine 60 mg PO q4h.
+
 [REDACTED_SIGNATURE_LINE]
 </patient_chart>

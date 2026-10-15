@@ -550,6 +550,16 @@ def pipeline_page():
         ui.number("Minimum confidence (0–1, empty = Presidio default)",
                   value=n.get("score_threshold"), min=0, max=1, step=0.05,
                   on_change=lambda e: n.update(score_threshold=e.value)).classes("w-96")
+        # Every phone region is one more full scan of the chart (~25% of NLP
+        # time for US-only vs all eight), but the other regions also catch
+        # national-format foreign numbers and long record numbers such as
+        # "Accession 8847362519", so all regions stay the default.
+        ui.select({"all": "All formats (default: US, GB, DE, FR, IL, IN, CA, BR)",
+                   "us": "US & Canada only (faster; misses non-US local formats and some long IDs)"},
+                  value="us" if n.get("phone_regions") == ["US"] else "all",
+                  label="Phone number formats",
+                  on_change=lambda e: n.update(phone_regions=["US"] if e.value == "us" else [])) \
+            .props("outlined dense").classes("w-full max-w-xl").mark("phone-regions")
 
         allow = draft.setdefault("nlp_allow_list", [])
         ui.label("Allow-list (words NLP must never redact, e.g. drug names that look like people)") \

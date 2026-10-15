@@ -14,6 +14,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable
 
 from .abbreviations import MAX_TRACKED_CHANGES, LineCounter
+from .regex_prefilter import TextView, may_match
 from .section_parser import parse_clinical_sections
 
 if TYPE_CHECKING:
@@ -229,11 +230,17 @@ def _apply_rules(
     hits: dict[str, int] = {}
     slow: dict[str, float] = {}
     total = 0
+    view = TextView(text)
     for pattern, replacement in rules:
+        # Skip the scan when the rule needs literal text the chart doesn't
+        # have (most rules, on most charts); the result is identical.
+        if not may_match(pattern, flags, view):
+            continue
         text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
                               keep, slow, scope, table_lines)
         if n:
             hits[rule_id(pattern)] = n
+            view = TextView(text)
         total += n
     details = {"phi": {"pattern_redactions": total}} if phi else {}
     return text, total, _with_tracking(details, hits, changes, slow)

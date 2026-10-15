@@ -188,3 +188,22 @@ async def test_clean_page_shows_fact_check(user, monkeypatch, tmp_path):
         CLEAN_STATE.update(before)
         AUTO_LAST.clear()
         AUTO_LAST.update(auto_before)
+
+
+def test_memoized_fact_counts_match_a_whole_text_count():
+    """fact_counts sums per-paragraph memos; it must equal one pass over the text."""
+    import random
+
+    from chartcleaner import fact_check as fc
+
+    def whole(text):
+        return Counter(k for k, _, _, _ in fc._fact_spans(fc._mask(text)))
+
+    sample = (Path(__file__).resolve().parent.parent / "sample_chart.txt").read_text(encoding="utf-8")
+    lines = sample.split("\n")
+    rnd = random.Random(3)
+    texts = [sample, "Full\n\ncode. comfort\ncare. BP 120/80\n\n5\nmg [[T1]] full [[T2]] code\n\n\nNa 141"]
+    texts += ["\n".join(rnd.choice(lines) if rnd.random() > 0.25 else "" for _ in range(rnd.randint(1, 50)))
+              for _ in range(150)]
+    for text in texts:
+        assert fc.fact_counts(text) == whole(text)

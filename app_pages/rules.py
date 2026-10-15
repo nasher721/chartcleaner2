@@ -78,6 +78,40 @@ def text_rules_page():
                                   on_click=lambda e, r=r: remove_health_rule(r, holder)) \
                             .props("flat dense")
 
+    def render_pattern_fixes(holder: "ui.column") -> None:
+        """Offer the known fixes for shipped patterns this config still holds."""
+        from chartcleaner import pattern_fixes
+
+        holder.clear()
+        todo = pattern_fixes.pending(load_current())
+        if not todo:
+            return
+
+        def apply_fixes() -> None:
+            fixed, n = pattern_fixes.apply(load_current())
+            errors, _ = validate_config(fixed)
+            if errors:
+                ui.notify(f"Could not apply fixes: {errors[0]}", type="negative")
+                return
+            save_config_with_backup(fixed)
+            ui.notify(f"Updated {n} rule{'s' if n != 1 else ''}. A backup was saved first.",
+                      type="positive")
+            render_tab("Remove & replace")
+
+        with holder, ui.card().classes("w-full max-w-5xl gap-2 p-3 cc-panel").mark("pattern-fixes"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.icon("auto_fix_high").classes("text-primary")
+                ui.label(f"{len(todo)} built-in rule{'s have' if len(todo) != 1 else ' has'} a known fix "
+                         "(some removed real content such as 'CXR [normal]' or '(OD, OS)').") \
+                    .classes("text-sm grow")
+                ui.button("Apply fixes", icon="done_all", on_click=apply_fixes) \
+                    .props("unelevated dense color=primary").mark("apply-pattern-fixes")
+            with ui.expansion("What changes").classes("w-full text-sm"):
+                for reason in dict.fromkeys(f["reason"] for f in todo):
+                    count = sum(f["reason"] == reason for f in todo)
+                    ui.label(f"• {reason}" + (f" ({count} rules)" if count > 1 else "")) \
+                        .classes("text-xs opacity-80")
+
     def remove_health_rule(row: dict, holder: "ui.column") -> None:
         cfg = load_current()
         key = row["key"]
@@ -105,7 +139,8 @@ def text_rules_page():
 
         def render_tab(name: str) -> None:
             holder, renderer = {
-                "Remove & replace": (learned_holder, render_learned_editor),
+                "Remove & replace": (learned_holder, lambda load, save: render_learned_editor(
+                    load, save, sample_text=_abbreviation_preview_text, load_runs=store.load_runs)),
                 "Abbreviations": (abbreviation_holder, lambda load, save:
                     render_abbreviations(load, save, sample_text=_abbreviation_preview_text)),
                 "Share & import": (sharing_holder, lambda load, save:
@@ -113,6 +148,8 @@ def text_rules_page():
             }[name]
             holder.clear()
             with holder:
+                if name == "Remove & replace":
+                    render_pattern_fixes(ui.column().classes("w-full"))
                 renderer(load_current, save_config_with_backup)
                 if name == "Remove & replace":
                     health_holder = ui.column().classes("w-full")
