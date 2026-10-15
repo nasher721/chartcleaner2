@@ -123,3 +123,19 @@ def test_load_config_reports_missing_required_keys(tmp_path):
 def test_load_config_missing_file_is_a_clear_error(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.json")
+
+
+@pytest.mark.parametrize("regions,errors,warnings", [
+    (["US"], 0, 0),
+    ([], 0, 0),
+    (["US", "ZZ"], 0, 1),
+    ("US", 1, 0),
+])
+def test_phone_regions_are_validated(regions, errors, warnings):
+    from chartcleaner.engine import load_default_config, validate_config
+
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"phone_regions": regions}
+    errs, warns = validate_config(cfg)
+    assert sum("phone_regions" in e for e in errs) == errors
+    assert sum("phone_regions" in w for w in warns) == warnings

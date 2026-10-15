@@ -168,6 +168,13 @@ preset. Statistics → *Rule health* lists rules that never match, touch too
 much, or run slow (slow ones can be removed in one click). Settings → *Check my learned rules* confirms highlighted rules still do
 what they were taught.
 
+**Editing rules.** *My text rules → Remove & replace* lists every learned rule, text
+replacement, line removal and boilerplate rule in one place. Add a rule as plain text or a
+regex and see how many times it matches the current chart (with before → after lines)
+before you save; delete one or many at once, with Undo. Each rule shows how often it
+matched in your recent cleans, and *Show → Never matched* finds the dead ones. If your
+config still has older built-in patterns with known fixes, the page offers *Apply fixes*.
+
 **Census.** Tag charts with a bed (e.g. `G20-1`) when cleaning and the Census
 page rolls every bed up for pre-rounds: allergies, code status, contradictions,
 to-do, devices, antibiotics, bundle gaps — plus what changed since the previous

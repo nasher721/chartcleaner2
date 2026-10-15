@@ -34,8 +34,8 @@ from __future__ import annotations
 import bisect
 import re
 from collections import Counter
-from functools import lru_cache
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from .clinical_whitelist import _COMMON_MEDICATIONS
@@ -120,6 +120,7 @@ _KEYWORD_WORDS = {"allergy": "allergy", "allergies": "allergy", "allergic": "all
                   "nkda": "NKDA", "dnr": "DNR", "dni": "DNI"}
 _KEYWORD_PHRASES = re.compile(r"(?<![A-Za-z])(?:(full\s+code)|(comfort\s+(?:care|measures)))(?![A-Za-z])",
                               re.IGNORECASE)
+_PHRASE_KEYS = frozenset({"kw:full code", "kw:comfort care"})
 
 
 def _norm_number(raw: str) -> str:
@@ -190,14 +191,34 @@ def _fact_spans(masked: str) -> list[tuple[str, str, int, int]]:
     return out
 
 
+@lru_cache(maxsize=4096)
+def _paragraph_counts(paragraph: str) -> tuple[tuple[str, int], ...]:
+    """Fact counts of one paragraph, without the multi-word keyword phrases."""
+    counts = Counter(key for key, _, _, _ in _fact_spans(_mask(paragraph))
+                     if key not in _PHRASE_KEYS)
+    return tuple(counts.items())
+
+
 def fact_counts(text: str) -> Counter:
     """How many times each fact key occurs — the cheap per-stage snapshot.
 
     Numbers count only in a clinical context, so dropping "Version 2 of 3"
     never looks like losing "Hunt-Hess 2"; values are compared by number, so
     "Sodium 141 mmol/L" → "Na 141" keeps the fact.
+
+    The pipeline takes a snapshot after every stage and most stages change a
+    few paragraphs, so counts are memoized per paragraph. That is exact: every
+    extractor stops at a blank line (labels at any newline) except "full code"
+    / "comfort care", whose ``\\s+`` may span one — those are counted on the
+    whole (masked) text.
     """
-    return Counter(key for key, _, _, _ in _fact_spans(_mask(text)))
+    counts: Counter = Counter()
+    for paragraph in text.split("\n\n"):
+        for key, n in _paragraph_counts(paragraph):
+            counts[key] += n
+    for m in _KEYWORD_PHRASES.finditer(_mask(text)):
+        counts["kw:full code" if m.group(1) else "kw:comfort care"] += 1
+    return counts
 
 
 @dataclass

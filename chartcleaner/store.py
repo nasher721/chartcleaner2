@@ -165,10 +165,16 @@ _MIGRATION_CHECKED = False
 
 
 def _migrate_config_schema(cfg: dict) -> dict:
-    """Apply the one known legacy change without touching current configs."""
+    """Apply known legacy changes without touching current configs.
+
+    Shipped patterns with known fixes (``pattern_fixes.json``) are updated only
+    where the config still holds the exact old pattern.
+    """
+    from . import pattern_fixes
+
     if "learned_rules" not in cfg:
-        return {**cfg, "learned_rules": []}
-    return cfg
+        cfg = {**cfg, "learned_rules": []}
+    return pattern_fixes.apply(cfg)[0]
 
 
 DEFAULT_PREFS = {

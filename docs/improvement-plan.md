@@ -8,6 +8,60 @@ the tests that prove it, and what "done" means.
 
 ---
 
+## Phase 14 — Regex rules: correctness, speed, editing (2026-10-15)
+
+Status: **done**. Golden output changes in two places only: blank lines between
+paragraphs that the old `^\s*` patterns swallowed are kept.
+
+### P1. Pattern fixes
+- **Files:** `config.json`, `chartcleaner/default_config.json`, new
+  `chartcleaner/pattern_fixes.json` + `pattern_fixes.py`, `store._migrate_config_schema`,
+  `app_pages/rules.py` (banner).
+- **What:** several shipped rules removed real content because their stage runs
+  case-insensitively: `\[…[A-Z]{6,}…\]` deleted `CXR [normal]` / `culture [pending]`,
+  `\(XX, YY\)` deleted `(OD, OS)` and `(PO, IV)`, and the SmartLink rule cut
+  `vitals.hr[1]` to `vitals]`. They now use scoped `(?-i:…)` (plus a keep-list of
+  result words and laterality/route codes). Line rules use `^[ \t]*` instead of
+  `^\s*`, which also matched the blank line above and merged paragraphs (the
+  `Editor: … (date)` rule now consumes its own line end instead of relying on
+  that). `(CMS/HCC)` is removed like `(HCC)`; two duplicate/lazy look-ahead rules
+  were merged into `[^\n]*`. Each fix is data (`{key, old, new, reason}`) and
+  applies only where a config still holds the exact old pattern: Rules page →
+  *Apply fixes* (backup first), and frozen-build migration.
+- **Tests:** `tests/test_pattern_fixes.py` (22).
+
+### P2. Speed
+- **Files:** new `chartcleaner/regex_prefilter.py`, `stage_core._apply_rules`,
+  `fact_check.fact_counts`, Pipeline page NLP editor + `config_schema_review`.
+- **What:** each rule's required literal text is read from the parsed pattern;
+  when it is absent the scan is skipped (112 of 148 shipped rules on the sample
+  chart). Conservative by construction — unknown shapes, non-ASCII literals
+  under IGNORECASE and texts containing İ/ı/ſ/K never skip, and the test derives
+  that character set from the regex engine. `fact_counts` (run after every stage)
+  is memoized per paragraph, which is exact because every extractor stops at a
+  blank line except "full code"/"comfort care", counted on the whole text.
+  Measured on an 83k-char chart: regex stages 106 → 31 ms, pipeline without NLP
+  305 → 139 ms, full clean 2.0 → 1.84 s.
+- **Phone formats (opt-in):** Pipeline → NLP → *Phone number formats* →
+  "US & Canada only" cuts the full clean to ~1.5 s. Not the default: US-only
+  misses national-format foreign numbers and long IDs such as
+  `Accession 8847362519` that the all-regions scan redacts.
+- **Tests:** `tests/test_regex_prefilter.py` (19), `test_fact_check.py`,
+  `test_validation.py` (`phone_regions`).
+
+### P3. Removing and creating rules
+- **Files:** `chartcleaner/learned_editor.py`, `app_pages/rules.py`.
+- **What:** Rules → *Remove & replace* now edits learned rules, text
+  replacements, line removals and boilerplate in one place. New rules are plain
+  text (line removals widen to the whole line) or a regex; the dialog shows
+  compile errors, backtracking risks and a live preview (match count and
+  before → after lines on the Clean-page chart, else the sample). Delete is
+  immediate with Undo; multi-select deletes in bulk; each rule shows its hits
+  from run history and *Show → Never matched* lists dead rules.
+- **Tests:** `tests/test_learned_editor.py` (16).
+
+---
+
 ## Phase 13 — Accessibility, resilience, boundary validation (2026-10-14)
 
 Status: **done**. Three cross-cutting refinements, no config changes, no change

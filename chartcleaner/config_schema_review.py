@@ -93,6 +93,19 @@ class ReviewSchemaMixin:
             st = n.get("score_threshold")
             if st is not None and (not isinstance(st, (int, float)) or not 0 <= st <= 1):
                 self.warnings.append("nlp_redaction.score_threshold: expected number between 0 and 1")
+            regions = n.get("phone_regions")
+            if regions is not None:
+                if not isinstance(regions, list) or not all(isinstance(r, str) for r in regions):
+                    self.errors.append("nlp_redaction.phone_regions: must be a list of region codes like \"US\"")
+                else:
+                    try:
+                        import phonenumbers
+                        unknown = [r for r in regions if r.strip().upper() not in phonenumbers.SUPPORTED_REGIONS]
+                    except Exception:
+                        unknown = []
+                    if unknown:
+                        self.warnings.append(
+                            f"nlp_redaction.phone_regions: unknown region code(s) {', '.join(unknown)} are ignored")
 
         al = self.cfg.get("nlp_allow_list")
         if al is not None and (not isinstance(al, list) or not all(isinstance(x, str) for x in al)):
