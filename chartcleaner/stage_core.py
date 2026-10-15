@@ -7,6 +7,7 @@ compiled and hashed once per process instead of once per run.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import re
 import time
@@ -80,16 +81,33 @@ def _subn_tracked(
     skipped = 0
     lines = LineCounter(text)
 
+    # Line start offsets, built lazily (only when a "never remove" exception is
+    # actually hit) so the common case — no exceptions, or no matches — pays
+    # nothing. Replaces the previous per-match ``text.rfind``/``text.find``
+    # scan, which was O(len text) for every match (O(matches x len text) on a
+    # large chart) with an O(log lines) bisection.
+    _line_starts = {"v": None}
+
+    def _line_span(pos: int) -> tuple[int, int]:
+        starts = _line_starts["v"]
+        if starts is None:
+            starts = [0]
+            for i, ch in enumerate(text):
+                if ch == "\n":
+                    starts.append(i + 1)
+            _line_starts["v"] = starts
+        idx = bisect.bisect_right(starts, pos) - 1
+        start = starts[idx]
+        end = starts[idx + 1] - 1 if idx + 1 < len(starts) else len(text)
+        return start, end
+
     def repl(match: re.Match) -> str:
         nonlocal skipped
         found = match.group(0)
         if keep:
             # "Never remove" protects the whole line the match sits on, not just
             # the matched fragment (a rule may match a word inside a longer line).
-            ls = text.rfind("\n", 0, match.start()) + 1
-            le = text.find("\n", match.start())
-            if le == -1:
-                le = len(text)
+            ls, le = _line_span(match.start())
             line_text = text[ls:le].casefold()
             if any(k in line_text for k in keep):
                 skipped += 1
