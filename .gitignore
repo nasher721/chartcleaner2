@@ -19,3 +19,7 @@ cleaned_chart*.txt
 
 # WorkBuddy agent-internal data (memory, skills, logs) — never commit
 .workbuddy-ai/
+
+# Rust build artifacts
+target/
+**/target/

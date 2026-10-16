@@ -1,0 +1,24 @@
+[package]
+name = "chartcleaner-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Fast, single-binary Medical Chart Cleaner CLI + local web app and REST API"
+
+[[bin]]
+name = "chartcleaner"
+path = "src/main.rs"
+
+[dependencies]
+chartcleaner-core = { path = "../chartcleaner-core" }
+anyhow.workspace = true
+arboard.workspace = true
+axum.workspace = true
+clap.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+walkdir.workspace = true

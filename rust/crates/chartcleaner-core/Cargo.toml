@@ -1,0 +1,31 @@
+[package]
+name = "chartcleaner-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "High-performance clinical chart cleaning, PHI redaction, compaction, and fact-checking engine"
+
+[features]
+default = []
+onnx = []
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+csv.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+sha1.workspace = true
+chrono.workspace = true
+rayon.workspace = true
+aes-gcm.workspace = true
+rand.workspace = true
+base64.workspace = true
+subtle.workspace = true
+ahash.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+unicode-normalization.workspace = true
