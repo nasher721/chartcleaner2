@@ -102,7 +102,10 @@ def _find_best_match(target: str, candidates: list[str]) -> tuple[float, str | N
     best_cand = None
     target_low = target.lower()
     for cand in candidates:
-        sim = fuzz.ratio(target_low, cand.lower())
+        cand_low = cand.lower()
+        if target_low == cand_low:
+            return 100.0, cand
+        sim = fuzz.ratio(target_low, cand_low)
         if sim > best_sim:
             best_sim = sim
             best_cand = cand

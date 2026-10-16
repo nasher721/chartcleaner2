@@ -101,11 +101,16 @@ INSIGHT_ORDER = ("safety", "conflicts", "overnight", "pending", "stale", "device
 INSIGHTS = INSIGHT_ORDER
 
 
+_INSIGHT_MODULES: dict[str, Any] = {}
+
+
 def _insight_report(name: str, text: str):
-    import importlib
     if name not in INSIGHTS:
         raise ValueError(f"Unknown insight {name!r}; expected one of {', '.join(INSIGHTS)}")
-    module = importlib.import_module(f"chartcleaner.{name}")
+    module = _INSIGHT_MODULES.get(name)
+    if module is None:
+        import importlib
+        module = _INSIGHT_MODULES[name] = importlib.import_module(f"chartcleaner.{name}")
     return module.build(text)
 
 

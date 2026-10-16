@@ -55,6 +55,7 @@ def run_duplicate_notes(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, i
 
     kept = [parts[0]]
     seen_bodies: list[str] = []
+    seen_bodies_set: set[str] = set()
     dropped = 0
 
     for seg in parts[1:]:
@@ -63,12 +64,16 @@ def run_duplicate_notes(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, i
             kept.append(seg)
             continue
         body_low = body.lower()
+        if body_low in seen_bodies_set:
+            dropped += 1
+            continue
         if seen_bodies and rf_process.extractOne(
             body_low, seen_bodies, scorer=rf_fuzz.ratio, score_cutoff=threshold
         ) is not None:
             dropped += 1
             continue
         seen_bodies.append(body_low)
+        seen_bodies_set.add(body_low)
         kept.append(seg)
 
     return "".join(kept), dropped, {"notes_kept": len(kept)}
@@ -95,6 +100,7 @@ def run_fuzzy_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, 
     paragraphs = text.split("\n\n")
     deduped: list[str] = []
     eligible: list[str] = []  # lowered, stripped candidates that can match future paragraphs
+    eligible_set: set[str] = set()
     dropped = 0
 
     for p in paragraphs:
@@ -103,6 +109,9 @@ def run_fuzzy_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, 
             deduped.append(p)
             continue
         cand_low = p_clean.lower()
+        if cand_low in eligible_set:
+            dropped += 1
+            continue
         if eligible and rf_process.extractOne(
             cand_low, eligible, scorer=rf_fuzz.ratio, score_cutoff=threshold
         ) is not None:
@@ -111,6 +120,7 @@ def run_fuzzy_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, 
             deduped.append(p)
             if len(p_clean) > min_chars:
                 eligible.append(cand_low)
+                eligible_set.add(cand_low)
 
     return "\n\n".join(deduped), dropped, {"paragraphs_kept": len(deduped)}
 
@@ -149,7 +159,7 @@ def run_fuzzy_line_dedup(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, 
             kept.append(line)
             continue
         low = stripped.lower()
-        if any(rf_fuzz.ratio(low, cand) >= threshold for cand in recent):
+        if low in recent or any(rf_fuzz.ratio(low, cand) >= threshold for cand in recent):
             dropped += 1
         else:
             kept.append(line)

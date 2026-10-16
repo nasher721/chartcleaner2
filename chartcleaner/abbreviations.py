@@ -188,7 +188,13 @@ def _normalize_scope(scope: Any) -> dict | None:
 _ENGLISH_LETTERS = {"a", "I"}
 
 
-def _unclear_letters(rows: list[dict]) -> set[str]:
+@lru_cache(maxsize=1)
+def _source_rows() -> list[dict[str, str]]:
+    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
+        return list(csv.DictReader(source))
+
+
+def _unclear_letters(rows: list[dict] | None = None) -> set[str]:
     """One-letter abbreviations the bundled list never applies when shortening.
 
     A single letter with several dictionary meanings (x = "for" or "times",
@@ -196,6 +202,12 @@ def _unclear_letters(rows: list[dict]) -> set[str]:
     from the letter alone, so "vitamin K" stays as written instead of
     becoming a "K" that reads as potassium. A custom entry can still use one.
     """
+    if rows is None:
+        return _cached_unclear_letters()
+    return _compute_unclear_letters(rows)
+
+
+def _compute_unclear_letters(rows: list[dict]) -> set[str]:
     found: dict[str, list[str]] = {}
     for row in rows:
         abbr = row["Abbreviation"].strip()
@@ -209,20 +221,24 @@ def _unclear_letters(rows: list[dict]) -> set[str]:
     return {a for a, seen in found.items() if len(seen) > 1 or a in _ENGLISH_LETTERS}
 
 
+@lru_cache(maxsize=1)
+def _cached_unclear_letters() -> set[str]:
+    return _compute_unclear_letters(_source_rows())
+
+
 @lru_cache(maxsize=32)
 def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None], int, dict[str, str],
                                          dict[str, str]]:
     options = json.loads(settings) if settings else {"disabled": [], "custom": []}
     disabled = set(options.get("disabled", []))
     custom = options.get("custom", [])
-    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
-        rows = list(csv.DictReader(source))
+    rows = _source_rows()
 
     # Exact source cells win over any aliases derived below, including aliases
     # created by an earlier row.
     by_term: dict[str, str | None] = {}
     aliases_by_source: dict[str, set[str]] = {}
-    unclear = _unclear_letters(rows)
+    unclear = _cached_unclear_letters()
     for row in rows:
         expanded = row["Expanded version"].strip()
         abbreviation = row["Abbreviation"].strip()
@@ -509,20 +525,19 @@ def _expander(settings: str) -> tuple[re.Pattern[str], dict[str, str | None]]:
     options = json.loads(settings)
     disabled = set(options["disabled"])
     meanings: dict[str, dict[str, str]] = {}   # abbr -> {casefolded meaning: meaning}
-    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
-        for row in csv.DictReader(source):
-            term = row["Expanded version"].strip()
-            abbr = row["Abbreviation"].strip()
-            if not term or not abbr or "not expanded in source" in term.casefold():
-                continue
-            if term.casefold() in disabled:
-                continue
-            meaning = display_term(term)
-            found = meanings.setdefault(abbr, {})
-            # Spelling variants (hemorrhage / haemorrhage) are one meaning; the
-            # first CSV row wins.
-            if not any(_same_meaning(meaning, other) for other in found.values()):
-                found[meaning.casefold()] = meaning
+    for row in _source_rows():
+        term = row["Expanded version"].strip()
+        abbr = row["Abbreviation"].strip()
+        if not term or not abbr or "not expanded in source" in term.casefold():
+            continue
+        if term.casefold() in disabled:
+            continue
+        meaning = display_term(term)
+        found = meanings.setdefault(abbr, {})
+        # Spelling variants (hemorrhage / haemorrhage) are one meaning; the
+        # first CSV row wins.
+        if not any(_same_meaning(meaning, other) for other in found.values()):
+            found[meaning.casefold()] = meaning
     chosen: dict[str, str | None] = {}
     for abbr, found in meanings.items():
         if len(found) == 1 and _expandable(abbr):
@@ -545,16 +560,15 @@ def _expander(settings: str) -> tuple[re.Pattern[str], dict[str, str | None]]:
 def meanings(abbreviation: str) -> list[str]:
     """Distinct dictionary meanings of ``abbreviation`` (for resolving ambiguity)."""
     found: list[str] = []
-    with SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
-        for row in csv.DictReader(source):
-            if row["Abbreviation"].strip() != abbreviation:
-                continue
-            term = row["Expanded version"].strip()
-            if not term or "not expanded in source" in term.casefold():
-                continue
-            meaning = display_term(term)
-            if not any(_same_meaning(meaning, other) for other in found):
-                found.append(meaning)
+    for row in _source_rows():
+        if row["Abbreviation"].strip() != abbreviation:
+            continue
+        term = row["Expanded version"].strip()
+        if not term or "not expanded in source" in term.casefold():
+            continue
+        meaning = display_term(term)
+        if not any(_same_meaning(meaning, other) for other in found):
+            found.append(meaning)
     return found
 
 

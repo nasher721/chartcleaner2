@@ -134,6 +134,8 @@ def _norm_number(raw: str) -> str:
 
 
 def _mask(text: str) -> str:
+    if not any(c.isdigit() for c in text) and "[" not in text:
+        return text
     for rx in _MASKS:
         text = rx.sub(lambda m: " " * len(m.group(0)), text)
     return text
@@ -201,6 +203,8 @@ def fact_counts(text: str) -> Counter:
     never looks like losing "Hunt-Hess 2"; values are compared by number, so
     "Sodium 141 mmol/L" → "Na 141" keeps the fact.
     """
+    if not text or not text.strip():
+        return Counter()
     return Counter(key for key, _, _, _ in _fact_spans(_mask(text)))
 
 

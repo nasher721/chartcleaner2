@@ -92,9 +92,13 @@ def _subn_tracked(
         starts = _line_starts["v"]
         if starts is None:
             starts = [0]
-            for i, ch in enumerate(text):
-                if ch == "\n":
-                    starts.append(i + 1)
+            curr = 0
+            while True:
+                curr = text.find("\n", curr)
+                if curr == -1:
+                    break
+                curr += 1
+                starts.append(curr)
             _line_starts["v"] = starts
         idx = bisect.bisect_right(starts, pos) - 1
         start = starts[idx]
@@ -116,7 +120,7 @@ def _subn_tracked(
             skipped += 1
             return found
         if table_lines is not None:
-            ls = text.rfind("\n", 0, match.start()) + 1
+            ls, _ = _line_span(match.start())
             if ls in table_lines:
                 skipped += 1
                 return found

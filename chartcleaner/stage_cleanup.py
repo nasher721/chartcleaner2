@@ -85,33 +85,41 @@ UNICODE_REPLACEMENTS = {
 }
 
 
+_CRLF_RE = re.compile(r"\r\n?")
+_STRIP_LEADING_RE = re.compile(r"^[ \t]+", flags=re.MULTILINE)
+_TRIM_TRAILING_RE = re.compile(r"[ \t]+$", flags=re.MULTILINE)
+_COLLAPSE_SPACES_RE = re.compile(r"[ ]{2,}")
+_COLLAPSE_BLANK_RE = re.compile(r"\n{3,}")
+
+
 def run_whitespace(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
     """Clean whitespace based on configured rules (line endings, spaces, blank lines)."""
     options = {**DEFAULT_WHITESPACE, **(cfg.get("whitespace") or {})}
     total_modifications = 0
 
-    if options.get("crlf_to_lf"):
-        text, k = re.subn(r"\r\n?", "\n", text)
+    if options.get("crlf_to_lf") and "\r" in text:
+        text, k = _CRLF_RE.subn("\n", text)
         total_modifications += k
 
     if options.get("strip_leading"):
-        text, k = re.subn(r"^[ \t]+", "", text, flags=re.MULTILINE)
+        text, k = _STRIP_LEADING_RE.subn("", text)
         total_modifications += k
 
-    if options.get("normalize_tabs"):
-        text, k = re.subn(r"\t", "    ", text)
+    if options.get("normalize_tabs") and "\t" in text:
+        k = text.count("\t")
+        text = text.replace("\t", "    ")
         total_modifications += k
 
     if options.get("trim_trailing"):
-        text, k = re.subn(r"[ \t]+$", "", text, flags=re.MULTILINE)
+        text, k = _TRIM_TRAILING_RE.subn("", text)
         total_modifications += k
 
     if options.get("collapse_spaces"):
-        text, k = re.subn(r"[ ]{2,}", " ", text)
+        text, k = _COLLAPSE_SPACES_RE.subn(" ", text)
         total_modifications += k
 
     if options.get("collapse_blank_lines"):
-        text, k = re.subn(r"\n{3,}", "\n\n", text)
+        text, k = _COLLAPSE_BLANK_RE.subn("\n\n", text)
         total_modifications += k
 
     if options.get("final_trim"):

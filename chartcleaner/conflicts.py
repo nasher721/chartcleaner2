@@ -121,7 +121,7 @@ def _sided(line: str) -> list[tuple[str, str]]:
     for m in _FUSED.finditer(line):
         if not _NEGATED.search(line[:m.start()]):
             out.append((_FUSED_NAME[m.group("what")], "left" if m.group("side") == "L" else "right"))
-    if _GENERIC_LESION.search(line) and not _NOT_HEMISPHERE.search(line):
+    if not _NOT_HEMISPHERE.search(line):
         for m in _GENERIC_LESION.finditer(line):
             side = _side_of(line, m.start(), m.end(), 0)
             if side:

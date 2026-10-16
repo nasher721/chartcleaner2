@@ -22,6 +22,7 @@ never through a shell.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -159,7 +160,9 @@ def _pdf_needs_ocr(text: str, pages: int) -> bool:
 
 def _pdf_ocr(path: Path, engine_note: str) -> tuple[str, str]:
     """Add a text layer with OCRmyPDF and re-extract. Returns (text, engine)."""
-    out_path = Path(tempfile.mkstemp(suffix="_ocr.pdf")[1])
+    fd, out_path_str = tempfile.mkstemp(suffix="_ocr.pdf")
+    os.close(fd)
+    out_path = Path(out_path_str)
     tmp_out = str(out_path)
     try:
         cli = _ocrmypdf_cli()

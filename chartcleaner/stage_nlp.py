@@ -65,32 +65,32 @@ class PresidioEngineCache:
             if self._signature == sig:
                 return self._analyzer, self._anonymizer
 
-        try:
-            from presidio_analyzer import AnalyzerEngine
-            from presidio_analyzer.nlp_engine import SpacyNlpEngine
-            from presidio_anonymizer import AnonymizerEngine
-        except Exception as e:
-            raise NlpUnavailable(
-                f"Presidio could not be imported ({e}). Run install.sh / install.bat to add it."
-            ) from e
+            try:
+                from presidio_analyzer import AnalyzerEngine
+                from presidio_analyzer.nlp_engine import SpacyNlpEngine
+                from presidio_anonymizer import AnonymizerEngine
+            except Exception as e:
+                raise NlpUnavailable(
+                    f"Presidio could not be imported ({e}). Run install.sh / install.bat to add it."
+                ) from e
 
-        if find_spec("en_core_web_sm") is None:
-            raise NlpUnavailable("spaCy model 'en_core_web_sm' is not installed in this environment.")
+            if find_spec("en_core_web_sm") is None:
+                raise NlpUnavailable("spaCy model 'en_core_web_sm' is not installed in this environment.")
 
-        try:
-            nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
-            analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-            _disable_expensive_spacy_pipes(analyzer.nlp_engine, lean=threshold is None)
-            if phone_regions:
-                _limit_phone_regions(analyzer, phone_regions)
-            anonymizer = AnonymizerEngine()
-        except Exception as e:
-            raise NlpUnavailable(f"Could not initialize the NLP engine ({e}).") from e
+            try:
+                nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
+                analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
+                _disable_expensive_spacy_pipes(analyzer.nlp_engine, lean=threshold is None)
+                if phone_regions:
+                    _limit_phone_regions(analyzer, phone_regions)
+                anonymizer = AnonymizerEngine()
+            except Exception as e:
+                raise NlpUnavailable(f"Could not initialize the NLP engine ({e}).") from e
 
-        self._signature = sig
-        self._analyzer = analyzer
-        self._anonymizer = anonymizer
-        return self._analyzer, self._anonymizer
+            self._signature = sig
+            self._analyzer = analyzer
+            self._anonymizer = anonymizer
+            return self._analyzer, self._anonymizer
 
     def clear(self) -> None:
         self._signature = None
