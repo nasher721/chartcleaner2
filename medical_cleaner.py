@@ -412,7 +412,8 @@ def _run_check_known_good(preset: str | None) -> int:
     return 1 if changed else 0
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description="Clean and structure Epic EMR text for LLMs. "
                     "Run the desktop app with: python app.py"
@@ -521,7 +522,76 @@ def main():
     parser.add_argument("--summary-preset", default="clinical",
                         help="Summary preset for --compare-models (clinical, brief, findings, "
                              "one_liner, problem_list, handoff). Default: clinical.")
-    args = parser.parse_args()
+    return parser
+
+
+def _run_census(preset: str | None) -> None:
+    from chartcleaner import service
+    text = service.census(preset=preset)["text"]
+    print(text or "No bed-tagged charts yet: clean a chart with a bed tag first "
+                  "(Clean page, or --tag BED with --daily-note).")
+
+
+def _run_batch_dir(args, cleaner: MedicalCleaner, output_dir: Path) -> None:
+    input_dir = Path(args.dir)
+    output_dir.mkdir(exist_ok=True)
+
+    from chartcleaner.ingest import supported_extensions
+    files = sorted(f for f in input_dir.iterdir()
+                   if f.is_file() and f.suffix.lower() in (*{".txt"}, *supported_extensions()))
+    if not files:
+        print("No supported files (.txt/.md/.docx/.pdf) found in directory.")
+        sys.exit(0)
+
+    print(f"Batch processing {len(files)} files...")
+    for file in tqdm(files, desc="Cleaning Charts"):
+        process_file(file, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
+                     trends=args.trends, insights=args.insights)
+    print(f"Done! Outputs written to: {output_dir.resolve()}")
+
+
+def _run_single_file(args, cleaner: MedicalCleaner, output_dir: Path) -> None:
+    file_path = Path(args.file)
+    output_dir.mkdir(exist_ok=True)
+
+    print(f"Processing {file_path.name}...")
+    process_file(file_path, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
+                 trends=args.trends, insights=args.insights)
+    print(f"Done! Outputs written to: {output_dir.resolve()}")
+
+
+def _run_clipboard(args, cleaner: MedicalCleaner) -> None:
+    try:
+        input_text = pyperclip.paste()
+        if not input_text.strip():
+            print("Clipboard is empty.")
+            sys.exit(1)
+
+        if args.format == "docx":
+            print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
+            sys.exit(1)
+        print("Processing clipboard text...")
+        result = cleaner.clean_detailed(input_text)
+        final_text = _format_output(result.text, args.delta, args.format, args.trends,
+                                    args.insights)
+        if args.prompt:
+            from chartcleaner.prompt_templates import render
+            final_text = render(args.prompt, result.text, cleaner.config)
+        pyperclip.copy(final_text)
+
+        _print_summary(result, "Clipboard")
+        if args.audit:
+            _print_audit(run_audit(result.text, cleaner.config))
+        print("Cleaned text copied back to clipboard!")
+
+    except Exception as e:
+        print(f"Clipboard error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     if args.compare_models is not None:
         sys.exit(_run_compare_models(args.compare_models, args.summary_preset, args.preset))
@@ -530,10 +600,7 @@ def main():
     if args.doctor:
         sys.exit(_run_doctor())
     if args.census:
-        from chartcleaner import service
-        text = service.census(preset=args.preset)["text"]
-        print(text or "No bed-tagged charts yet: clean a chart with a bed tag first "
-                      "(Clean page, or --tag BED with --daily-note).")
+        _run_census(args.preset)
         return
 
     if args.export_abbreviations:
@@ -568,61 +635,13 @@ def main():
         _run_watch(watch_dir, Path(args.out).expanduser() if args.out else None, cleaner)
         return
 
+    output_dir = Path(args.out)
     if args.dir:
-        input_dir = Path(args.dir)
-        output_dir = Path(args.out)
-        output_dir.mkdir(exist_ok=True)
-
-        from chartcleaner.ingest import supported_extensions
-        files = sorted(f for f in input_dir.iterdir()
-                       if f.is_file() and f.suffix.lower() in (*{".txt"}, *supported_extensions()))
-        if not files:
-            print("No supported files (.txt/.md/.docx/.pdf) found in directory.")
-            sys.exit(0)
-
-        print(f"Batch processing {len(files)} files...")
-        for file in tqdm(files, desc="Cleaning Charts"):
-            process_file(file, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends, insights=args.insights)
-        print(f"Done! Outputs written to: {output_dir.resolve()}")
-
+        _run_batch_dir(args, cleaner, output_dir)
     elif args.file:
-        file_path = Path(args.file)
-        output_dir = Path(args.out)
-        output_dir.mkdir(exist_ok=True)
-
-        print(f"Processing {file_path.name}...")
-        process_file(file_path, cleaner, output_dir, audit=args.audit, delta=args.delta, out_format=args.format,
-                         trends=args.trends, insights=args.insights)
-        print(f"Done! Outputs written to: {output_dir.resolve()}")
-
+        _run_single_file(args, cleaner, output_dir)
     else:
-        try:
-            input_text = pyperclip.paste()
-            if not input_text.strip():
-                print("Clipboard is empty.")
-                sys.exit(1)
-
-            if args.format == "docx":
-                print("--format docx writes files; use it with -f or -d.", file=sys.stderr)
-                sys.exit(1)
-            print("Processing clipboard text...")
-            result = cleaner.clean_detailed(input_text)
-            final_text = _format_output(result.text, args.delta, args.format, args.trends,
-                                        args.insights)
-            if args.prompt:
-                from chartcleaner.prompt_templates import render
-                final_text = render(args.prompt, result.text, cleaner.config)
-            pyperclip.copy(final_text)
-
-            _print_summary(result, "Clipboard")
-            if args.audit:
-                _print_audit(run_audit(result.text, cleaner.config))
-            print("Cleaned text copied back to clipboard!")
-
-        except Exception as e:
-            print(f"Clipboard error: {e}", file=sys.stderr)
-            sys.exit(1)
+        _run_clipboard(args, cleaner)
 
 
 if __name__ == "__main__":

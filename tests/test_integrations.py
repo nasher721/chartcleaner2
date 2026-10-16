@@ -61,3 +61,14 @@ def test_quick_actions_are_valid_services_calling_clean_chart(tmp_path):
         assert doc["workflowMetaData"]["workflowTypeIdentifier"] == "com.apple.Automator.servicesMenu"
         assert info["NSServices"][0]["NSReturnTypes"] == ["public.utf8-plain-text"]
     assert qa.uninstall(tmp_path) == 3 and not list(tmp_path.iterdir())
+
+
+def test_build_parser_options():
+    import medical_cleaner
+    parser = medical_cleaner.build_parser()
+    args = parser.parse_args(["--stdin", "--stdout", "--format", "markdown", "--delta"])
+    assert args.stdin is True
+    assert args.stdout is True
+    assert args.format == "markdown"
+    assert args.delta is True
+

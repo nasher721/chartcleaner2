@@ -305,6 +305,7 @@ def import_settings(zip_path: str | Path) -> tuple[bool, str]:
                                f"> v{_store().SETTINGS_BUNDLE_VERSION}); update this install first.")
 
             applied: list[str] = []
+            _store().ensure_dirs()
 
             if "config.json" in names:
                 try:
@@ -317,7 +318,6 @@ def import_settings(zip_path: str | Path) -> tuple[bool, str]:
                 if errs:
                     return False, "Bundle rules are invalid (" + errs[0] + ") — nothing was changed."
                 rotate_config_backup()
-                _store().ensure_dirs()
                 save_config(cfg, _store().CONFIG_PATH)
                 applied.append(f"{_rule_count(cfg)} rule entries")
 
