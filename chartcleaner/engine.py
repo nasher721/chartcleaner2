@@ -29,8 +29,11 @@ from . import fact_check as fact_check_mod
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
+from .compactors import mar as mar_compactor
 from .compactors import meds as meds_compactor
 from .compactors import neuro as neuro_compactor
+from .compactors import note_order as note_order_compactor
+from .compactors import tables as tables_compactor
 from .compactors import vitals as vitals_compactor
 from .stages import (
     DEFAULT_BULLETS,
@@ -101,8 +104,11 @@ BUILTIN_STAGE_IDS = [
     "med_normalize",
     "vitals_summary",
     "neuro_summary",
+    "mar_summary",
+    "flowsheet_tables",
     "whitespace",
     "duplicate_notes",
+    "note_order",
     "fuzzy_dedup",
     "fuzzy_line_dedup",
     "headers",
@@ -122,6 +128,9 @@ STAGE_ANCHORS: dict[str, str] = {
     "med_normalize": "lab_compaction",
     "vitals_summary": "med_normalize",
     "neuro_summary": "vitals_summary",
+    "mar_summary": "neuro_summary",
+    "flowsheet_tables": "mar_summary",
+    "note_order": "duplicate_notes",
     "fuzzy_line_dedup": "fuzzy_dedup",
 }
 
@@ -143,9 +152,12 @@ STAGE_LABELS = {
     "med_normalize": "Medication list cleanup",
     "vitals_summary": "Vitals & I/O summary",
     "neuro_summary": "Neuro ICU summaries",
+    "mar_summary": "MAR & PRN dose summary",
+    "flowsheet_tables": "Flowsheet table de-tabularizer",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
+    "note_order": "Chronological note ordering",
     "fuzzy_dedup": "Fuzzy paragraph dedup",
     "fuzzy_line_dedup": "Fuzzy line dedup",
     "headers": "Header promotion",
@@ -173,9 +185,12 @@ STAGE_KINDS = {
     "med_normalize": "meds",
     "vitals_summary": "vitals",
     "neuro_summary": "neuro",
+    "mar_summary": "mar",
+    "flowsheet_tables": "tables",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
+    "note_order": "note_order",
     "fuzzy_dedup": "fuzzy",
     "fuzzy_line_dedup": "fuzzy_line",
     "headers": "headers",
@@ -264,6 +279,9 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "med_normalize": meds_compactor.DEFAULTS,
         "vitals_summary": vitals_compactor.DEFAULTS,
         "neuro_summary": neuro_compactor.DEFAULTS,
+        "mar_summary": mar_compactor.DEFAULTS,
+        "flowsheet_tables": tables_compactor.DEFAULTS,
+        "note_order": note_order_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
     return validator.validate()

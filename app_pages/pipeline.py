@@ -5,7 +5,10 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from chartcleaner.service import result_cache as service_result_cache
+from chartcleaner.compactors import mar as mar_compactor
 from chartcleaner.compactors import neuro as neuro_compactor
+from chartcleaner.compactors import note_order as note_order_compactor
+from chartcleaner.compactors import tables as tables_compactor
 from chartcleaner.compactors import vitals as vitals_compactor
 from chartcleaner.section_parser import SECTION_TAXONOMY
 
@@ -20,6 +23,7 @@ STAGE_EDITORS = {
     "learned_rules": ("regex_pairs", "learned_rules"),
     "headers": ("headers", "clinical_headers"),
     "duplicate_notes": ("dedup_notes", "duplicate_note_detection"),
+    "note_order": ("form", "note_order"),
     "fuzzy_dedup": ("fuzzy", "fuzzy_dedup"),
     "fuzzy_line_dedup": ("fuzzy_line", "fuzzy_line_dedup"),
     "nlp_redaction": ("nlp", None),
@@ -32,6 +36,8 @@ STAGE_EDITORS = {
     "med_normalize": ("form", "med_normalize"),
     "vitals_summary": ("form", "vitals_summary"),
     "neuro_summary": ("form", "neuro_summary"),
+    "mar_summary": ("form", "mar_summary"),
+    "flowsheet_tables": ("form", "flowsheet_tables"),
     "sections": ("sections", "section_filter"),
     "whitespace": ("whitespace", "whitespace"),
     "caps_normalize": ("caps", "caps_normalize"),
@@ -42,7 +48,10 @@ STAGE_EDITORS = {
 
 # Options whose default is on (a switch must show what the stage will do).
 FORM_DEFAULTS = {"neuro_summary": neuro_compactor.DEFAULTS,
-                 "vitals_summary": vitals_compactor.DEFAULTS}
+                 "vitals_summary": vitals_compactor.DEFAULTS,
+                 "mar_summary": mar_compactor.DEFAULTS,
+                 "flowsheet_tables": tables_compactor.DEFAULTS,
+                 "note_order": note_order_compactor.DEFAULTS}
 
 # Declarative option forms for the opt-in condensing stages:
 # (option, label, control, choices) — control is switch | text | select | multi | dates | int.
@@ -76,6 +85,22 @@ STAGE_FORMS: dict[str, list[tuple]] = {
         ("sodium", "Serial sodium checks", "switch", None),
         ("drips", "Drip titrations (nicardipine, norepinephrine, …)", "switch", None),
     ],
+    "mar_summary": [
+        ("enabled", "Condense MAR / PRN bolus logs into total and dose count per medication", "switch", None),
+        ("min_doses", "Minimum administrations of a drug to condense (≥ 2)", "int", None),
+        ("include_scheduled", "Also condense repeated scheduled administrations (off = PRN/bolus only)", "switch", None),
+    ],
+    "flowsheet_tables": [
+        ("enabled", "De-tabularize multi-column timestamped flowsheets (vent, ABG, hemodynamics)", "switch", None),
+        ("style", "Style", "select", {"series": "Step-by-step series (pH 7.31 → 7.35 → 7.38)",
+                                      "range": "Min–max range for 3+ numeric readings (pH 7.31–7.38)"}),
+        ("collapse_unchanged", "Collapse unchanged rows (PEEP 5 (unchanged))", "switch", None),
+    ],
+    "note_order": [
+        ("enabled", "Sort multi-note exports by note header date", "switch", None),
+        ("direction", "Order", "select", {"oldest_first": "Chronological: oldest → newest (Day 1 → Today)",
+                                          "newest_first": "Reverse-chronological: newest → oldest (Today → Day 1)"}),
+    ],
     "imaging_impression": [
         ("enabled", "Keep only the Impression of radiology reports", "switch", None),
         ("keep", "Also keep", "multi", {"findings": "Findings", "indication": "Indication / history",
@@ -99,12 +124,15 @@ STAGE_DESCRIPTIONS = {
     "lab_compaction": "Off by default. Turns lab result tables and Recent Labs grids into one line per panel (BMP, CBC, LFT, Coags) with H/L flags, or fishbone diagrams. A table is only rewritten when every line is a recognized lab; anything else stays as written.",
     "med_normalize": "Off by default. Inside medication sections, reduces each line to drug, dose, route and frequency: drops brand names, dispense/refill counts, dates and provider names, and marks held or discontinued meds. Never produces Do Not Use abbreviations.",
     "neuro_summary": "Off by default. Condenses Neuro ICU flowsheets into one line each: neuro checks (GCS, RASS, NIHSS, pupils, CAM-ICU) as ranges and changes, EVD blocks as total output with level and ICP/CPP (readings above icp_threshold, default 20, counted), three or more serial sodium checks as a trend, and three or more titrations of one drip as its range and last rate. A block is rewritten only when every line is understood.",
+    "mar_summary": "Off by default. Condenses MAR / 'Medications Given' blocks of repeated PRN boluses or scheduled doses into one line per medication, route and unit with total dose, breakdown, time window, last dose and held count. Rewrites a block only when every line parses.",
+    "flowsheet_tables": "Off by default. De-tabularizes multi-column timestamped clinical flowsheets (ventilator settings, ABG/VBG grids, hemodynamics, or transposed time-down tables) into compact per-parameter time series. Leaves any block with prose or mismatched columns untouched.",
     "vitals_summary": "Off by default. Turns vitals flowsheets (several readings per row) into one line of ranges and last values, and Intake/Output totals into one line. Single-reading vitals lines are left alone.",
     "imaging_impression": "Off by default. In radiology reports (FINDINGS followed by IMPRESSION), removes findings, technique, comparison and indication, keeping the title and the impression. Reports without an impression are left alone.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
     "sections": "Off by default. Drop only the listed sections, or keep only the listed ones. Section boundaries come from your header list unless you supply boundary headers.",
     "whitespace": "Trims trailing spaces and collapses 3+ blank lines by default; seven further switches (CRLF, leading indent, tabs, double spaces, edge trim…).",
     "duplicate_notes": "Folds near-duplicate Epic note blocks (same note pasted twice) by comparing bodies.",
+    "note_order": "Off by default. Reorders multi-note exports chronologically (oldest → newest) or reverse-chronologically (newest → oldest) by note header date while keeping any preamble anchored at the top. Leaves the chart untouched if any note header lacks a date.",
     "fuzzy_dedup": "Collapses paragraphs that are nearly identical (copy-forwarded text).",
     "fuzzy_line_dedup": "Collapses individual lines that are nearly identical (copy-forwarded signature stamps, repeated headers).",
     "headers": "Lines matching one of these names become Markdown headings. Choose the heading level, bold style, colon retention, or restrict to ALL-CAPS lines. Optionally let medspaCy detect section titles instead.",

@@ -19,8 +19,11 @@ from .abbreviations import MAX_TRACKED_CHANGES, abbreviate, expand
 from .compactors import hospital_day as hospital_day_compactor
 from .compactors import imaging as imaging_compactor
 from .compactors import labs as labs_compactor
+from .compactors import mar as mar_compactor
 from .compactors import meds as meds_compactor
 from .compactors import neuro as neuro_compactor
+from .compactors import note_order as note_order_compactor
+from .compactors import tables as tables_compactor
 from .compactors import vitals as vitals_compactor
 from .stage_cleanup import (
     DEFAULT_BULLETS,
@@ -124,9 +127,12 @@ RUNNERS: dict[str, Callable] = {
     "meds": meds_compactor.run,
     "vitals": vitals_compactor.run,
     "neuro": neuro_compactor.run,
+    "mar": mar_compactor.run,
+    "tables": tables_compactor.run,
     "sections": run_sections,
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
+    "note_order": note_order_compactor.run,
     "fuzzy": run_fuzzy_dedup,
     "fuzzy_line": run_fuzzy_line_dedup,
     "headers": run_headers,
@@ -153,9 +159,12 @@ KIND_TO_RUNNER = {
     "med_normalize": "meds",
     "vitals_summary": "vitals",
     "neuro_summary": "neuro",
+    "mar_summary": "mar",
+    "flowsheet_tables": "tables",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
+    "note_order": "note_order",
     "fuzzy_dedup": "fuzzy",
     "fuzzy_line_dedup": "fuzzy_line",
     "headers": "headers",

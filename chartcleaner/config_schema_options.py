@@ -116,6 +116,26 @@ class OptionsSchemaMixin:
              "drips": ((bool,), "true/false"), "icp_threshold": ((int, float), "a number")})
         if neuro is not None and isinstance(neuro.get("icp_threshold"), bool):
             self.errors.append("neuro_summary.icp_threshold: wrong type (expected a number)")
+        mar = self._check_option_group(
+            "mar_summary", self.default_options["mar_summary"],
+            {"enabled": ((bool,), "true/false"), "min_doses": ((int,), "an integer ≥ 2"),
+             "include_scheduled": ((bool,), "true/false")})
+        if mar is not None and "min_doses" in mar and (
+                isinstance(mar["min_doses"], bool)
+                or not isinstance(mar["min_doses"], int)
+                or mar["min_doses"] < 2):
+            self.errors.append("mar_summary.min_doses: must be an integer ≥ 2")
+        tables = self._check_option_group(
+            "flowsheet_tables", self.default_options["flowsheet_tables"],
+            {"enabled": ((bool,), "true/false"), "style": ((str,), "series/range"),
+             "collapse_unchanged": ((bool,), "true/false")})
+        if tables is not None and tables.get("style", "series") not in ("series", "range"):
+            self.errors.append('flowsheet_tables.style: must be "series" or "range"')
+        norder = self._check_option_group(
+            "note_order", self.default_options["note_order"],
+            {"enabled": ((bool,), "true/false"), "direction": ((str,), "oldest_first/newest_first")})
+        if norder is not None and norder.get("direction", "oldest_first") not in ("oldest_first", "newest_first"):
+            self.errors.append('note_order.direction: must be "oldest_first" or "newest_first"')
 
     def _validate_imaging_options(self) -> None:
         from .compactors.imaging import KEEPABLE
