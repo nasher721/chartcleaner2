@@ -252,3 +252,74 @@ def test_rule_health_ignores_uninstrumented_runs():
     rows = health_report(cfg, runs, min_runs=1)
     # No instrumented run -> not enough data, never "never matched".
     assert all(r["status"] == "not enough runs yet" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Epic EHR Order Cruft and Attestation Boilerplate Cleaning
+# ---------------------------------------------------------------------------
+
+def test_ehr_order_review_and_lab_boilerplate_removed():
+    cfg = load_default_config()
+    cfg.setdefault("nlp_redaction", {})["enabled"] = False
+    pipeline = Pipeline(cfg)
+
+    text = (
+        "XR CHEST 1V FRONTAL PORT\n"
+        "\tTiming: Standing (ONCE)\n"
+        "\tReason for Exam: SOB\n"
+        "\tSTAT Order Task Reviewed by (Last Name, First Name):: DABNEY, SIDNEY [U1002695]\n"
+        "COMPLETE BLOOD COUNT - Abnormal; Notable for the following components:\n"
+        "\tHematocrit 38.9 (*)\n"
+        "\tAll other components within normal limits\n"
+        "Narrative:\n"
+        "Unfractionated Heparin Therapeutic Ranges:\n"
+        "Standard Intensity Nomogram: 53 to 78 seconds (heparin anti-Xa level of 0.3 to 0.7 U/mL)\n"
+        "Lower Intensity Nomogram: 53 to 67 seconds (heparin anti-Xa level of 0.3 to 0.5 U/mL)\n"
+        "No Bolus Lower Intensity Nomogram: 53 to 67 seconds (heparin anti-Xa level of 0.3 to 0.5 U/mL)\n"
+        " Note: The APTT therapeutic range has been determined for the current lot of laboratory APTT reagent in use throughout the Cleveland Clinic Health System.\n"
+        "This test was developed and its performance characteristics determined by the Cleveland Clinic's Robert J. Tomsich Pathology and Laboratory Medicine Institute (RT-PLMI).\n"
+        "It has not been cleared or approved by the FDA. RT-PLMI is regulated under CLIA as qualified to perform high-complexity testing. This test is used for clinical purposes. It should not be regarded as investigational or for research.\n"
+    )
+
+    res = pipeline.run(text, wrap=False)
+    assert "DABNEY, SIDNEY" not in res.text
+    assert "STAT Order Task Reviewed by" not in res.text
+    assert "All other components within normal limits" not in res.text
+    assert "All other components WNL" not in res.text
+    assert "Unfractionated Heparin Therapeutic Ranges" not in res.text
+    assert "Tomsich Pathology" not in res.text
+    assert "HCT 38.9" in res.text
+    assert "XR CHEST" in res.text
+
+
+def test_critical_care_and_attestation_boilerplate_removed():
+    cfg = load_default_config()
+    cfg.setdefault("nlp_redaction", {})["enabled"] = False
+    pipeline = Pipeline(cfg)
+
+    text = (
+        "Assessment & Plan\n"
+        "53 year old male with CIDP presenting with worsening weakness.\n"
+        "====\n"
+        "STAFF COORDINATION OF CRITICAL CARE\n\n"
+        "CCHS Staff Physician note of personal involvement in Care\n"
+        "The patient is critically ill because of imminent risk of acute respiratory failure and continues to require intensive support and observation.\n"
+        "This patient has a high probability of sudden, clinically significant deterioration, which requires the highest level of physician preparedness to intervene urgently. I managed/supervized life or organ supporting interventions that required frequent physician assessment. I devoted my full attention to the direct care of this patient for the amount of time indicated below.\n"
+        "CRITICAL CARE: I personally spent 33 minutes of critical care time involved in the care of this patient.\n"
+        "====\n"
+        "Please see the documented system-by-system plan in the updated problem list.\n"
+        "Plan of care discussed with: Provider, RN, Patient and ICU Team.\n"
+        "This is an electronically created document.\n"
+        "If printed, please do not remove from the chart or modify printed copy.\n"
+    )
+
+    res = pipeline.run(text, wrap=False)
+    assert "STAFF COORDINATION OF CRITICAL CARE" not in res.text
+    assert "highest level of physician preparedness" not in res.text
+    assert "CRITICAL CARE: I personally spent" not in res.text
+    assert "system-by-system plan in the updated problem list" not in res.text
+    assert "Plan of care discussed with" not in res.text
+    assert "electronically created document" not in res.text
+    assert "CIDP presenting" in res.text
+    assert "worsening weakness" in res.text
+

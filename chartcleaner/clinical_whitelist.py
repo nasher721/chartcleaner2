@@ -80,6 +80,14 @@ _COMMON_MEDICATIONS = {
     "perflutren", "glydo", "micronefrin", "racepinephrine",
     # Common brand names that overlap with human names
     "tamar", "grace", "jordan", "victoria", "charlotte", "haven",
+    # ICU, Anticonvulsant & Neurologic additions
+    "acetylcysteine", "mucomyst", "pyridostigmine", "mestinon", "midodrine", "proamitine",
+    "rituximab", "ruxience", "nystatin", "mycostatin", "ceftriaxone", "rocephin",
+    "cefazolin", "ancef", "dulcolax", "bisacodyl", "genteal", "flexeril", "cyclobenzaprine",
+    "atarax", "hydroxyzine", "lyrica", "pregabalin", "nitroquick", "nitroglycerin",
+    "solu-cortef", "cortrosyn", "cosyntropin", "regitine", "phentolamine", "veletri",
+    "epoprostenol", "vasostrict", "k-phos", "nutren", "prosource", "nutrisource",
+    "norepi", "levo", "neo",
 }
 
 # Anatomical, surgical, and diagnostic terms commonly capitalized at sentence start
@@ -144,6 +152,15 @@ _ANATOMICAL_AND_CLINICAL_TERMS = {
     "cuff", "rate", "temp", "tx loc", "addendum", "encounter written", "pat written", "types",
     "discontinue", "insert", "inserted", "restart", "resume", "swallow screening for patients",
     "al", "akron ambula", "avon ed", "main campus",
+    # Additional Neurologic, Pulmonary, and Diagnostic terms
+    "emphysema", "copd", "cidp", "gbs", "guillain barré", "guillain barre", "guillain-barre",
+    "amet", "bladder scan", "cystatin", "neurofascin", "caspr1", "c-diff", "cdiff",
+    "quadriparesis", "quadriplegia", "tetraplegia", "dysautonomia", "orthostatic",
+    "plex", "plasmapheresis", "apheresis", "ivig", "ivmp", "trach", "bivona", "portex",
+    "peg", "gastrostomy", "complete", "complete blood count", "differential",
+    "lmw", "anti-xa", "antixa", "anti xa", "speech", "speech language pathology", "slp",
+    "leuk esterase", "esterase", "gram stain", "gram", "elevated", "inflammatory", "gait",
+    "trace", "rare", "few", "dysconjugate", "nystagmus", "areflexia",
 }
 
 # Combined clinical whitelist lookup
