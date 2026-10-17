@@ -179,7 +179,11 @@ def _build_scope(cfg: dict, sid: str | None, text: str) -> Callable[[int], bool]
     """
     if not sid:
         return None
-    scope = get_stage_options(cfg, sid).get("scope")
+    return _scope_predicate(get_stage_options(cfg, sid).get("scope"), text)
+
+
+def _scope_predicate(scope: Any, text: str) -> Callable[[int], bool] | None:
+    """``in_scope(pos)`` for one ``{"mode", "sections"}`` scope over ``text``."""
     if not isinstance(scope, dict):
         return None
     mode = scope.get("mode", "all")
@@ -229,9 +233,15 @@ def _with_tracking(details: dict, hits: dict[str, int], changes: list[dict] | No
     return details
 
 
+def _both(a: Callable[[int], bool] | None, b: Callable[[int], bool] | None):
+    if a is None or b is None:
+        return a or b
+    return lambda pos: a(pos) and b(pos)
+
+
 def _apply_rules(
     text: str, cfg: dict, ctx: CleanContext, rules: list[tuple[str, str]], flags: int,
-    sid: str | None, *, phi: bool = False,
+    sid: str | None, *, phi: bool = False, rule_scopes: dict[str, dict] | None = None,
 ) -> tuple[str, int, dict]:
     """Run ``(pattern, replacement)`` rules in order, tracking hits/changes/slow rules.
 
@@ -239,6 +249,8 @@ def _apply_rules(
     a pair with an empty replacement, so they only differ in the rule list and
     the flags. ``scope`` (section restriction) and ``preserve_tables`` (leave
     table lines alone) are read from ``stage_options[<sid>]`` when present.
+    ``rule_scopes`` (pattern -> scope) narrows single rules further; their
+    sections are parsed from the text as it stands when that rule runs.
     """
     if sid and get_stage_options(cfg, sid).get("case_sensitive"):
         flags &= ~re.IGNORECASE
@@ -252,8 +264,10 @@ def _apply_rules(
     slow: dict[str, float] = {}
     total = 0
     for pattern, replacement in rules:
+        own = rule_scopes.get(pattern) if rule_scopes else None
+        rule_scope = _both(scope, _scope_predicate(own, text)) if own else scope
         text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
-                              keep, slow, scope, table_lines)
+                              keep, slow, rule_scope, table_lines)
         if n:
             hits[rule_id(pattern)] = n
         total += n

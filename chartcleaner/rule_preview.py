@@ -21,7 +21,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from .regex_risk import risks as regex_risks
-from .stages import SLOW_RULE_MS, run_regex_list, run_regex_pairs
+from .stages import SLOW_RULE_MS, run_learned, run_regex_list, run_regex_pairs
 
 __all__ = ["RuleImpact", "preview", "trial_config"]
 
@@ -79,6 +79,8 @@ def _run_stage(sid: str, text: str, cfg: dict) -> str:
     if sid == "boilerplate":
         return run_regex_list(text, cfg, None, key,
                               re.IGNORECASE | re.DOTALL | re.MULTILINE, sid=sid)[0]
+    if sid == "learned_rules":
+        return run_learned(text, cfg, None)[0]  # honors paused / section-scoped rules
     return run_regex_pairs(text, cfg, None, key, sid=sid)[0]
 
 

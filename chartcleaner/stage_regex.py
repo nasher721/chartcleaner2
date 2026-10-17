@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from .rule_meta import active
 from .stage_core import _apply_rules
 
 if TYPE_CHECKING:
@@ -38,7 +39,11 @@ def run_learned(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict
 
     Each entry is [pattern, replacement]; an empty replacement removes the
     match. A missing or empty list is a no-op (older configs don't have it).
+    Per-rule settings (paused, section scope) come from :mod:`rule_meta`.
     """
     if not (cfg.get("learned_rules") or []):
         return text, 0, {}
-    return run_regex_pairs(text, cfg, ctx, "learned_rules", sid="learned_rules")
+    rules, scopes = active(cfg)  # paused rules are skipped; some carry their own scope
+    if not rules:
+        return text, 0, {}
+    return _apply_rules(text, cfg, ctx, rules, re.IGNORECASE, "learned_rules", rule_scopes=scopes)

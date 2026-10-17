@@ -7,7 +7,12 @@ so no new chart content is written. :func:`check` replays every example
 through the *current* learned rules and reports the ones whose result
 changed — for example a later rule that rewrites or undoes an earlier lesson,
 or the learned-rules stage being switched off. Examples whose rule was
-deleted are skipped (deleting a rule is a deliberate choice).
+deleted are skipped (deleting a rule is a deliberate choice), and so are the
+examples of a paused rule (pausing is too).
+
+A *keep* example (:func:`record_keep`, ``"kind": "keep"``) is the opposite
+lesson: a line pinned to a rule that no learned rule may ever change. It is
+checked even while its rule is paused.
 """
 
 from __future__ import annotations
@@ -16,9 +21,10 @@ import json
 from pathlib import Path
 
 from . import store
-from .stages import run_regex_pairs
+from .stages import run_learned
 
-__all__ = ["record", "load", "check", "clear", "examples_path"]
+__all__ = ["record", "record_keep", "load", "check", "clear", "examples_path", "for_rule",
+           "forget"]
 
 
 def examples_path() -> Path:
@@ -28,7 +34,7 @@ def examples_path() -> Path:
 def _apply(pairs: list[list[str]], text: str, cfg: dict | None = None) -> str:
     options = ((cfg or {}).get("stage_options") or {}).get("learned_rules") or {}
     trial = {"learned_rules": pairs, "stage_options": {"learned_rules": options}}
-    return run_regex_pairs(text, trial, None, "learned_rules", sid="learned_rules")[0]
+    return run_learned(text, trial, None)[0]
 
 
 def record(pair: list[str], text: str, cfg: dict | None = None) -> dict:
@@ -39,6 +45,34 @@ def record(pair: list[str], text: str, cfg: dict | None = None) -> dict:
     with examples_path().open("a", encoding="utf-8") as f:
         f.write(json.dumps(example, ensure_ascii=False) + "\n")
     return example
+
+
+def record_keep(pair: list[str], text: str) -> dict:
+    """Pin ``text`` to ``pair`` as a line the learned rules must leave untouched."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Enter the line that must be kept.")
+    example = {"pattern": pair[0], "replacement": pair[1], "text": text, "expected": text,
+               "kind": "keep"}
+    store.ensure_dirs()
+    with examples_path().open("a", encoding="utf-8") as f:
+        f.write(json.dumps(example, ensure_ascii=False) + "\n")
+    return example
+
+
+def for_rule(pattern: str, examples: list[dict] | None = None) -> list[dict]:
+    """The stored examples of the rule with ``pattern`` (removals and keeps)."""
+    return [ex for ex in (load() if examples is None else examples) if ex["pattern"] == pattern]
+
+
+def forget(pattern: str, text: str | None = None) -> int:
+    """Delete ``pattern``'s examples (only the one for ``text`` when given)."""
+    path = examples_path()
+    items = load(path)
+    kept = [ex for ex in items if not (ex["pattern"] == pattern and (text is None or ex["text"] == text))]
+    if len(kept) != len(items):
+        store.ensure_dirs()
+        path.write_text("".join(json.dumps(ex, ensure_ascii=False) + "\n" for ex in kept), encoding="utf-8")
+    return len(items) - len(kept)
 
 
 def load(path: Path | None = None) -> list[dict]:
@@ -63,9 +97,12 @@ def check(cfg: dict, examples: list[dict] | None = None) -> dict:
     live = {(p[0], p[1]) for p in rules}
     enabled = (((cfg.get("stage_options") or {}).get("learned_rules") or {}).get("enabled", True)
                and "learned_rules" in (cfg.get("stage_order") or ["learned_rules"]))
+    from .rule_meta import is_enabled
     failures, checked = [], 0
     for ex in examples:
         if (ex["pattern"], ex["replacement"]) not in live:
+            continue
+        if ex.get("kind") != "keep" and not is_enabled(cfg, ex["pattern"]):
             continue
         checked += 1
         now = _apply(rules, ex["text"], cfg) if enabled else ex["text"]

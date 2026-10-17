@@ -46,6 +46,50 @@ class PipelineSchemaMixin:
                     self.errors.append(
                         f"stage_options.{sid}.scope: must be "
                         f'{{"mode": "all"|"only"|"except", "sections": [names]}}')
+            if sid == "learned_rules" and "rule_meta" in opts:
+                self._validate_rule_meta(opts["rule_meta"])
+
+    def _validate_rule_meta(self, meta) -> None:
+        """Per-rule settings (see rule_meta.py), keyed by rule id."""
+        from .rule_shapes import build
+        from .stage_core import rule_id
+        where = "stage_options.learned_rules.rule_meta"
+        if not isinstance(meta, dict):
+            self.errors.append(f"{where}: must be an object mapping rule id -> settings")
+            return
+        live = {rule_id(p[0]) for p in self.cfg.get("learned_rules") or []
+                if isinstance(p, (list, tuple)) and len(p) == 2 and isinstance(p[0], str)}
+        for rid, info in meta.items():
+            if not isinstance(info, dict):
+                self.errors.append(f"{where}.{rid}: must be an object")
+                continue
+            for key in ("enabled", "archived"):
+                if key in info and not isinstance(info[key], bool):
+                    self.errors.append(f"{where}.{rid}.{key}: must be true/false")
+            for key in ("note", "source", "added"):
+                if key in info and not isinstance(info[key], str):
+                    self.errors.append(f"{where}.{rid}.{key}: must be text")
+            if "tags" in info and not (isinstance(info["tags"], list)
+                                       and all(isinstance(t, str) for t in info["tags"])):
+                self.errors.append(f"{where}.{rid}.tags: must be a list of text")
+            scope = info.get("scope")
+            if scope is not None and (
+                    not isinstance(scope, dict) or scope.get("mode") not in ("all", "only", "except")
+                    or not isinstance(scope.get("sections", []), list)
+                    or not all(isinstance(x, str) for x in scope.get("sections", []))):
+                self.errors.append(f'{where}.{rid}.scope: must be '
+                                   f'{{"mode": "all"|"only"|"except", "sections": [names]}}')
+            if "shape" in info:
+                try:
+                    built = build(info["shape"])[0]
+                except (ValueError, TypeError) as e:
+                    self.errors.append(f"{where}.{rid}.shape: {e}")
+                else:
+                    if rule_id(built) != rid:
+                        self.warnings.append(f"{where}.{rid}.shape: no longer matches its rule "
+                                             "(the pattern was edited by hand)")
+            if rid not in live:
+                self.warnings.append(f"{where}.{rid}: no learned rule has this id any more")
 
     def _validate_deduplication(self) -> None:
         self._validate_duplicate_notes()
