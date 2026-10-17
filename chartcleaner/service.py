@@ -17,7 +17,8 @@ from .engine import Pipeline, RunResult, load_config
 
 __all__ = ["FORMATS", "INSIGHTS", "INSIGHT_ORDER", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
            "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text",
-           "daily_note", "split_patients", "clean_patients", "note", "census"]
+           "daily_note", "split_patients", "clean_patients", "note", "census", "add_rules", "list_rules",
+           "export_rules"]
 
 FORMATS = ("text", "markdown", "json", "xml")
 
@@ -390,6 +391,59 @@ def census(*, preset: str | None = None, config: dict | None = None) -> dict:
     lines. Reads the encrypted recent charts; records nothing."""
     from .census import build
     return build(_config(config, preset)).to_dict()
+
+
+def add_rules(*, remove: list[str] | tuple[str, ...] = (), abbreviations: list[tuple[str, str]] | tuple = (),
+              whole_words: bool = True, case_sensitive: bool = False,
+              config_path: str | Path | None = None) -> dict:
+    """Save plain-text "remove this" phrases and ``(term, abbreviation)`` pairs.
+
+    The same rules the Rules page's Quick add saves (no regex). Do Not Use
+    abbreviations are skipped and reported. The config is validated and the
+    previous one backed up before writing; nothing is saved when nothing
+    changed. Returns ``{"remove": {...}, "abbreviations": {...}, "saved": bool}``.
+    """
+    from .engine import save_config, validate_config
+    from .quick_rules import add_abbreviations, add_removals
+
+    path = Path(config_path or store.CONFIG_PATH)
+    cfg = load_config(path)
+    cfg, removed = add_removals(cfg, list(remove), whole_words=whole_words,
+                                case_sensitive=case_sensitive)
+    cfg, abbreviated = add_abbreviations(cfg, [tuple(p) for p in abbreviations])
+    saved = removed.changed or abbreviated.changed
+    if saved:
+        errors, _ = validate_config(cfg)
+        if errors:
+            raise ValueError(errors[0])
+        if config_path is None:
+            store.rotate_config_backup()
+        save_config(cfg, path)
+    return {"remove": vars(removed), "abbreviations": vars(abbreviated), "saved": saved}
+
+
+def list_rules(*, preset: str | None = None, config: dict | None = None) -> dict:
+    """The user's plain-text rules: ``remove``, ``replace``, ``regex``, ``abbreviations``."""
+    from .quick_rules import current_rules
+    return current_rules(_config(config, preset))
+
+
+def export_rules(fmt: str = "txt", *, complete: bool = False, preset: str | None = None,
+                 config: dict | None = None) -> str:
+    """The user's rules as text: ``txt`` (plain lists), ``json`` or ``csv``."""
+    import json as _json
+
+    from .quick_rules import export_text
+    from .rule_sharing import payload_from_config, rules_csv
+
+    cfg = _config(config, preset)
+    if fmt == "txt":
+        return export_text(cfg)
+    if fmt == "csv":
+        return rules_csv(cfg)
+    if fmt == "json":
+        return _json.dumps(payload_from_config(cfg, complete=complete), indent=2, ensure_ascii=False) + "\n"
+    raise ValueError("fmt must be 'txt', 'json' or 'csv'")
 
 
 def result_cache():

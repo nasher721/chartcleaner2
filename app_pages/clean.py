@@ -41,6 +41,18 @@ from chartcleaner.conflicts import build as build_conflicts
 REVIEWABLE_REMOVAL_STAGES = ("metadata_lines", "boilerplate", "learned_rules")
 # Regex stages that honor stage_options.<sid>.exceptions ("Never remove this").
 EXCEPTION_STAGES = ("metadata_lines", "boilerplate", "learned_rules", "literal_replacements")
+# Clean page selection modes (prefs "selection_mode") and their status line.
+# Longer selections show the toolbar instead of acting at once.
+QUICK_MODE_MAX_CHARS = 300
+QUICK_MODE_MAX_NEWLINES = 2
+SELECTION_MODE_HELP = {
+    "ask": "Select text in the chart to remove, replace or abbreviate it — and remember "
+           "that for next time.",
+    "remove": "Remove text mode: every selection is removed now and on every future clean "
+              "(Undo below). Switch to Ask to stop.",
+    "abbreviate": "Abbreviate mode: select a term to choose its abbreviation; it's saved to "
+                  "your dictionary.",
+}
 # Regex stages whose rules live in a config list (stage id -> config key).
 RULE_LISTS = {"metadata_lines": "emr_line_metadata", "boilerplate": "boilerplate",
               "phi_patterns": "epic_phi_patterns", "literal_replacements": "literal_replacements",
@@ -1557,9 +1569,34 @@ async def clean_page():
         if not isinstance(selection, dict) or not str(selection.get("text", "")).strip():
             return
         highlight["selection"] = selection
+        mode = common.PREFS.get("selection_mode")
+        text = selection["text"]
+        # A select-all or a multi-paragraph drag is almost never a phrase to
+        # remember: fall back to the toolbar so nothing is saved by accident.
+        if mode in ("remove", "abbreviate") and (len(text) > QUICK_MODE_MAX_CHARS
+                                                 or text.count("\n") > QUICK_MODE_MAX_NEWLINES):
+            highlight_status.set_text("That selection is long, so nothing was done — use the "
+                                      "toolbar to choose what to do with it.")
+        elif mode == "remove":
+            sel_remove()
+            return
+        elif mode == "abbreviate":
+            sel_abbreviate()
+            return
         shown = " ".join(selection["text"].split())
         sel_text.set_text(f"“{shown[:70]}{'…' if len(shown) > 70 else ''}”")
         sel_bar.set_visibility(True)
+
+    def set_selection_mode(mode: str) -> None:
+        if mode not in SELECTION_MODE_HELP:
+            mode = "ask"
+        common.PREFS.update(selection_mode=mode)
+        save_prefs()
+        hide_selection_bar()
+        highlight_status.set_text(SELECTION_MODE_HELP[mode])
+        input_area.classes(remove="cc-mode-remove cc-mode-abbreviate")
+        if mode != "ask":
+            input_area.classes(f"cc-mode-{mode}")
 
     def current_selection() -> dict | None:
         selection = highlight.get("selection")
@@ -1763,6 +1800,7 @@ async def clean_page():
 
                 save_abbreviation_with_safety(term, abbr, load_config(common.CONFIG_PATH), persist)
 
+            abbr_input.on("keydown.enter", save)
             expanded, n_expanded, _ = expand_abbreviations(term, cfg)
             can_expand = n_expanded == 1 and expanded != term
 
@@ -2457,6 +2495,7 @@ async def clean_page():
                                   "expand": "Expand abbreviations"},
                                  value=CLEAN_STATE.get("mode", "clean"),
                                  on_change=on_mode_change)
+            mode_sel.mark("clean-mode")
             presets = store.list_presets()
             preset_sel = ui.select(
                 options={**{p: p for p in presets}, "": "(config.json — current rules)"},
@@ -2510,9 +2549,16 @@ async def clean_page():
                             case_check = ui.checkbox("Match case", value=False)
                     ui.button(icon="close", on_click=hide_selection_bar).props("flat dense round")
                 sel_bar.set_visibility(False)
-                with ui.row().classes("w-full items-center gap-2 -mt-1"):
-                    highlight_status = ui.label("Select text in the chart to remove, replace or "
-                                                "abbreviate it — and remember that for next time.") \
+                with ui.row().classes("w-full items-center gap-2 -mt-1 flex-wrap"):
+                    selection_mode = common.PREFS.get("selection_mode")
+                    selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
+                    ui.toggle({"ask": "Ask", "remove": "Remove text", "abbreviate": "Abbreviate"},
+                              value=selection_mode,
+                              on_change=lambda e: set_selection_mode(e.value)) \
+                        .props("dense no-caps size=sm").mark("selection-mode") \
+                        .tooltip("What selecting chart text does: ask first, remove it at once, "
+                                 "or abbreviate it")
+                    highlight_status = ui.label(SELECTION_MODE_HELP[selection_mode]) \
                         .classes("text-xs opacity-70 flex-grow").props("role=status aria-live=polite")
                     undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
                         .props("flat dense no-caps")
@@ -2531,6 +2577,8 @@ async def clean_page():
                 input_area.props("outlined input-style='min-height: 420px'") \
                     .classes("w-full cc-mono cc-learn-src")
                 input_area.mark("highlight-source")
+                if selection_mode != "ask":
+                    input_area.classes(f"cc-mode-{selection_mode}")
                 for event_name in ("mouseup", "keyup", "touchend"):
                     input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
 

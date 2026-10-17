@@ -20,6 +20,19 @@ from typing import Any
 FORMAT_VERSION = 1
 KIND = "chart-cleaner-rules"
 ABBREVIATION_KEY = "abbreviations"
+# A "complete" export also carries the built-in stage rule lists and the
+# "Never remove this" exceptions. Both keys are optional, so files exported
+# without them (and older files) still import unchanged.
+STAGE_RULES_KEY = "stage_rules"
+EXCEPTIONS_KEY = "exceptions"
+STAGE_LINE_KEYS = ("emr_line_metadata", "boilerplate")
+STAGE_PAIR_KEYS = ("epic_phi_patterns", "literal_replacements")
+STAGE_RULE_LABELS = {
+    "emr_line_metadata": "EMR line metadata",
+    "boilerplate": "Boilerplate",
+    "epic_phi_patterns": "PHI patterns",
+    "literal_replacements": "Literal replacements",
+}
 
 
 def _pair(value: Any, context: str) -> list[str]:
@@ -51,6 +64,55 @@ def _merge_rules(current: list[list[str]], incoming: list[list[str]]) -> tuple[l
         by_pattern[pair[0]] = pair[1]
         result.append(pair)
     return result, conflicts
+
+
+def _line(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{context} must be a non-empty regex string")
+    try:
+        re.compile(value, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    except re.error as exc:
+        raise ValueError(f"{context} has invalid regex: {exc}") from exc
+    return value
+
+
+def _validate_stage_rules(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("stage_rules must be an object")
+    out: dict[str, list] = {}
+    for key, items in value.items():
+        if key not in STAGE_LINE_KEYS + STAGE_PAIR_KEYS:
+            raise ValueError(f"stage_rules: unknown rule list {key!r}")
+        if not isinstance(items, list):
+            raise ValueError(f"stage_rules.{key} must be a list")
+        if key in STAGE_LINE_KEYS:
+            out[key] = list(dict.fromkeys(_line(x, f"stage_rules.{key}[{i}]") for i, x in enumerate(items)))
+        else:
+            out[key] = [_pair(x, f"stage_rules.{key}[{i}]") for i, x in enumerate(items)]
+    return out
+
+
+def _validate_exceptions(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("exceptions must be an object")
+    out: dict[str, list[str]] = {}
+    for stage, items in value.items():
+        if not isinstance(stage, str) or not isinstance(items, list) \
+                or any(not isinstance(x, str) or not x.strip() for x in items):
+            raise ValueError(f"exceptions.{stage} must be a list of non-empty strings")
+        if items:
+            out[stage] = list(dict.fromkeys(items))
+    return out
+
+
+def _config_exceptions(config: dict) -> dict:
+    options = config.get("stage_options")
+    out = {}
+    for stage, opts in (options.items() if isinstance(options, dict) else ()):
+        keep = opts.get("exceptions") if isinstance(opts, dict) else None
+        if isinstance(keep, list) and keep:
+            out[stage] = [x for x in keep if isinstance(x, str) and x.strip()]
+    return {k: v for k, v in out.items() if v}
 
 
 def _abbreviations(config: dict) -> Any:
@@ -90,8 +152,13 @@ def _validate_abbreviations(value: Any) -> dict:
     return {"disabled": list(dict.fromkeys(disabled)), "custom": checked, **extras}
 
 
-def payload_from_config(config: dict) -> dict:
-    """Return the small, portable rules document for *config*."""
+def payload_from_config(config: dict, *, complete: bool = False) -> dict:
+    """Return the small, portable rules document for *config*.
+
+    ``complete`` adds the built-in stage rule lists (metadata, boilerplate,
+    PHI patterns, literal replacements) and "Never remove this" exceptions —
+    a full copy of everything that decides what gets removed.
+    """
     learned = [_pair(x, f"learned_rules[{i}]") for i, x in enumerate(config.get("learned_rules", []))]
     abbreviations = _abbreviations(config)
     if abbreviations is not None:
@@ -109,7 +176,15 @@ def payload_from_config(config: dict) -> dict:
         "removals": removals,
         "replacements": replacements,
         **({"abbreviations": abbreviations} if abbreviations is not None else {}),
+        **(_complete_sections(config) if complete else {}),
     }
+
+
+def _complete_sections(config: dict) -> dict:
+    stage_rules = {key: config[key] for key in STAGE_LINE_KEYS + STAGE_PAIR_KEYS
+                   if isinstance(config.get(key), list)}
+    return {STAGE_RULES_KEY: _validate_stage_rules(stage_rules),
+            EXCEPTIONS_KEY: _validate_exceptions(_config_exceptions(config))}
 
 
 def validate_payload(payload: Any) -> dict:
@@ -154,7 +229,42 @@ def validate_payload(payload: Any) -> dict:
             }
     if abbreviations is not None:
         result["abbreviations"] = abbreviations
+    if STAGE_RULES_KEY in payload:
+        result[STAGE_RULES_KEY] = _validate_stage_rules(payload[STAGE_RULES_KEY])
+    if EXCEPTIONS_KEY in payload:
+        result[EXCEPTIONS_KEY] = _validate_exceptions(payload[EXCEPTIONS_KEY])
     return result
+
+
+def _merge_stage_rules(config: dict, incoming: dict, mode: str) -> tuple[dict, int]:
+    """``(updated lists by key, entries added)`` — merge appends unseen patterns."""
+    updated, added = {}, 0
+    for key, items in incoming.items():
+        current = config.get(key) if mode == "merge" and isinstance(config.get(key), list) else []
+        if key in STAGE_LINE_KEYS:
+            seen = set(current)
+            new = [x for x in items if x not in seen]
+        else:
+            seen = {p[0] for p in current if isinstance(p, (list, tuple)) and p}
+            new = [p for p in items if p[0] not in seen]
+        added += len(new) if mode == "merge" else len(items)
+        updated[key] = list(current) + new
+    return updated, added
+
+
+def _merge_exceptions(config: dict, incoming: dict, mode: str) -> tuple[dict, int]:
+    """New ``stage_options`` with the exceptions merged, plus the count added."""
+    options = {k: dict(v) if isinstance(v, dict) else v
+               for k, v in (config.get("stage_options") or {}).items()}
+    added = 0
+    for stage, items in incoming.items():
+        opts = options.setdefault(stage, {})
+        current = opts.get("exceptions") if mode == "merge" else []
+        current = current if isinstance(current, list) else []
+        new = [x for x in items if x not in current]
+        added += len(new)
+        opts["exceptions"] = current + new
+    return options, added
 
 
 def pairs_from_payload(payload: dict) -> list[list[str]]:
@@ -180,7 +290,12 @@ def preview_import(config: dict, payload: dict, mode: str = "merge") -> dict:
                          terms[x["term"].casefold()].get("enabled", True) != x.get("enabled", True))
                         for x in incoming_abbrev.get("custom", []))
     added = len(merged) - len(current) if mode == "merge" else len(merged)
-    return {"mode": mode, "incoming": len(incoming), "existing": len(current),
+    _, stage_added = _merge_stage_rules(config, checked.get(STAGE_RULES_KEY) or {}, mode)
+    _, exceptions_added = _merge_exceptions(config, checked.get(EXCEPTIONS_KEY) or {}, mode)
+    return {"mode": mode,
+            "stage_rules": sum(len(v) for v in (checked.get(STAGE_RULES_KEY) or {}).values()),
+            "stage_rules_added": stage_added,
+            "exceptions_added": exceptions_added, "incoming": len(incoming), "existing": len(current),
             "added": added,
             "duplicates": len(incoming) - added - rule_conflicts,
             "rule_conflicts": rule_conflicts,
@@ -222,12 +337,19 @@ def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
             merged["disabled"] = list(dict.fromkeys(current_abbrev.get("disabled", []) + incoming_abbrev["disabled"]))
             merged["custom"] = current_abbrev.get("custom", []) + additions
             out[ABBREVIATION_KEY] = merged
+    stage_rules = checked.get(STAGE_RULES_KEY)
+    if stage_rules:
+        out.update(_merge_stage_rules(config, stage_rules, mode)[0])
+    exceptions = checked.get(EXCEPTIONS_KEY)
+    if exceptions:
+        out["stage_options"] = _merge_exceptions(out, exceptions, mode)[0]
     return out
 
 
-def export_json(config: dict, destination: str | Path, *, sign: bool = False, signer: str = "") -> Path:
+def export_json(config: dict, destination: str | Path, *, sign: bool = False, signer: str = "",
+                complete: bool = False) -> Path:
     path = Path(destination)
-    payload = payload_from_config(config)
+    payload = payload_from_config(config, complete=complete)
     if sign:
         from .rule_signing import sign as sign_payload
         payload = sign_payload(payload, signer)
@@ -264,14 +386,19 @@ def known_good_impact(config: dict, payload: dict, mode: str = "merge",
     return {"checked": len(results), "changed": [r.label for r in results if r.changed]}
 
 
-def export_csv(config: dict, destination: str | Path) -> Path:
-    path = Path(destination)
+def rules_csv(config: dict) -> str:
+    """Learned text rules as ``mode,pattern,replacement`` CSV text."""
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(("mode", "pattern", "replacement"))
     for rule in payload_from_config(config)["rules"]:
         writer.writerow((rule["mode"], rule["pattern"], rule["replacement"]))
-    path.write_text(output.getvalue(), encoding="utf-8")
+    return output.getvalue()
+
+
+def export_csv(config: dict, destination: str | Path) -> Path:
+    path = Path(destination)
+    path.write_text(rules_csv(config), encoding="utf-8")
     return path
 
 
@@ -376,6 +503,11 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                         ui.button("Trust", on_click=add).props("outline")
 
             draw_trusted()
+        complete_box = ui.checkbox(
+            "Include built-in lists (metadata, boilerplate, PHI patterns, literal replacements) "
+            "and “Never remove” exceptions", value=False).mark("rules-export-complete")
+        complete_box.tooltip("A complete copy of everything that decides what gets removed — "
+                             "for moving to a new computer or sharing a whole setup")
         with ui.row().classes("gap-2 flex-wrap"):
             def download(fmt: str) -> None:
                 import time
@@ -388,7 +520,8 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                         export_csv(load_current(), path)
                     else:
                         export_json(load_current(), path, sign=bool(sign_box.value),
-                                    signer=signer_input.value or "")
+                                    signer=signer_input.value or "",
+                                    complete=bool(complete_box.value))
                     ui.download(path, filename=f"chart-cleaner-rules{suffix}")
                     ui.notify("Rules saved in the exports folder; download started.", type="positive")
                 except Exception as exc:
@@ -396,7 +529,8 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
 
             async def copy_json() -> None:
                 try:
-                    payload = json.dumps(payload_from_config(load_current()), indent=2, ensure_ascii=False)
+                    payload = json.dumps(payload_from_config(load_current(), complete=bool(complete_box.value)),
+                                         indent=2, ensure_ascii=False)
                     await ui.run_javascript(f"navigator.clipboard.writeText({json.dumps(payload)})")
                     ui.notify("Rules JSON copied.", type="positive")
                 except Exception:
@@ -447,6 +581,13 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                     pass  # the preview never blocks an import
                 ui.label(f"{pending['name']}: {summary['incoming']} rules; {summary['added']} new; {summary['duplicates']} duplicate(s); result {summary['result']}.").classes("text-sm")
                 ui.label(f"Abbreviation custom rows: {summary['abbreviations']}; conflicts: {summary['abbreviation_conflicts']}; conflicting text rules skipped: {summary['rule_conflicts']}").classes("text-xs opacity-70")
+                if summary["stage_rules"]:
+                    ui.label(f"Built-in stage rules: {summary['stage_rules']} in file, "
+                             f"{summary['stage_rules_added']} new; never-remove exceptions: "
+                             f"{summary['exceptions_added']} new.").classes("text-xs opacity-70")
+                    if mode.value == "replace":
+                        ui.label("Replace also overwrites the built-in lists this file includes.") \
+                            .classes("text-sm text-orange-700")
                 if summary["enables_learned_rules"]:
                     ui.label("Learned rules will be enabled for future full cleans.").classes("text-sm")
                 if mode.value == "replace":

@@ -247,6 +247,62 @@ def _run_export_abbreviations(args) -> None:
     print(f"Wrote {len(pairs)} abbreviation(s) to {dest}")
 
 
+def _run_rules(args) -> int:
+    """--add-remove / --add-abbreviation / --list-rules / --export-rules / --import-rules."""
+    from chartcleaner import service, store
+    from chartcleaner.quick_rules import parse_abbreviations
+
+    if args.add_remove or args.add_abbreviation:
+        pairs, errors = parse_abbreviations("\n".join(args.add_abbreviation))
+        if errors:
+            print("Error: " + errors[0].replace("Line 1: ", ""), file=sys.stderr)
+            return 1
+        try:
+            report = service.add_rules(remove=[t for t in args.add_remove if t.strip()],
+                                       abbreviations=pairs,
+                                       whole_words=not args.inside_words,
+                                       case_sensitive=args.match_case)
+        except (ConfigError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        for kind, noun in (("remove", "removal"), ("abbreviations", "abbreviation")):
+            r = report[kind]
+            if r["added"] or r["updated"] or r["existing"] or r["conflicts"] or r["blocked"]:
+                print(f"{noun.capitalize()}s: {len(r['added'])} added, {len(r['updated'])} updated, "
+                      f"{len(r['existing'])} already saved")
+            for item in r["conflicts"]:
+                print(f"  ! “{item}” already has a replace rule — edit it on the Rules page", file=sys.stderr)
+            for item in r["blocked"]:
+                print(f"  ! “{item}”: Do Not Use abbreviation — not saved", file=sys.stderr)
+            for warning in r["warnings"]:
+                print(f"  ! {warning}", file=sys.stderr)
+    if args.import_rules:
+        ok, message = store.import_rules(Path(args.import_rules).expanduser(), args.import_mode)
+        print(message, file=sys.stdout if ok else sys.stderr)
+        if not ok:
+            return 1
+    if args.list_rules:
+        print(service.export_rules("txt"), end="")
+    if args.export_rules:
+        dest = Path(args.export_rules).expanduser()
+        if dest.is_dir():
+            dest = dest / f"chart-cleaner-rules-{time.strftime('%Y%m%d-%H%M%S')}.json"
+        fmt = dest.suffix.lower().lstrip(".")
+        if fmt not in store.RULE_EXPORT_FORMATS:
+            print("Error: --export-rules PATH must end in .json, .csv or .txt", file=sys.stderr)
+            return 1
+        try:
+            path, counts = store.export_rules(dest, fmt, complete=args.complete)
+        except (OSError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(f"Wrote {counts['removals']} removal(s), {counts['replacements']} replacement(s)"
+              + (f", {counts['abbreviations']} abbreviation(s)" if fmt != "csv" else "")
+              + (f", {counts['stage_rules']} built-in stage rule(s)" if counts["stage_rules"] else "")
+              + f" to {path}")
+    return 0
+
+
 def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
                  audit: bool = False, delta: bool = False, out_format: str = "text",
                  trends: bool = False, insights: bool = False) -> None:
@@ -493,6 +549,31 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Characters typed before each abbreviation (default ';').")
     parser.add_argument("--export-custom-only", action="store_true",
                         help="Export only your own abbreviations, not the bundled dictionary.")
+    rules = parser.add_argument_group(
+        "rules", "Add, list, export and import your own rules (no regex needed).")
+    rules.add_argument("--add-remove", action="append", metavar="TEXT", default=[],
+                       help='Always remove TEXT from future cleans (repeatable), e.g. '
+                            '--add-remove "Electronically signed by".')
+    rules.add_argument("--add-abbreviation", action="append", metavar="TERM=ABBR", default=[],
+                       help='Always shorten TERM to ABBR (repeatable), e.g. '
+                            '--add-abbreviation "subarachnoid hemorrhage=SAH". Do Not Use '
+                            "abbreviations are refused.")
+    rules.add_argument("--match-case", action="store_true",
+                       help="--add-remove: match upper/lower case exactly.")
+    rules.add_argument("--inside-words", action="store_true",
+                       help="--add-remove: also match inside longer words.")
+    rules.add_argument("--list-rules", action="store_true",
+                       help="Print your rules as a plain-text list (the --export-rules .txt format).")
+    rules.add_argument("--export-rules", type=str, metavar="PATH",
+                       help="Export your rules: .txt (plain lists), .csv (text rules) or .json "
+                            "(everything, re-importable); a folder writes a dated .json there.")
+    rules.add_argument("--complete", action="store_true",
+                       help="--export-rules .json: also export the built-in metadata/boilerplate/"
+                            "PHI/replacement lists and 'never remove' exceptions.")
+    rules.add_argument("--import-rules", type=str, metavar="PATH",
+                       help="Import a rules file (.json, .csv or .txt) after validating it.")
+    rules.add_argument("--import-mode", choices=["merge", "replace"], default="merge",
+                       help="--import-rules: merge (default, keeps yours) or replace.")
     parser.add_argument("--template", type=str, metavar="NAME",
                         help='Fill a note template from the cleaned chart, e.g. "Systems note ([N] '
                              '[CV] [R] …)", "Interval note", "Problem-oriented note".')
@@ -606,6 +687,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.export_abbreviations:
         _run_export_abbreviations(args)
         return
+    if (args.add_remove or args.add_abbreviation or args.list_rules or args.export_rules
+            or args.import_rules):
+        sys.exit(_run_rules(args))
 
     if args.untoken is not None:
         src = None if args.untoken == "__clipboard__" else args.untoken
