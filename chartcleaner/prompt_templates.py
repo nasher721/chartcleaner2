@@ -59,14 +59,29 @@ def get(name: str, cfg: dict | None = None) -> dict:
     raise KeyError(f"Unknown prompt template: {name}")
 
 
-def render(name: str, chart: str, cfg: dict | None = None, *, today: _date | None = None) -> str:
+def render(
+    name: str,
+    chart: str,
+    cfg: dict | None = None,
+    *,
+    today: _date | None = None,
+    budget_tokens: int | None = None,
+) -> str:
     """The prompt for ``chart`` (already cleaned) using template ``name``."""
     from .service import format_output
 
     template = get(name, cfg)
     body = template["template"]
-    formatted = format_output(chart, template["format"])[0] if "{chart}" in body else ""
-    delta = format_output(chart, "text", delta=True)[0] if "{delta}" in body else ""
+    source_chart = chart
+    if budget_tokens is not None and int(budget_tokens) > 0:
+        from .context_router import pack_context
+        source_chart = pack_context(
+            chart,
+            budget_tokens=int(budget_tokens),
+            preset=name,
+        ).text
+    formatted = format_output(source_chart, template["format"])[0] if "{chart}" in body else ""
+    delta = format_output(source_chart, "text", delta=True)[0] if "{delta}" in body else ""
     values = {"date": (today or _date.today()).isoformat(), "delta": delta, "chart": formatted}
     # One pass, so placeholder-like text inside the chart is never substituted.
     return re.sub(r"\{(chart|delta|date)\}", lambda m: values[m.group(1)], body)

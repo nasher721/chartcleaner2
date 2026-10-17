@@ -64,6 +64,7 @@ async def clean_page():
     highlight = {"pending": False, "undo": None, "selection": None}
     refs: dict = {}          # result widgets (tabs, output box), repopulated by render_results
     inbox = {"items": []}    # rule-inbox suggestions for the current recent charts
+    inbox_btn = None         # the "Suggestions" button; built in header_actions
 
     # ---- handlers (defined before the UI that references them) -------------
     def set_running(flag: bool) -> None:
@@ -214,12 +215,48 @@ async def clean_page():
         result = CLEAN_STATE.get("result")
         render_ai()
         if not result:
+            mode = CLEAN_STATE.get("mode") or "clean"
+            single = mode in ("abbreviations", "expand")
+            previews = [
+                ("Output", "Copy-ready cleaned text — Epic-safe, Markdown or an AI prompt.",
+                 "var(--nd-success)"),
+                ("Review", "Every change, clickable — see the exact rule behind each removal.",
+                 "var(--nd-accent)"),
+            ]
+            if not single:
+                previews.append(("Insights",
+                    "Trends, timeline and safety nets pulled from the note.",
+                    "var(--nd-interactive)"))
             with results_col:
-                with ui.column().classes("w-full items-center justify-center gap-4 py-24"):
-                    ui.element("div").classes("cc-dotgrid")
-                    ui.label("Your cleaned chart appears here.").classes("cc-page-sub")
+                with ui.column().classes("w-full gap-4 py-12"):
+                    ui.label("Your cleaned chart appears here.").classes(
+                        "cc-page-sub text-center w-full")
+                    with ui.element("div").classes(
+                            f"grid gap-px cc-preview-grid grid-cols-{len(previews)}"):
+                        for name, desc, color in previews:
+                            with ui.column().classes("cc-preview-cell gap-3"):
+                                with ui.row().classes("w-full items-center gap-2"):
+                                    ui.element("span").classes("cc-dot").style(f"color:{color}")
+                                    ui.label(name.upper()).classes("cc-mono text-xs opacity-80")
+                                ui.label(desc).classes("text-xs opacity-70")
+                                if name == "Output":
+                                    with ui.row().classes("cc-minibar"):
+                                        for i in range(12):
+                                            ui.element("span").classes(
+                                                "cc-minibar__cell on" if i < 10
+                                                else "cc-minibar__cell off")
+                                elif name == "Review":
+                                    ui.html('<span class="cc-mono text-xs">Dr. Smith '
+                                            '<s style="color:var(--nd-accent)">MRN 1234</s> '
+                                            'discharged</span>')
+                                else:
+                                    with ui.row().classes("cc-spark"):
+                                        for h, op in zip([40, 64, 30, 80, 52, 70, 46],
+                                                         opacity_ramp(7)):
+                                            ui.element("span").classes("cc-spark__bar") \
+                                                .style(f"height:{h}px;background:{op}")
                     ui.label(f"Paste a chart on the left and press Clean ({MOD}+Enter).") \
-                        .classes("cc-segbar-note")
+                        .classes("cc-segbar-note text-center")
             return
         result_mode = CLEAN_STATE.get("result_mode")
         single_pass = result_mode in ("abbreviations", "expand")
@@ -228,6 +265,7 @@ async def clean_page():
             phi = result.phi_counts()
             with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
                 ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
+                ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("opacity-70")
                 ui.label(f"{result.reduction:+.1f}%").classes(
                     "font-semibold " + ("text-green-600" if result.reduction >= 0 else "text-orange-600"))
                 if result_mode == "abbreviations":
@@ -252,7 +290,8 @@ async def clean_page():
                 t_review = ui.tab("Review", icon="rule")
                 t_insights = ui.tab("Insights", icon="insights") if not single_pass else None
             refs["tabs"] = (tabs, [t for t in (t_out, t_review, t_insights) if t is not None])
-            with ui.tab_panels(tabs, value=t_out).classes("w-full").props("keep-alive"):
+            with ui.tab_panels(tabs, value=t_out).classes("w-full") \
+                    .props("keep-alive transition-prev=fade transition-next=fade"):
                 with ui.tab_panel(t_out).classes("px-0"):
                     render_output(result, single_pass)
                 with ui.tab_panel(t_review).classes("px-0"):
@@ -261,7 +300,9 @@ async def clean_page():
                     with ui.tab_panel(t_insights).classes("px-0"):
                         render_insights()
             if result.warnings:
-                ui.label("⚠ " + " | ".join(result.warnings)).classes("text-xs text-orange-600")
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.element("span").classes("cc-dot cc-dot--warn")
+                    ui.label(" | ".join(result.warnings)).classes("text-xs text-orange-600")
 
     def render_trust_strip(result, single_pass: bool) -> None:
         """The one-glance "can I trust this?" badges above the output."""
@@ -1229,6 +1270,12 @@ async def clean_page():
         else:
             ui.badge(f"Grounded {score}%", color="amber")
 
+    def context_badge(ctx) -> None:
+        if ctx is None or not hasattr(ctx, "tier_label"):
+            return
+        color = "teal" if getattr(ctx, "was_compacted", False) else "grey"
+        ui.badge(ctx.tier_label(), color=color).props("outline").mark("ai-context-badge")
+
     def render_summary_output() -> None:
         res = CLEAN_STATE.get("summary")
         if not res or "output" not in summary_refs:
@@ -1251,6 +1298,7 @@ async def clean_page():
         with row:
             grounding_badge(g.grounding_score, g.is_safe, g.total_entities)
             facts_badge(facts)
+            context_badge(getattr(res, "context", None))
             for item in g.ungrounded_entities:
                 ui.button(item, icon="content_copy",
                           on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
@@ -1319,6 +1367,7 @@ async def clean_page():
                 with ui.row().classes("items-center gap-1 flex-wrap"):
                     grounding_badge(g["score"], g["safe"], g["total"])
                     facts_badge(facts)
+                    context_badge(t.get("context"))
                     ui.button("Copy answer", icon="content_copy",
                               on_click=lambda _, a=t["a"]: copy_to_clipboard(a)).props("flat dense")
                     ui.label(f"{t['model']} · {t['ms']:,} ms").classes("text-xs opacity-60")
@@ -1345,7 +1394,14 @@ async def clean_page():
         if spin:
             spin.set_visibility(True)
         try:
-            history = [QaTurn(t["q"], t["a"]) for t in (CLEAN_STATE.get("qa") or [])]
+            history = [
+                QaTurn(
+                    t["q"],
+                    t["a"],
+                    ungrounded=bool(not t["g"]["safe"] or (t.get("facts") and t["facts"].unsupported)),
+                )
+                for t in (CLEAN_STATE.get("qa") or [])
+            ]
 
             def work():
                 return ask_chart(question, chart_text, load_config(common.CONFIG_PATH), history=history,
@@ -1361,6 +1417,7 @@ async def clean_page():
                       "total": res.grounding.total_entities},
                 "facts": getattr(res, "facts", None),
                 "citations": getattr(res, "citations", None),
+                "context": getattr(res, "context", None),
                 "model": res.model, "ms": res.duration_ms})
             if q_box:
                 q_box.set_value("")
@@ -1850,8 +1907,10 @@ async def clean_page():
                         ui.label(f"− {smp['before'][:160]}" + (f"   → {smp['after'][:80]}" if smp["after"] else "")) \
                             .classes("text-xs cc-mono opacity-80")
                     if impact.example_failures:
-                        ui.label(f"⚠ Changes {len(impact.example_failures)} earlier lesson(s).") \
-                            .classes("text-xs text-orange-600")
+                        with ui.row().classes("w-full items-center gap-2"):
+                            ui.element("span").classes("cc-dot cc-dot--warn")
+                            ui.label(f"Changes {len(impact.example_failures)} earlier lesson(s).") \
+                                .classes("text-xs text-orange-600")
 
             txt.on_value_change(lambda e: sync_hits())
             mode.on_value_change(lambda e: sync_hits())
@@ -2363,9 +2422,13 @@ async def clean_page():
         ai_col = ui.column().classes("w-full gap-2").mark("ai-panel")
 
     def header_actions() -> None:
+        nonlocal inbox_btn
         ui.button(icon="psychology", on_click=lambda: toggle_ai()) \
             .props("flat round aria-label='Local AI panel'").classes("cc-headbtn") \
             .tooltip("Local AI panel (Alt+A)")
+        inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
+            .props("flat no-caps color=grey").classes("cc-headbtn").mark("inbox") \
+            .tooltip("Suggestions")
 
     with shell("Clean a chart", "clean", commands=commands, shortcuts=shortcuts,
                actions=header_actions):
@@ -2376,13 +2439,13 @@ async def clean_page():
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs")
 
-        with ui.card().classes("w-full gap-2 cc-tint cc-tint--accent").mark("onboarding") as onboarding:
+        with ui.card().classes("w-full gap-2 cc-tint cc-tint--accent cc-reveal").mark("onboarding") as onboarding:
             ui.label("New here? Four steps").classes("font-semibold")
-            with ui.row().classes("w-full gap-6 flex-wrap text-sm"):
-                ui.label("① Paste or drop a chart on the left")
-                ui.label(f"② Clean ({MOD}+Enter)")
-                ui.label("③ Review — click any struck-out text to see the rule")
-                ui.label("④ Copy as… Epic-safe, Markdown or an AI prompt")
+            with ui.row().classes("w-full gap-6 flex-wrap text-sm cc-mono"):
+                ui.label("01 · Paste or drop a chart on the left")
+                ui.label(f"02 · Clean ({MOD}+Enter)")
+                ui.label("03 · Review — click any struck-out text to see the rule")
+                ui.label("04 · Copy as… Epic-safe, Markdown or an AI prompt")
             with ui.row().classes("gap-2"):
                 ui.button("Try it on the sample chart", icon="science", on_click=try_sample) \
                     .props("unelevated no-caps")
@@ -2396,14 +2459,10 @@ async def clean_page():
                                  on_change=on_mode_change)
             presets = store.list_presets()
             preset_sel = ui.select(
-                options={**{p: f"📦 {p}" for p in presets}, "": "(config.json — current rules)"},
+                options={**{p: p for p in presets}, "": "(config.json — current rules)"},
                 value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
                 label="Rule preset",
             ).props("dense outlined").classes("w-60")
-            ui.space()
-            inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
-                .props("flat no-caps color=grey").mark("inbox")
-            ui.button("AI panel", icon="psychology", on_click=lambda: toggle_ai()).props("flat no-caps")
         mode_note = ui.label("").classes("text-sm opacity-70 -mt-2")
 
         layout = ui.element("div").classes("grid grid-cols-1 gap-6 w-full items-start")
@@ -2414,7 +2473,10 @@ async def clean_page():
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
                     clean_btn.props("unelevated color=primary no-caps").tooltip(f"{MOD}+Enter")
-                    spinner = ui.spinner("dots", size="lg")
+                    spinner = ui.row().classes("items-center gap-2").mark("spinner")
+                    with spinner:
+                        ui.element("div").classes("cc-spinner")
+                        ui.label("Cleaning").classes("cc-mono text-xs opacity-70 cc-pulse")
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
                     ui.button("Sample", icon="science", on_click=load_sample).props("flat no-caps") \
@@ -2491,7 +2553,7 @@ async def clean_page():
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
             # ---- right: the result ----
-            results_col = ui.column().classes("w-full gap-2 min-w-0").mark("results")
+            results_col = ui.column().classes("w-full gap-2 min-w-0 cc-stagger").mark("results")
 
         preset_sel.on_value_change(on_preset_change)
         sync_mode_controls()

@@ -48,6 +48,7 @@ OWNED_KEYS: dict[str, tuple[str, ...]] = {
     "neuro_summary": ("neuro_summary",),
     "mar_summary": ("mar_summary",),
     "flowsheet_tables": ("flowsheet_tables",),
+    "vent_summary": ("vent_summary",),
     "whitespace": ("whitespace",),
     "duplicate_notes": ("duplicate_note_detection",),
     "note_order": ("note_order",),

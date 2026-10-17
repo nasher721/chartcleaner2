@@ -24,6 +24,7 @@ from .compactors import meds as meds_compactor
 from .compactors import neuro as neuro_compactor
 from .compactors import note_order as note_order_compactor
 from .compactors import tables as tables_compactor
+from .compactors import vent as vent_compactor
 from .compactors import vitals as vitals_compactor
 from .stage_cleanup import (
     DEFAULT_BULLETS,
@@ -129,6 +130,7 @@ RUNNERS: dict[str, Callable] = {
     "neuro": neuro_compactor.run,
     "mar": mar_compactor.run,
     "tables": tables_compactor.run,
+    "vent": vent_compactor.run,
     "sections": run_sections,
     "whitespace": run_whitespace,
     "dedup_notes": run_duplicate_notes,
@@ -161,6 +163,7 @@ KIND_TO_RUNNER = {
     "neuro_summary": "neuro",
     "mar_summary": "mar",
     "flowsheet_tables": "tables",
+    "vent_summary": "vent",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",

@@ -247,7 +247,10 @@ def _payload(result: RunResult, text: str) -> dict:
         "summary": result.summary(),
         "chars_before": result.chars_before,
         "chars_after": result.chars_after,
+        "tokens_before": result.tokens_before,
+        "tokens_after": result.tokens_after,
         "reduction": result.reduction,
+        "token_reduction": result.token_reduction,
         "phi": result.phi_counts(),
         "warnings": list(result.warnings),
         "stages": _slim_stages(result),
@@ -318,13 +321,14 @@ def expand(text: str, *, preset: str | None = None, source: str = "api",
 
 
 def prompt(text: str, template: str, *, preset: str | None = None, clean_first: bool = True,
-           record: bool = True, source: str = "api", config: dict | None = None) -> dict:
+           record: bool = True, source: str = "api", config: dict | None = None,
+           budget_tokens: int | None = None) -> dict:
     """Clean ``text`` (unless ``clean_first`` is False) and wrap it in a prompt template."""
     from .prompt_templates import render
 
     cfg = _config(config, preset)
     chart = _cleaned(text, cfg, record, source) if clean_first else text
-    return {"template": template, "text": render(template, chart, cfg)}
+    return {"template": template, "text": render(template, chart, cfg, budget_tokens=budget_tokens)}
 
 
 def ask(question: str, chart: str, *, preset: str | None = None,
@@ -342,6 +346,7 @@ def ask(question: str, chart: str, *, preset: str | None = None,
         "ungrounded_entities": list(res.grounding.ungrounded_entities),
         "facts": res.facts.to_dict() if res.facts is not None else None,
         "citations": [c.to_dict() for c in res.citations],
+        "context": res.context.to_dict() if res.context is not None else None,
         "duration_ms": res.duration_ms,
     }
 

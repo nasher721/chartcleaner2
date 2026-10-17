@@ -57,7 +57,7 @@ RULE_STAGES = frozenset({
 })
 BY_DESIGN_STAGES = frozenset({
     "sections", "imaging_impression", "vitals_summary", "lab_compaction", "neuro_summary",
-    "med_normalize", "mar_summary", "flowsheet_tables",
+    "med_normalize", "mar_summary", "flowsheet_tables", "vent_summary",
 })
 DEDUP_STAGES = frozenset({"duplicate_notes", "fuzzy_dedup", "fuzzy_line_dedup"})
 # Abbreviating swaps a drug or keyword for a standard short form on purpose.

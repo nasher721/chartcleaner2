@@ -119,7 +119,7 @@ class PipelineSchemaMixin:
 
     def _validate_local_llm(self) -> None:
         from .summarizer import DEFAULT_LLM  # lazy: keeps urllib out of every engine import
-        self._check_option_group(
+        llm = self._check_option_group(
             "local_llm",
             DEFAULT_LLM,
             {
@@ -128,5 +128,12 @@ class PipelineSchemaMixin:
                 "prompt_preset": ((str,), "a preset name"),
                 "custom_prompt": ((str,), "a string prompt"),
                 "grounding_threshold": (((int, float),), "a number 0-100"),
+                "context_tokens": ((int,), "an integer token limit (1024-131072)"),
             },
         )
+        if llm is not None and "context_tokens" in llm and (
+            isinstance(llm["context_tokens"], bool)
+            or not isinstance(llm["context_tokens"], int)
+            or not 1024 <= llm["context_tokens"] <= 131072
+        ):
+            self.errors.append("local_llm.context_tokens: must be an integer between 1024 and 131072")

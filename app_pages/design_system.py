@@ -444,6 +444,58 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   background-size:12px 12px;}
 
 /* =====================================================================
+   13.5 MOTION — quiet, instrument-grade; subtle ease-out only
+   ---------------------------------------------------------------------
+   The system forbids spring easing and decorative motion. These are the
+   *only* motions the app makes: a once-only entrance on a freshly drawn
+   result, a fade between tabs, and a square "scanning" spinner. Every one
+   uses --nd-ease and --nd-dur, and the global reduced-motion rule below
+   collapses them to instant.
+   ===================================================================== */
+@keyframes cc-fade-up{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+@keyframes cc-fade{from{opacity:0;}to{opacity:1;}}
+@keyframes cc-spin{to{transform:rotate(360deg);}}
+@keyframes cc-pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+/* A freshly drawn result entering: single fade-up, retriggers each render. */
+.cc-reveal{animation:cc-fade-up var(--nd-dur) var(--nd-ease) both;}
+.cc-reveal--soft{animation:cc-fade var(--nd-dur) var(--nd-ease) both;}
+/* Composed entrance: each direct child steps in behind the last, so the
+   trust strip, the metric row and the tabs arrive as a sequence rather
+   than a wall — no competing motion, just rhythm. */
+.cc-stagger > *{animation:cc-fade-up var(--nd-dur) var(--nd-ease) both;}
+.cc-stagger > *:nth-child(2){animation-delay:50ms;}
+.cc-stagger > *:nth-child(3){animation-delay:100ms;}
+.cc-stagger > *:nth-child(4){animation-delay:150ms;}
+.cc-stagger > *:nth-child(5){animation-delay:200ms;}
+.cc-stagger > *:nth-child(6){animation-delay:250ms;}
+/* Square spinner — a Teenage-Engineering instrument scanning, not a blob. */
+.cc-spinner{width:20px;height:20px;flex:0 0 20px;border:2px solid var(--nd-border-visible);
+  border-top-color:var(--nd-text-display);border-radius:0;transform-origin:center;
+  animation:cc-spin 700ms linear infinite;}
+.cc-pulse{animation:cc-pulse 1.2s var(--nd-ease) infinite;}
+
+/* =====================================================================
+   13.6 EMPTY STATES — educational, on-brand previews
+   ---------------------------------------------------------------------
+   The first-run / no-result pane teaches what each result tab will show
+   before the first clean: a hairline grid (structure is ornament), square
+   status dots, and the signature segmented / struck / sparkline visuals.
+   ===================================================================== */
+.cc-preview-grid{background:var(--nd-border);border:1px solid var(--nd-border);}
+.cc-preview-cell{background:var(--nd-surface);padding:var(--nd-space-lg);}
+.cc-dot--ok{color:var(--nd-success);}
+.cc-dot--warn{color:var(--nd-warning);}
+.cc-dot--neg{color:var(--nd-accent);}
+.cc-dot--info{color:var(--nd-text-display);}
+/* Mini signature visuals — one per result tab. */
+.cc-minibar{display:flex;gap:2px;width:100%;height:10px;}
+.cc-minibar__cell{flex:1 1 0;min-width:2px;}
+.cc-minibar__cell.on{background:var(--nd-text-display);}
+.cc-minibar__cell.off{background:var(--nd-accent);}
+.cc-spark{display:flex;align-items:flex-end;gap:3px;height:48px;width:100%;}
+.cc-spark__bar{flex:1 1 0;min-width:3px;display:block;}
+
+/* =====================================================================
    14. OVERLAYS — layering by contrast + border, never shadow
    ===================================================================== */
 .q-dialog__backdrop{background:rgba(0,0,0,.8);}
@@ -613,6 +665,9 @@ pre,code,kbd{font-family:var(--nd-mono);}
 @media (max-width:599px){
   .cc-brand{display:none;}
   .cc-page-title{font-size:30px;}
+  /* Touch targets: every control earns at least 44px on a phone. */
+  .q-btn{min-height:44px;}
+  .cc-headbtn{min-height:44px;}
   /* Dialogs are laid out at desktop widths in the page code — clamp them. */
   .q-dialog .q-card{width:auto !important;max-width:calc(100vw - 32px) !important;}
   .q-dialog__inner{padding:16px;}

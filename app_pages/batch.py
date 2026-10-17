@@ -146,8 +146,8 @@ def batch_page():
                                  "chars": f"{r.chars_before:,} → {r.chars_after:,}",
                                  "reduction": f"{r.reduction:+.1f}%",
                                  "phi": r.phi_total, "findings": r.findings,
-                                 "facts": ("✓ kept" if r.facts_status == "ok" else
-                                           ("⚠ " if r.facts_status == "review" else "✕ ")
+                                 "facts": ("kept" if r.facts_status == "ok" else
+                                           ("review · " if r.facts_status == "review" else "dropped · ")
                                            + r.facts) if r.facts_status else "—",
                                  "note": (r.note_type + (f" → {r.preset}" if r.preset else "")) or "—",
                                  "ms": f"{r.elapsed_ms:,} ms", "status": "ok", "summary": r.summary})

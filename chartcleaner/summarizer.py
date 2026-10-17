@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from chartcleaner.context_router import DEFAULT_CONTEXT_TOKENS, pack_context, should_bookend
 from chartcleaner.local_llm import (
     GroundingResult,
     LocalLlmClient,
@@ -38,6 +39,7 @@ DEFAULT_LLM: dict[str, Any] = {
     "prompt_preset": "clinical",
     "custom_prompt": "",
     "grounding_threshold": 90.0,
+    "context_tokens": DEFAULT_CONTEXT_TOKENS,
 }
 
 PRESET_INSTRUCTION = (
@@ -111,6 +113,8 @@ class SummaryResult:
     facts: Any = None
     # where each summary line comes from in the chart (citations.Citation)
     citations: list = field(default_factory=list)
+    # context-window packing metadata (context_router.PackedContext)
+    context: Any = None
 
 
 class LlmClient(Protocol):  # structural type for injection in tests
@@ -124,12 +128,29 @@ def merge_llm_config(cfg: dict) -> dict[str, Any]:
     return {**DEFAULT_LLM, **(cfg.get("local_llm") or {})}
 
 
-def build_prompt(preset_key: str, custom_prompt: str, chart: str) -> str:
-    """Compose the full prompt; a non-empty custom prompt replaces the preset."""
+def build_prompt(
+    preset_key: str,
+    custom_prompt: str,
+    chart: str,
+    *,
+    bookend: bool | None = None,
+) -> str:
+    """Compose the full prompt; a non-empty custom prompt replaces the preset.
+
+    When ``bookend`` is True (or ``None`` and ``chart`` exceeds
+    ``BOOKEND_MIN_TOKENS``), the instruction is reiterated after the chart to
+    counter Lost-in-the-Middle attention decay on long clinical notes.
+    """
     instruction = custom_prompt.strip() or SUMMARY_PRESETS.get(
         preset_key, SUMMARY_PRESETS["clinical"]
     )
-    return f"{instruction}\n\nChart:\n{chart}"
+    prompt = f"{instruction}\n\nChart:\n{chart}"
+    if should_bookend(chart, bookend):
+        prompt += (
+            f"\n\n---\nReminder — follow the instructions above using ONLY facts "
+            f"explicitly present in the chart:\n{instruction}"
+        )
+    return prompt
 
 
 def _resolve_model(client: LlmClient, model: str) -> str:
@@ -172,9 +193,13 @@ def summarize(
     opts = merge_llm_config(cfg)
     base_url: str = opts["base_url"]
     threshold = min(max(float(opts["grounding_threshold"]), 0.0), 100.0)
+    try:
+        context_tokens = int(opts.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
+    except (TypeError, ValueError):
+        context_tokens = DEFAULT_CONTEXT_TOKENS
 
     try:
-        client = client or LocalLlmClient(base_url, timeout=60.0)
+        client = client or LocalLlmClient(base_url, timeout=60.0, num_ctx=context_tokens)
         if not client.is_available():
             raise LlmUnavailableError(base_url)
     except LlmUnavailableError:
@@ -185,9 +210,13 @@ def summarize(
         raise LlmUnavailableError(base_url, str(exc)) from exc
 
     model = _resolve_model(client, str(opts["model"]))
-    prompt = build_prompt(
-        str(opts["prompt_preset"]), str(opts["custom_prompt"]), _with_overnight(opts, chart)
+    preset_str = str(opts["prompt_preset"])
+    packed = pack_context(
+        _with_overnight(opts, chart),
+        context_tokens=context_tokens,
+        preset=preset_str,
     )
+    prompt = build_prompt(preset_str, str(opts["custom_prompt"]), packed.text)
 
     started = time.monotonic()
     try:
@@ -201,15 +230,18 @@ def summarize(
     if not text.strip():
         raise ValueError("empty response from model")
 
+    # Grounding, clinical fact verification, and citations always check against
+    # the original cleaned chart so offsets match CLEAN_STATE["result_text"].
     grounding = verify_clinical_grounding(chart, text, threshold=threshold)
     return SummaryResult(
         text=text,
         grounding=grounding,
         model=model,
-        preset=str(opts["prompt_preset"]),
+        preset=preset_str,
         duration_ms=duration_ms,
         facts=_check_facts(chart, text),
         citations=_cite(text, chart),
+        context=packed,
     )
 
 

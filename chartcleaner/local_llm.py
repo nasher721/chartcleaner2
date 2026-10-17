@@ -108,9 +108,15 @@ def verify_clinical_grounding(
 class LocalLlmClient:
     """Lightweight HTTP client for local Ollama instance (100% offline)."""
 
-    def __init__(self, base_url: str = DEFAULT_OLLAMA_URL, timeout: float = 15.0):
+    def __init__(
+        self,
+        base_url: str = DEFAULT_OLLAMA_URL,
+        timeout: float = 15.0,
+        num_ctx: int | None = None,
+    ):
         self.base_url = self._validate_base_url(base_url).rstrip("/")
         self.timeout = timeout
+        self.num_ctx = int(num_ctx) if isinstance(num_ctx, (int, float)) and not isinstance(num_ctx, bool) and int(num_ctx) > 0 else None
 
     @staticmethod
     def _validate_base_url(base_url: str) -> str:
@@ -220,6 +226,8 @@ class LocalLlmClient:
         payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": True}
         if system:
             payload["system"] = system
+        if self.num_ctx:
+            payload["options"] = {"num_ctx": self.num_ctx}
         req = urllib.request.Request(
             f"{self.base_url}/api/generate", data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST")
@@ -254,6 +262,8 @@ class LocalLlmClient:
         }
         if system:
             payload["system"] = system
+        if self.num_ctx:
+            payload["options"] = {"num_ctx": self.num_ctx}
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(

@@ -22,8 +22,9 @@ Code status: Full code
 DNR/DNI
 No AC given hemorrhagic conversion.
 Hep gtt per nomogram.
-Pip-tazo 4.5 g IV q8h.
-Afebrile. Tmax 38.6 C.
+    Pip-tazo 4.5 g IV q8h.
+    Afebrile. Tmax 38.6 C.
+    K 5.9. KCl 20 mEq PO BID.
 """
 
 
@@ -41,6 +42,8 @@ def test_every_check_fires_on_the_latest_note():
     assert allergy.lines == ["Allergies: Penicillin (hives)", "Pip-tazo 4.5 g IV q8h."]
     fever = next(c for c in report.conflicts if c.kind == "fever")
     assert fever.lines == ["Afebrile. Tmax 38.6 C."]  # both halves on one line: quoted once
+    lab_med = next(c for c in report.conflicts if c.kind == "lab-medication")
+    assert lab_med.lines == ["K 5.9. KCl 20 mEq PO BID."]
     text = report.to_text()
     assert text.startswith("Possible contradictions") and "“Hep gtt per nomogram.”" in text
 
@@ -68,6 +71,11 @@ def test_only_the_latest_note_is_compared():
     "Allergies: penicillin\nAvoid zosyn",           # med line says avoid
     "Afebrile\nTmax 37.9",
     "R cerebellar hemorrhage\nR arm weakness",      # cerebellar lesions are ipsilateral
+    "K 5.9\nHold KCl and spironolactone",           # held potassium-raising meds
+    "K 5.9 -> 4.3\nKCl 20 mEq PO daily",            # K normalized on latest value
+    "Plt 32\nHeparin 5000 units SQ q8h",            # prophylactic SQ heparin is not therapeutic AC
+    "INR 4.2\nHold warfarin, give vitamin K 5 mg PO",  # warfarin held
+    "Na 124\nStop D5W, start 0.9% NaCl at 75 mL/h", # hypotonic fluid stopped
 ])
 def test_no_flag(text):
     assert _kinds(text) == []
@@ -88,6 +96,10 @@ def test_no_flag(text):
     ("Allergic to sulfa\nBactrim DS 1 tab PO BID", "allergy"),
     ("ALLG: vancomycin (red man)\nVancomycin 1 g IV q12h", "allergy"),
     ("No fevers\nT 101.2 F", "fever"),
+    ("K 5.8\nSpironolactone 25 mg PO daily", "lab-medication"),
+    ("Plt 35\nEnoxaparin 1 mg/kg SQ BID", "lab-medication"),
+    ("INR 4.1\nContinue warfarin 5 mg PO daily", "lab-medication"),
+    ("Na 125\nD5W at 75 mL/h", "lab-medication"),
 ])
 def test_flag(text, kind):
     found = _kinds(text)

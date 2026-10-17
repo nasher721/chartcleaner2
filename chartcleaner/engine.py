@@ -34,7 +34,9 @@ from .compactors import meds as meds_compactor
 from .compactors import neuro as neuro_compactor
 from .compactors import note_order as note_order_compactor
 from .compactors import tables as tables_compactor
+from .compactors import vent as vent_compactor
 from .compactors import vitals as vitals_compactor
+from .token_estimator import estimate_tokens
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
@@ -106,6 +108,7 @@ BUILTIN_STAGE_IDS = [
     "neuro_summary",
     "mar_summary",
     "flowsheet_tables",
+    "vent_summary",
     "whitespace",
     "duplicate_notes",
     "note_order",
@@ -130,6 +133,7 @@ STAGE_ANCHORS: dict[str, str] = {
     "neuro_summary": "vitals_summary",
     "mar_summary": "neuro_summary",
     "flowsheet_tables": "mar_summary",
+    "vent_summary": "flowsheet_tables",
     "note_order": "duplicate_notes",
     "fuzzy_line_dedup": "fuzzy_dedup",
 }
@@ -154,6 +158,7 @@ STAGE_LABELS = {
     "neuro_summary": "Neuro ICU summaries",
     "mar_summary": "MAR & PRN dose summary",
     "flowsheet_tables": "Flowsheet table de-tabularizer",
+    "vent_summary": "Ventilator & ABG summary",
     "sections": "Section keep/drop",
     "whitespace": "Whitespace cleanup",
     "duplicate_notes": "Duplicate note folding",
@@ -187,6 +192,7 @@ STAGE_KINDS = {
     "neuro_summary": "neuro",
     "mar_summary": "mar",
     "flowsheet_tables": "tables",
+    "vent_summary": "vent",
     "sections": "sections",
     "whitespace": "whitespace",
     "duplicate_notes": "dedup_notes",
@@ -281,6 +287,7 @@ def validate_config(cfg: dict) -> tuple[list[str], list[str]]:
         "neuro_summary": neuro_compactor.DEFAULTS,
         "mar_summary": mar_compactor.DEFAULTS,
         "flowsheet_tables": tables_compactor.DEFAULTS,
+        "vent_summary": vent_compactor.DEFAULTS,
         "note_order": note_order_compactor.DEFAULTS,
     }
     validator = ConfigValidator(cfg, BUILTIN_STAGE_IDS, defaults)
@@ -329,6 +336,7 @@ class RunResult:
     chars_before: int = 0
     words_before: int = 0
     lines_before: int = 0
+    tokens_before: int = 0
     # FactReport from fact_check (holds chart text; history keeps summary only)
     fact_check: Any = None
 
@@ -345,10 +353,20 @@ class RunResult:
         return self.text.count("\n") + 1
 
     @property
+    def tokens_after(self) -> int:
+        return estimate_tokens(self.text)
+
+    @property
     def reduction(self) -> float:
         if not self.chars_before:
             return 0.0
         return round(100.0 * (1.0 - self.chars_after / self.chars_before), 1)
+
+    @property
+    def token_reduction(self) -> float:
+        if not self.tokens_before:
+            return 0.0
+        return round(100.0 * (1.0 - self.tokens_after / self.tokens_before), 1)
 
     def phi_counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -378,6 +396,8 @@ class RunResult:
             "words_after": self.words_after,
             "lines_before": self.lines_before,
             "lines_after": self.lines_after,
+            "tokens_before": self.tokens_before,
+            "tokens_after": self.tokens_after,
             "reduction": self.reduction,
             "duration_ms": round(self.duration_ms, 1),
             "wrapped": self.wrapped,
@@ -550,6 +570,7 @@ class Pipeline:
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
+        tokens_before = estimate_tokens(text)
         if fact_check is None:
             fact_check = self.mode == "clean" and bool(
                 (self.config.get("fact_check") or fact_check_mod.DEFAULTS).get("enabled", True))
@@ -584,6 +605,7 @@ class Pipeline:
             chars_before=chars_before,
             words_before=words_before,
             lines_before=lines_before,
+            tokens_before=tokens_before,
             fact_check=report,
         )
 

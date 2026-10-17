@@ -43,7 +43,7 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
     with ui.expansion(title, icon="rule", value=bool(flagged)).classes("w-full"):
         ui.label("From your recent runs: rules that never match are probably dead weight; rules "
                  "that touch over 30% of a chart's lines may be removing real content; slow "
-                 "rules cost time on every clean; ⚠ marks a pattern shape that can backtrack "
+                 "rules cost time on every clean; a flagged pattern shape can backtrack "
                  "for minutes on a long line.") \
             .classes("text-xs opacity-70")
         holder = ui.column().classes("w-full gap-1")

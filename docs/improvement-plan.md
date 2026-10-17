@@ -940,4 +940,47 @@ orchestrator implemented each item with the same verification gates).
   manual checks.
 
 
+# Phase 14 (2026-10-16) — context window management, clinical contradictions & vent compaction
 
+Shipped from `/multi-agent-brainstorming` + `/context-window-management`:
+
+- [x] **CW1 Clinical BPE token estimator & telemetry** — `chartcleaner/token_estimator.py`
+  (`estimate_tokens`, `estimate_tokens_fast`, `token_reduction`, `format_token_summary`)
+  weights clinical numbers, units, slashes and punctuation accurately without external
+  tokenizer dependencies. `RunResult.tokens_before` / `tokens_after` / `token_reduction`
+  feed history, `service.clean` / `abbreviate` / `expand` payloads, and the Clean page
+  stats row (`~N → ~M tok`).
+- [x] **CW2 3-tier deterministic context router & Ollama `num_ctx`** —
+  `chartcleaner/context_router.py` (`pack_context`, `PackedContext`): Tier 1 (`full`) sends
+  the chart unchanged when within budget; Tier 2 (`delta`) prunes verbatim repeated
+  sentences across earlier notes (`_verbatim_delta_chart`, emitting zero synthetic headers
+  or percentages so grounding/fact-check never see invented numbers) while keeping the
+  latest note in full; Tier 3 (`routed`) keeps safety lines and the latest note in full and
+  ranks earlier paragraphs by clinical-synonym query overlap (`_CONCEPT_GROUPS`), emitting
+  selected paragraphs in chronological order. `local_llm.context_tokens` (default `8192`,
+  validated `1024..131072`, Settings → Local AI selector) is passed as `options.num_ctx` by
+  `LocalLlmClient` so Ollama never silently truncates past 2,048 tokens. Citations and
+  grounding checks in `summarize()` and `ask_chart()` always verify against the original
+  cleaned chart so offsets match `CLEAN_STATE["result_text"]`.
+- [x] **CW3 Serial-position bookending & context-rot guard** — prompts exceeding
+  `BOOKEND_MIN_TOKENS` (`2000`, or explicit `bookend=True`) repeat the core instruction /
+  question and grounding constraint after the chart in `summarizer.build_prompt` and
+  `chart_qa.build_qa_prompt`. `chart_qa.filter_grounded_history` excludes prior turns with
+  `ungrounded=True` (or `"The chart does not say."`) so ungrounded numbers never poison
+  follow-up Q&A turns.
+- [x] **CL1 High-specificity lab ↔ active medication contradictions** — `"lab-medication"`
+  in `chartcleaner/conflicts.py` (`KINDS`) flags four high-alert pairs in the latest note:
+  hyperkalemia (`K >= 5.5`) with active potassium / K-sparing diuretic, severe
+  thrombocytopenia (`Plt < 50`) with active therapeutic anticoagulation, supratherapeutic
+  `INR >= 3.5` with active warfarin, and hyponatremia (`Na < 130`) with active hypotonic
+  fluid (`D5W`, `0.45% NaCl`, `1/2 NS`) or `DDAVP`. Arrow trajectories (`K 5.9 -> 4.3`)
+  evaluate the latest reading; held/stopped meds, prophylactic SQ heparin, and reversal
+  lines are ignored.
+- [x] **CL2 Ventilator & ABG compactor** — `chartcleaner/compactors/vent.py` (stage
+  `vent_summary`, anchor `flowsheet_tables`, `BY_DESIGN_STAGES`, off by default): condenses
+  2+ contiguous slash-delimited or labeled ABG/VBG lines (flagging acidemia `pH < 7.30`,
+  alkalemia `pH > 7.50`, hypoxemia `pO2 < 60`) and 2+ contiguous ventilator setting lines
+  (mode, FiO2, PEEP, RR, TV, PS, Pplat, PIP, Ve, I:E, SBT status) into compact trajectories.
+- [x] **WF1 Budgeted prompt templates** — `prompt_templates.render(..., budget_tokens=...)`
+  and `service.prompt(..., budget_tokens=...)` pack `{chart}` through `pack_context` when a
+  token budget is given.

@@ -41,10 +41,14 @@ def scripts_page():
         if meta.get("description"):
             ui.label(meta["description"]).classes("text-xs opacity-70 -mt-2")
         if meta.get("error"):
-            ui.label(f"⚠ Load error: {meta['error']}").classes("text-xs text-red-500")
+            with ui.row().classes("items-center gap-2"):
+                ui.element("span").classes("cc-dot cc-dot--neg")
+                ui.label(f"Load error: {meta['error']}").classes("text-xs text-red-500")
         if meta.get("placeholder"):
-            ui.label("ℹ Placeholder script — skipped by the pipeline until you set PLACEHOLDER = False.") \
-                .classes("text-xs opacity-70")
+            with ui.row().classes("items-center gap-2"):
+                ui.element("span").classes("cc-dot cc-dot--info")
+                ui.label("Placeholder script — skipped by the pipeline until you set "
+                         "PLACEHOLDER = False.").classes("text-xs opacity-70")
 
         editor = ui.textarea(value=content["text"], on_change=lambda e: content.update(text=e.value))
         editor.props("outlined input-style='min-height: 400px'").classes("w-full cc-mono")
@@ -55,39 +59,45 @@ def scripts_page():
             try:
                 compile(code, str(path), "exec")
             except SyntaxError as ex:
-                status.set_text(f"✗ Syntax error: line {ex.lineno}: {ex.msg}").classes("text-red-500 text-xs")
+                status.set_text(f"Syntax error: line {ex.lineno}: {ex.msg}") \
+                    .classes("text-red-500 text-xs", remove="text-green-600 text-orange-600")
                 return
             path.write_text(code, encoding="utf-8")
             m2 = {mm["name"]: mm for mm in list_custom_rules(common.CUSTOM_DIR)}.get(sel["name"], {})
             if m2.get("error"):
-                status.set_text(f"✗ Saved, but the script has problems: {m2['error']}") \
-                    .classes("text-red-500 text-xs")
+                status.set_text(f"Saved, but the script has problems: {m2['error']}") \
+                    .classes("text-red-500 text-xs", remove="text-green-600 text-orange-600")
             elif m2.get("placeholder"):
-                status.set_text("✓ Saved. Still a placeholder (PLACEHOLDER = True).")
+                status.set_text("Saved. Still a placeholder (PLACEHOLDER = True).") \
+                    .classes("text-orange-600 text-xs", remove="text-red-500 text-green-600")
             else:
-                status.set_text("✓ Saved and loadable.").classes("text-green-600 text-xs")
+                status.set_text("Saved and loadable.") \
+                    .classes("text-green-600 text-xs", remove="text-red-500 text-orange-600")
                 ui.notify("Script saved.", type="positive")
 
         def test_script() -> None:
-            def work() -> str:
+            def work():
                 try:
                     mod = _load_custom_module(path)
                     clean = getattr(mod, "clean", None)
                     if not callable(clean):
-                        return "✗ No clean(text, ctx) function."
+                        return "err", "No clean(text, ctx) function."
                     ctx = CleanContext(load_config(common.CONFIG_PATH))
                     sample = PIPE_TEST["text"] or ("Patient John Doe, MRN 123456, phone (555) 010-2030.\n\n"
                                                   "Follow-up imaging plan tomorrow morning at nine.")
                     out = clean(sample, ctx)
-                    return (f"✓ OK — {len(sample):,} → {len(out):,} chars. "
+                    return ("ok", f"OK — {len(sample):,} → {len(out):,} chars. "
                             f"counters={ctx.counters} logs={ctx.logs[:3]}\n\nOUTPUT PREVIEW:\n{out[:800]}")
                 except Exception as ex:
-                    return f"✗ {type(ex).__name__}: {ex}"
+                    return "err", f"{type(ex).__name__}: {ex}"
 
             async def go() -> None:
                 status.set_text("Testing…")
-                msg = await run.io_bound(work)
-                status.set_text(msg)
+                kind, msg = await run.io_bound(work)
+                ok = kind == "ok"
+                cls = "text-green-600 text-xs" if ok else "text-red-500 text-xs"
+                other = "text-red-500 text-xs" if ok else "text-green-600 text-xs"
+                status.set_text(msg).classes(cls, remove=other)
 
             asyncio.get_running_loop().create_task(go())
 

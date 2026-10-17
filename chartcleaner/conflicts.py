@@ -17,7 +17,11 @@ reader checks which line is right. Checks:
   therapeutic anticoagulant (prophylactic SQ heparin doesn't count);
 * **allergy** — a drug the chart lists as an allergy (or one in the same
   class: penicillins, sulfonamides, heparin for HIT) on a medication line;
-* **fever** — "afebrile" next to a temperature of 38.0 °C / 100.4 °F or more.
+* **fever** — "afebrile" next to a temperature of 38.0 °C / 100.4 °F or more;
+* **lab-medication** — a critical lab abnormality alongside an active medication
+  that worsens it (K ≥ 5.5 with KCl/spironolactone, Plt < 50 with therapeutic
+  anticoagulation, INR ≥ 3.5 with active warfarin, Na < 130 with hypotonic fluid
+  or DDAVP).
 
 Insights read the *cleaned* chart, so the abbreviated forms count too
 (L/R, ALLG, Hep gtt, b/l).
@@ -30,7 +34,7 @@ from dataclasses import dataclass, field
 
 __all__ = ["KINDS", "Conflict", "ConflictReport", "build"]
 
-KINDS = ("side", "lesion side", "diet", "code status", "anticoagulation", "allergy", "fever")
+KINDS = ("side", "lesion side", "diet", "code status", "anticoagulation", "allergy", "fever", "lab-medication")
 
 _HEADING = re.compile(r"^\s*(?:#{1,6}\s*)?[A-Za-z][A-Za-z /&]{1,40}:\s*$")
 _BULLET = re.compile(r"^\s*(?:[-•*]|\d{1,2}[.)])\s+")
@@ -326,6 +330,174 @@ def _fever_conflicts(lines: list[str]) -> list[Conflict]:
     return []
 
 
+# ---------------------------------------------------------------- lab-medication
+_LAB_CONDITIONAL = re.compile(
+    r"\b(?:hold(?:\s+\w+){0,2}\s+(?:if|for)|if\s+(?:K\b|potassium|plt|platelets?|INR|Na\b|sodium)"
+    r"|notify\s+(?:MD|HO|provider)?\s*if|call\s+for|goal\s+(?:K|plt|INR|Na)|target\s+(?:K|plt|INR|Na))\b",
+    re.IGNORECASE,
+)
+_LAB_MED_INACTIVE = re.compile(
+    r"\b(?:hold|holding|held|on hold|stop\w*|d/?c'?d?|discontinu\w*|off|avoid|contraindicat\w*"
+    r"|reverse\w*|reversal|resume|restart|consider|no|not|home|PTA|prior to admission|outpatient"
+    r"|allerg\w*|ALLG|until|when|if|last dose|h/o|history|given\s+for\s+hyperkalemia)\b",
+    re.IGNORECASE,
+)
+_CHAIN_NUM = re.compile(r"\d+(?:\.\d+)?")
+_K_LAB = re.compile(
+    r"\b(?:K\+?|potassium(?!\s+(?:chloride|gluconate|phosphate|citrate|acetate|bicarb\w*|sparing)))"
+    r"\s*(?:level\s*)?(?:is|was|of|:|=)?\s*"
+    r"(?P<chain>\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?(?:\s*(?:->|→)\s*\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?)*)\b"
+    r"(?!\s*(?:mEq|mmol|mg|g|tab|cap|pkt|packet)s?\b(?!\s*/\s*[Ll]))",
+    re.IGNORECASE,
+)
+_PLT_LAB = re.compile(
+    r"\b(?:plt|platelets?)\s*(?:count\s*)?(?:is|was|of|:|=)?\s*"
+    r"(?P<chain>\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?(?:\s*(?:->|→)\s*\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?)*)\b"
+    r"(?!\s*(?:units?|u|packs?|pheresis|transfused)\b)",
+    re.IGNORECASE,
+)
+_INR_LAB = re.compile(
+    r"\bINR\s*(?:is|was|of|:|=)?\s*"
+    r"(?P<chain>\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?(?:\s*(?:->|→)\s*\d+(?:\.\d+)?(?:\s*\([HLhl*]+\))?)*)\b"
+    r"(?!\s*[-–]\s*\d)",
+    re.IGNORECASE,
+)
+_NA_LAB = re.compile(
+    r"\b(?:Na\+?|sodium(?!\s+(?:chloride|bicarb\w*|polystyrene|zirconium|citrate|phosphate|benzoate|restriction)))"
+    r"\s*(?:level\s*)?(?:is|was|of|:|=)?\s*"
+    r"(?P<chain>\d{2,3}(?:\.\d+)?(?:\s*\([HLhl*]+\))?(?:\s*(?:->|→)\s*\d{2,3}(?:\.\d+)?(?:\s*\([HLhl*]+\))?)*)\b"
+    r"(?!\s*(?:mEq|mmol|mg|g|tab)s?\b(?!\s*/\s*[Ll]))",
+    re.IGNORECASE,
+)
+_K_MED = re.compile(
+    r"\b(?P<drug>KCl|potassium\s+chloride|klor-?con|k-?dur|micro-?k"
+    r"|spironolactone|aldactone|eplerenone|inspra|amiloride|triamterene)\b",
+    re.IGNORECASE,
+)
+_WARFARIN_MED = re.compile(r"\b(?P<drug>warfarin|coumadin)\b", re.IGNORECASE)
+_WARFARIN_REVERSAL = re.compile(r"\b(?:vitamin\s+k|vit\s+k|phytonadione|kcentra|4f-?pcc|pcc|ffp)\b", re.IGNORECASE)
+_HYPOTONIC_MED = re.compile(
+    r"\b(?P<drug>D5W|D5\s*1/2\s*NS|D5\s*0\.45%\s*(?:NaCl|NS)|0\.45%\s*(?:NaCl|NS|saline)"
+    r"|1/2\s*NS|half[- ]normal\s+saline|ddavp|desmopressin)\b",
+    re.IGNORECASE,
+)
+
+
+def _split_clauses(line: str) -> list[str]:
+    """Split a line on sentence boundaries so 'K 5.9. KCl 20 mEq PO BID.' evaluates each clause cleanly."""
+    parts = [p.strip() for p in re.split(r"(?<=[.;])\s+", line) if p.strip()]
+    return parts or [line]
+
+
+def _find_lab_hit(lines: list[str], rx: re.Pattern, pred) -> tuple[float, str] | None:
+    """Return ``(latest_value, full_line)`` for the first line with a matching lab value."""
+    for line in lines:
+        if _HISTORY.search(line) or _ALLERGY_LINE.search(line):
+            continue
+        for clause in _split_clauses(line):
+            if _LAB_CONDITIONAL.search(clause):
+                continue
+            for m in rx.finditer(clause):
+                nums = _CHAIN_NUM.findall(m.group("chain"))
+                if not nums:
+                    continue
+                val = float(nums[-1])
+                if pred(val):
+                    return val, line
+    return None
+
+
+def _lab_med_conflicts(lines: list[str]) -> list[Conflict]:
+    out: list[Conflict] = []
+
+    # 1. Hyperkalemia (K >= 5.5) + active potassium / K-sparing diuretic
+    k_hit = _find_lab_hit(lines, _K_LAB, lambda v: 5.5 <= v <= 9.9)
+    if k_hit is not None:
+        k_val, k_line = k_hit
+        for line in lines:
+            if _ALLERGY_LINE.search(line):
+                continue
+            for clause in _split_clauses(line):
+                m = _K_MED.search(clause)
+                if m and not _LAB_MED_INACTIVE.search(clause) and (
+                    _MED_LINE.search(clause) or re.search(r"\b(?:KCl|klor-?con|k-?dur)\b", clause, re.I)
+                ):
+                    out.append(Conflict(
+                        "lab-medication",
+                        f"hyperkalemia (K {k_val:g}) with active {m.group('drug')}",
+                        [_clean(k_line), _clean(line)],
+                    ))
+                    break
+            else:
+                continue
+            break
+
+    # 2. Severe thrombocytopenia (Plt < 50) + active therapeutic anticoagulation
+    plt_hit = _find_lab_hit(lines, _PLT_LAB, lambda v: 1 <= v < 50)
+    if plt_hit is not None:
+        plt_val, plt_line = plt_hit
+        for line in lines:
+            if _ALLERGY_LINE.search(line):
+                continue
+            for clause in _split_clauses(line):
+                m = _THERAPEUTIC_AC.search(clause)
+                if m and not _AC_INACTIVE.search(clause) and not _LAB_MED_INACTIVE.search(clause):
+                    out.append(Conflict(
+                        "lab-medication",
+                        f"severe thrombocytopenia (Plt {plt_val:g}) with active anticoagulation ({m.group(0).strip()})",
+                        [_clean(plt_line), _clean(line)],
+                    ))
+                    break
+            else:
+                continue
+            break
+
+    # 3. Supratherapeutic INR (INR >= 3.5) + active warfarin/coumadin
+    inr_hit = _find_lab_hit(lines, _INR_LAB, lambda v: 3.5 <= v <= 20.0)
+    if inr_hit is not None:
+        inr_val, inr_line = inr_hit
+        for line in lines:
+            if _ALLERGY_LINE.search(line):
+                continue
+            for clause in _split_clauses(line):
+                m = _WARFARIN_MED.search(clause)
+                if (m and not _AC_INACTIVE.search(clause) and not _LAB_MED_INACTIVE.search(clause)
+                        and not _WARFARIN_REVERSAL.search(clause) and _MED_LINE.search(clause)):
+                    out.append(Conflict(
+                        "lab-medication",
+                        f"supratherapeutic INR ({inr_val:g}) with active {m.group('drug')}",
+                        [_clean(inr_line), _clean(line)],
+                    ))
+                    break
+            else:
+                continue
+            break
+
+    # 4. Significant hyponatremia (Na < 130) + active hypotonic fluid or DDAVP
+    na_hit = _find_lab_hit(lines, _NA_LAB, lambda v: 95 <= v < 130)
+    if na_hit is not None:
+        na_val, na_line = na_hit
+        for line in lines:
+            if _ALLERGY_LINE.search(line):
+                continue
+            for clause in _split_clauses(line):
+                m = _HYPOTONIC_MED.search(clause)
+                if m and not _LAB_MED_INACTIVE.search(clause) and (
+                    _MED_LINE.search(clause) or re.search(r"\b(?:gtt|infusion|at\s+\d+|@\s*\d+|mL/h)\b", clause, re.I)
+                ):
+                    out.append(Conflict(
+                        "lab-medication",
+                        f"hyponatremia (Na {na_val:g}) with active {m.group('drug')}",
+                        [_clean(na_line), _clean(line)],
+                    ))
+                    break
+            else:
+                continue
+            break
+
+    return out
+
+
 # ---------------------------------------------------------------- report
 @dataclass
 class Conflict:
@@ -388,7 +560,7 @@ def build(text: str) -> ConflictReport:
         return ConflictReport()
     latest = _usable(latest_note(text))
     found: list[Conflict] = []
-    for check in (_side_conflicts, _diet_conflicts, _code_conflicts, _ac_conflicts, _fever_conflicts):
+    for check in (_side_conflicts, _diet_conflicts, _code_conflicts, _ac_conflicts, _fever_conflicts, _lab_med_conflicts):
         found.extend(check(latest))
     found.extend(_allergy_conflicts(_usable(text), latest))
     order = {k: i for i, k in enumerate(KINDS)}

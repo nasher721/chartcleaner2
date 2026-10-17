@@ -89,10 +89,10 @@ def settings_page():
             except Exception:
                 nlp_ok = False
             if nlp_ok:
-                ui.label("✓ Presidio + spaCy model available — NLP redaction is active.") \
+                ui.label("Presidio + spaCy model available — NLP redaction is active.") \
                     .classes("text-green-600 text-sm")
             else:
-                ui.label("✗ Presidio or the spaCy model is missing; the NLP stage will be skipped. "
+                ui.label("Presidio or the spaCy model is missing; the NLP stage will be skipped. "
                          "Re-run install.sh (macOS) or install.bat (Windows).").classes("text-orange-600 text-sm")
 
         # ---- converters & optional engines ------------------------------------
@@ -235,7 +235,7 @@ def settings_page():
                 with ui.row().classes("w-full items-center gap-3 flex-nowrap"):
                     ui.icon("history").classes("opacity-60")
                     ui.label(b["ts"]).classes("text-sm w-40")
-                    rules_txt = f"{b['rules']} rule entries" if b["rules"] >= 0 else "⚠ unreadable"
+                    rules_txt = f"{b['rules']} rule entries" if b["rules"] >= 0 else "unreadable"
                     ui.label(rules_txt).classes("text-xs opacity-70 w-40")
 
                     def restore(path=b["file"]) -> None:
@@ -369,10 +369,13 @@ def settings_page():
                 last_health["h"] = h
                 current = merge_llm_config(load_config(common.CONFIG_PATH)).get("model") or ""
                 if h["reachable"]:
-                    ai_status.set_text(f"✓ Ollama {h['version'] or ''} at {h['base_url']} — "
-                                       f"{len(h['models'])} model(s)" + (f" · {h['error']}" if h["error"] else ""))
+                    ai_status.set_text(f"Ollama {h['version'] or ''} at {h['base_url']} — "
+                                       f"{len(h['models'])} model(s)"
+                                       + (f" · {h['error']}" if h["error"] else "")) \
+                        .classes("text-green-600 text-sm", remove="text-red-500")
                 else:
-                    ai_status.set_text(f"✕ {h['error'] or 'Not reachable'} ({h['base_url']})")
+                    ai_status.set_text(f"{h['error'] or 'Not reachable'} ({h['base_url']})") \
+                        .classes("text-red-500 text-sm", remove="text-green-600")
                 ai_models.clear()
                 with ai_models:
                     for m in h["models"]:
@@ -425,8 +428,27 @@ def settings_page():
                 pull_label = ui.label("").classes("cc-segbar-note")
             pull_row.set_visibility(False)
             ui.timer(0.5, tick_pull)
-            with ui.row().classes("gap-2"):
+            with ui.row().classes("gap-2 items-center flex-wrap"):
                 ui.button("Check now", icon="refresh", on_click=check_ai).props("flat").mark("check-ai")
+                ctx_options = {
+                    4096: "4,096 tokens",
+                    8192: "8,192 tokens (default)",
+                    16384: "16,384 tokens",
+                    32768: "32,768 tokens",
+                    65536: "65,536 tokens",
+                }
+                cur_ctx = int(merge_llm_config(draft).get("context_tokens", 8192))
+                if cur_ctx not in ctx_options:
+                    ctx_options[cur_ctx] = f"{cur_ctx:,} tokens"
+
+                def save_ctx_tokens(e) -> None:
+                    cfg = load_config(common.CONFIG_PATH)
+                    cfg["local_llm"] = {**merge_llm_config(cfg), "context_tokens": int(e.value)}
+                    save_config_with_backup(cfg)
+                    ui.notify(f"Local AI context window set to {int(e.value):,} tokens.", type="positive")
+
+                ui.select(ctx_options, value=cur_ctx, label="Context window (num_ctx)",
+                          on_change=save_ctx_tokens).classes("w-56").mark("local-ai-ctx")
             if not os.environ.get("NICEGUI_USER_SIMULATION"):
                 ui.timer(0.2, check_ai, once=True)
 
@@ -643,7 +665,7 @@ def settings_page():
                         ui.label("No examples yet — teach a rule by highlighting text on the Clean page.") \
                             .classes("text-sm")
                     elif not report["failures"]:
-                        ui.label(f"✓ All {report['checked']} learned rule(s) still do what they were "
+                        ui.label(f"All {report['checked']} learned rule(s) still do what they were "
                                  "taught.").classes("text-sm text-green-600")
                     for f in report["failures"][:20]:
                         ui.label(f"“{f['text']}” used to become “{f['expected']}”, now becomes "
@@ -895,7 +917,7 @@ def settings_page():
                 with ui.row().classes("w-full items-center gap-3 flex-nowrap"):
                     ui.icon("vpn_key").classes("opacity-60")
                     ui.label(m["ts"]).classes("text-xs w-40")
-                    count = f"{m['count']} value(s)" if m["count"] >= 0 else "⚠ unreadable"
+                    count = f"{m['count']} value(s)" if m["count"] >= 0 else "unreadable"
                     ui.label(count).classes("text-xs opacity-70 w-28")
 
                     def restore(f=m["file"]) -> None:

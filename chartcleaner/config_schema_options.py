@@ -136,6 +136,10 @@ class OptionsSchemaMixin:
             {"enabled": ((bool,), "true/false"), "direction": ((str,), "oldest_first/newest_first")})
         if norder is not None and norder.get("direction", "oldest_first") not in ("oldest_first", "newest_first"):
             self.errors.append('note_order.direction: must be "oldest_first" or "newest_first"')
+        self._check_option_group(
+            "vent_summary", self.default_options["vent_summary"],
+            {"enabled": ((bool,), "true/false"), "abg": ((bool,), "true/false"),
+             "settings": ((bool,), "true/false")})
 
     def _validate_imaging_options(self) -> None:
         from .compactors.imaging import KEEPABLE

@@ -73,7 +73,9 @@ def text_rules_page():
                         ui.label(f"[{r['status']}] {r['stage']}: {r['pattern'][:70]}") \
                             .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
                         if r["risks"]:
-                            ui.label("⚠ regex risk").classes("text-xs text-orange-600")
+                            with ui.row().classes("items-center gap-2 no-wrap"):
+                                ui.element("span").classes("cc-dot cc-dot--warn")
+                                ui.label("regex risk").classes("text-xs text-orange-600")
                         ui.button("Remove rule", icon="delete",
                                   on_click=lambda e, r=r: remove_health_rule(r, holder)) \
                             .props("flat dense")

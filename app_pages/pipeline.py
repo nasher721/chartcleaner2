@@ -9,6 +9,7 @@ from chartcleaner.compactors import mar as mar_compactor
 from chartcleaner.compactors import neuro as neuro_compactor
 from chartcleaner.compactors import note_order as note_order_compactor
 from chartcleaner.compactors import tables as tables_compactor
+from chartcleaner.compactors import vent as vent_compactor
 from chartcleaner.compactors import vitals as vitals_compactor
 from chartcleaner.section_parser import SECTION_TAXONOMY
 
@@ -38,6 +39,7 @@ STAGE_EDITORS = {
     "neuro_summary": ("form", "neuro_summary"),
     "mar_summary": ("form", "mar_summary"),
     "flowsheet_tables": ("form", "flowsheet_tables"),
+    "vent_summary": ("form", "vent_summary"),
     "sections": ("sections", "section_filter"),
     "whitespace": ("whitespace", "whitespace"),
     "caps_normalize": ("caps", "caps_normalize"),
@@ -51,6 +53,7 @@ FORM_DEFAULTS = {"neuro_summary": neuro_compactor.DEFAULTS,
                  "vitals_summary": vitals_compactor.DEFAULTS,
                  "mar_summary": mar_compactor.DEFAULTS,
                  "flowsheet_tables": tables_compactor.DEFAULTS,
+                 "vent_summary": vent_compactor.DEFAULTS,
                  "note_order": note_order_compactor.DEFAULTS}
 
 # Declarative option forms for the opt-in condensing stages:
@@ -96,6 +99,11 @@ STAGE_FORMS: dict[str, list[tuple]] = {
                                       "range": "Min–max range for 3+ numeric readings (pH 7.31–7.38)"}),
         ("collapse_unchanged", "Collapse unchanged rows (PEEP 5 (unchanged))", "switch", None),
     ],
+    "vent_summary": [
+        ("enabled", "Condense serial ventilator settings and arterial/venous blood gases", "switch", None),
+        ("abg", "Condense serial ABG/VBG blocks into pH / pCO2 / pO2 / HCO3 trajectories", "switch", None),
+        ("settings", "Condense serial ventilator settings (mode, FiO2, PEEP, RR, TV, PS, SBT)", "switch", None),
+    ],
     "note_order": [
         ("enabled", "Sort multi-note exports by note header date", "switch", None),
         ("direction", "Order", "select", {"oldest_first": "Chronological: oldest → newest (Day 1 → Today)",
@@ -126,6 +134,7 @@ STAGE_DESCRIPTIONS = {
     "neuro_summary": "Off by default. Condenses Neuro ICU flowsheets into one line each: neuro checks (GCS, RASS, NIHSS, pupils, CAM-ICU) as ranges and changes, EVD blocks as total output with level and ICP/CPP (readings above icp_threshold, default 20, counted), three or more serial sodium checks as a trend, and three or more titrations of one drip as its range and last rate. A block is rewritten only when every line is understood.",
     "mar_summary": "Off by default. Condenses MAR / 'Medications Given' blocks of repeated PRN boluses or scheduled doses into one line per medication, route and unit with total dose, breakdown, time window, last dose and held count. Rewrites a block only when every line parses.",
     "flowsheet_tables": "Off by default. De-tabularizes multi-column timestamped clinical flowsheets (ventilator settings, ABG/VBG grids, hemodynamics, or transposed time-down tables) into compact per-parameter time series. Leaves any block with prose or mismatched columns untouched.",
+    "vent_summary": "Off by default. Condenses contiguous line-by-line ABG/VBG checks and ventilator setting logs into compact trajectories (noting acidemia, alkalemia, hypoxemia, and SBT outcomes). Rewrites a block only when every line parses.",
     "vitals_summary": "Off by default. Turns vitals flowsheets (several readings per row) into one line of ranges and last values, and Intake/Output totals into one line. Single-reading vitals lines are left alone.",
     "imaging_impression": "Off by default. In radiology reports (FINDINGS followed by IMPRESSION), removes findings, technique, comparison and indication, keeping the title and the impression. Reports without an impression are left alone.",
     "timestamps": "Off by default. Removes dates (ISO, US, 'Mar 5, 2024') and optionally bare clock times, replacing them with configurable text.",
@@ -660,7 +669,9 @@ def pipeline_page():
                 elif not is_pairs and isinstance(item, str):
                     pattern_row(lst, i, pattern=item, flags=flags, sid=sid)
                 else:
-                    ui.label(f"⚠ malformed entry #{i}").classes("text-red-500 text-xs")
+                    with ui.row().classes("items-center gap-2"):
+                        ui.element("span").classes("cc-dot cc-dot--neg")
+                        ui.label(f"malformed entry #{i}").classes("text-red-500 text-xs")
             ui.button("Add " + ("pair" if is_pairs else "pattern"), icon="add", on_click=add_row) \
                 .props("outline dense")
 

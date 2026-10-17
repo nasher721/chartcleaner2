@@ -55,6 +55,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "neuro_summary",
         "mar_summary",
         "flowsheet_tables",
+        "vent_summary",
         "note_order",
         "note_profiles",
         "prompt_templates",
