@@ -325,6 +325,11 @@ async def test_selection_mode_toggle_saves_pref(user, ui_config):
     cc_app.CLEAN_STATE.update(input="x", mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/quick-mode-toggle")
+    from nicegui import ui
+    settings = next(e for e in user.find(ui.expansion).elements
+                    if e.props.get("label") == "Selection settings")
+    with user.client:
+        settings.set_value(True)
     toggle = next(iter(user.find(marker="selection-mode").elements))
     with user.client:
         toggle.set_value("remove")

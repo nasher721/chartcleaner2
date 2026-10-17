@@ -162,7 +162,11 @@ AutoHotkey, so typing `;sah` anywhere types "subarachnoid hemorrhage".
 - *Hospital day labels* — `10/02/2026 (HD#3, POD#1)`.
 Each rewrites a block only when it understands every line of it.
 
-**Reviewing a clean.** The Review tab holds the clickable diff, the stage table,
+**Reviewing a clean.** A single status combines clinical verification and the limited PHI pattern scan. Critical findings require acknowledgement before copying, even if an older installation disabled the copy guard. Editing or restoring a redaction resets that acknowledgement and rechecks the result. Click a finding to compare source and output context, locate it in the panes, or edit the output. The Review badge counts findings; critical findings appear first. Pattern checks cannot guarantee de-identification.
+
+Use **Inspect redactions** to inspect individual replacements, change their type, or explicitly restore unambiguous source text. Restoration may reintroduce PHI. **Edit result** enables direct corrections; rerun cleaning to regenerate insights after edits. Choose an uncertain note type by clicking its chip. Selection preferences live under **Selection settings**, and suggestions remain in the **Suggestions** inbox.
+
+The Review tab holds the clickable diff, the stage table,
 **Removed** (everything the line/block/learned rules deleted, with *Never
 remove this*), **Abbreviations**, and **Changes over time** for multi-day
 charts (only sentences that are new or changed after the first note — a

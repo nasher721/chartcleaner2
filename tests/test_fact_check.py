@@ -181,7 +181,7 @@ async def test_clean_page_shows_fact_check(user, monkeypatch, tmp_path):
     try:
         await user.open("/")
         user.find(marker="run-clean").click()
-        await user.should_see("1 clinical value(s) removed by rules — review", retries=50)
+        await user.should_see("Clinical value removed: K 6.1", retries=50)
         await user.should_see("Removed by a removal rule")
     finally:
         CLEAN_STATE.clear()

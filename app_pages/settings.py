@@ -73,13 +73,8 @@ def settings_page():
 
             ui.button("Save output settings", on_click=save_output).props("outline")
 
-            def toggle_copy_guard(e) -> None:
-                common.PREFS["copy_guard"] = bool(e.value)
-                save_prefs()
-
-            ui.switch("Ask before copying when the clinical-facts check finds a lost or changed value",
-                      value=bool(common.PREFS.get("copy_guard", True)), on_change=toggle_copy_guard) \
-                .mark("copy-guard-pref")
+            ui.label("Copying a result with critical clinical findings always requires acknowledgement. "
+                     "Editing the result or cleaning again resets that acknowledgement.").classes("text-sm")
 
         with ui.card().classes("w-full gap-2"):
             ui.label("NLP redaction status").classes("font-semibold")

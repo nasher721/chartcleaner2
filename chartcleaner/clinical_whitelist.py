@@ -183,6 +183,12 @@ _ROLE_WORDS = frozenset({
     "intern", "team", "chaplain", "pharmacist", "pharmacy", "therapist", "dietitian", "and", "or",
 })
 _ROLE_SPLIT = re.compile(r"[^a-z]+")
+# Match the entire NER span: accepting a unit anywhere in a phrase could
+# suppress redaction of a real name next to a medication instruction.
+_MEDICATION_UNIT_FORM = re.compile(
+    r"(?:mcg|mg|g|mL|IU)(?:\s+(?:tabs?|tablets?|caps?|capsules?))?",
+    re.IGNORECASE,
+)
 
 
 def is_role_phrase(candidate: str) -> bool:
@@ -197,6 +203,8 @@ def is_non_person_text(candidate: str) -> bool:
     if not s:
         return True
     if is_role_phrase(s):
+        return True
+    if _MEDICATION_UNIT_FORM.fullmatch(s):
         return True
     # Contains newlines, tabs, slashes, comparison operators, or structural punctuation
     if any(ch in s for ch in ("\n", "\r", "\t", "/", "\\", "<", ">", "=", "@", "#", "{", "}", "[", "]")):

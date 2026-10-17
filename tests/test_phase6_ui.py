@@ -96,7 +96,8 @@ async def test_trust_strip_and_copy_as(user: User, page):
     await _open(user, "/p6-copy", "Sodium 141 mmol/L\nPlan: recheck\n")
     await _clean(user)
     await user.should_see(marker="fact-check")
-    await user.should_see("clinical value(s) kept")
+    await user.should_see("Review needed")  # audit is disabled in this fixture
+    await user.should_see("Pattern checks cannot guarantee de-identification.")
     user.find(marker="copy-epic").click()
     await user.should_see("pastes cleanly into Epic")
     user.find(marker="copy-ai").click()

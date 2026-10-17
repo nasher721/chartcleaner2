@@ -611,34 +611,31 @@ def open_command_palette(extra: list[dict] | None = None) -> None:
 def _status_strip(key: str = "") -> None:
     """Status readouts: active preset, clipboard watcher, local AI, encryption.
 
-    Each one is a mechanical tag — a small square indicator plus an ALL-CAPS
-    mono label. Colour marks the *state* only, never the chrome.
+    These readouts describe local settings, separately from header actions.
+    Tooltips explain what each setting means; none indicates output safety.
     """
     with ui.row().classes("items-center gap-2 flex-nowrap") \
             .mark(f"status-strip-{key}" if key else "status-strip"):
         preset = PREFS.get("last_preset") or ""
-        status_tag(preset or "current rules", "info",
-                   tooltip="Rule preset in use — click to edit the pipeline",
-                   on_click=lambda: ui.navigate.to("/pipeline"))
+        status_tag(f"Rules: {preset}" if preset else "Current rules", "info",
+                   tooltip="Active rules. Edit them on the Pipeline page.")
         watcher = CLIPBOARD_WATCHER.get("watcher")
         on = bool(watcher is not None and watcher.running)
-        status_tag("watcher on" if on else "watcher off", "on" if on else "off",
-                   tooltip="Clipboard watcher — click for settings",
-                   on_click=lambda: ui.navigate.to("/settings"))
+        status_tag("Clipboard monitoring on" if on else "Clipboard monitoring off", "info",
+                   tooltip="Automatically cleans copied text when enabled in Settings.")
 
         ai_el = ui.element("div").classes("cc-pill").tooltip("Local AI (Ollama) status")
         with ai_el:
             ai_dot = ui.element("span").classes("cc-dot") \
                 .style("color: var(--nd-text-disabled)")
-            ai_label = ui.label("AI …")
-        status_tag("encrypted", "info",
+            ai_label = ui.label("Local AI: checking")
+        status_tag("Stored data encrypted", "info",
                    tooltip="Stored chart data (token maps, recent charts) is encrypted "
-                           "on this computer",
-                   on_click=lambda: ui.navigate.to("/settings"))
+                           "on this computer. Review output before sharing.")
 
     async def probe() -> None:
         if os.environ.get("NICEGUI_USER_SIMULATION"):
-            ai_label.set_text("AI ?")
+            ai_label.set_text("Local AI: not checked")
             return
         try:
             from chartcleaner.summarizer import merge_llm_config
@@ -653,7 +650,8 @@ def _status_strip(key: str = "") -> None:
         except Exception:
             model, up = "", False
         try:
-            ai_label.set_text(model.split(":")[0] if up and model else "AI off")
+            ai_name = model.partition(":")[0]
+            ai_label.set_text(f"Local AI: {ai_name}" if up and model else "Local AI: unavailable")
             ai_dot.style(f"color: {'var(--nd-success)' if up else 'var(--nd-text-disabled)'}")
         except Exception:
             pass  # the page may be gone
@@ -739,11 +737,10 @@ def shell(title: str, active: str, *, measure: bool = False,
             with ui.row().classes("cc-shell cc-navbar cc-desktop-only no-wrap") \
                     .props("role=navigation aria-label='Primary'"):
                 for path, _icon, label in NAV:
-                    link = ui.element("button").classes("cc-navlink")
+                    link = ui.element("a").classes("cc-navlink").props(f'href="{path}"')
                     if path == active_path:
                         link.classes("cc-navlink--active")
                         link.props('aria-current="page"')
-                    link.on("click", lambda p=path: ui.navigate.to(p))
                     with link:
                         ui.label(nav_text(path, label))
 
@@ -791,7 +788,8 @@ def shell(title: str, active: str, *, measure: bool = False,
     with ui.column().classes(page_cls):
         with ui.column().classes("cc-pagehead gap-0"):
             ui.label(f"{num} / {sec_label}" if num else sec_label).classes("cc-eyebrow")
-            ui.label(head).classes("cc-page-title")
+            with ui.element("h1").classes("cc-page-title"):
+                ui.label(head)
             if sub:
                 ui.label(sub).classes("cc-page-sub")
         ui.element("div").classes("cc-rule")

@@ -90,7 +90,7 @@ CSS = r"""
   --nd-mono:"Space Mono","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 
   --display-xl:72px; --display-lg:48px; --display-md:36px; --heading:24px;
-  --subheading:18px; --body:16px; --body-sm:14px; --caption:12px; --label:11px;
+  --subheading:18px; --body:16px; --body-sm:14px; --caption:12px; --label:12px;
 
   /* --- spacing (8px base) ------------------------------------------- */
   --nd-space-2xs:2px; --nd-space-xs:4px; --nd-space-sm:8px;  --nd-space-md:16px;
@@ -189,9 +189,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   overflow-x:auto;scrollbar-width:none;}
 .cc-navbar::-webkit-scrollbar{display:none;}
 .cc-navlink{display:flex;align-items:center;height:40px;padding:0 var(--nd-space-md);
-  font-family:var(--nd-mono);font-size:11.5px;font-weight:400;letter-spacing:.1em;
+  font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.1em;
   text-transform:uppercase;color:var(--nd-text-secondary);cursor:pointer;
-  white-space:nowrap;background:none;border:0;
+  white-space:nowrap;text-decoration:none;background:none;border:0;
   transition:color var(--nd-dur-fast) var(--nd-ease);}
 .cc-navlink:hover{color:var(--nd-text-display);}
 .cc-navlink--active{color:var(--nd-text-display);}
@@ -214,9 +214,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 /* The drawer's status tags wrap instead of running off the panel. */
 .nicegui-drawer .row{flex-wrap:wrap !important;}
 
-.cc-footer{background:transparent;color:var(--nd-text-disabled);
+.cc-footer{background:transparent;color:var(--nd-text-secondary);
   border-top:1px solid var(--nd-border);padding:var(--nd-space-md) 0;
-  font-family:var(--nd-mono);font-size:11px;letter-spacing:.04em;}
+  font-family:var(--nd-mono);font-size:12px;letter-spacing:.04em;}
 
 .cc-desktop-only{display:flex !important;}
 .cc-mobile-only{display:none !important;}
@@ -235,25 +235,25 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
    5. PAGE FRAME — three layers: eyebrow / display title / supporting line
    ===================================================================== */
 .cc-page{width:100%;max-width:1440px;margin:0 auto;display:flex;flex-direction:column;
-  gap:var(--nd-space-xl);padding:var(--nd-space-xl) var(--nd-space-lg) var(--nd-space-2xl);}
+  gap:var(--nd-space-md);padding:var(--nd-space-md) var(--nd-space-lg) var(--nd-space-xl);}
 /* Text-heavy screens (settings, doctor, rules…) opt into a readable measure.
    The cap lands on the children, so the page keeps the shared 1440 grid and
    its left edge stays flush with the nav — only the right edge pulls in. */
 .cc-page--measure > *{max-width:1040px;}
 .cc-pagehead{display:flex;flex-direction:column;gap:var(--nd-space-sm);}
 .cc-eyebrow{font-family:var(--nd-mono);font-size:var(--label);font-weight:400;
-  letter-spacing:.16em;text-transform:uppercase;color:var(--nd-text-disabled);}
-.cc-page-title{font-family:var(--nd-display);font-size:clamp(30px,3.4vw,36px);
+  letter-spacing:.12em;text-transform:uppercase;color:var(--nd-text-secondary);}
+.cc-page-title{margin:0;font-family:var(--nd-font);font-size:clamp(24px,2.6vw,30px);
   font-weight:600;letter-spacing:-.02em;line-height:1.02;color:var(--nd-text-display);}
 .cc-page-sub{font-family:var(--nd-font);font-size:var(--body-sm);
   color:var(--nd-text-secondary);max-width:78ch;}
 .cc-rule{height:1px;background:var(--nd-border);}
-.cc-headbtn{color:var(--nd-text-secondary);}
+.cc-headbtn{min-height:36px;min-width:36px;color:var(--nd-text-secondary);}
 .cc-headbtn:hover{color:var(--nd-text-display);background:var(--nd-hover);}
 .cc-brand{font-family:var(--nd-mono);font-size:13px;font-weight:700;letter-spacing:.16em;
   text-transform:uppercase;color:var(--nd-text-display);}
-.cc-version{font-family:var(--nd-mono);font-size:10px;letter-spacing:.08em;
-  color:var(--nd-text-disabled);border:1px solid var(--nd-border-visible);
+.cc-version{font-family:var(--nd-mono);font-size:12px;letter-spacing:.08em;
+  color:var(--nd-text-secondary);border:1px solid var(--nd-border-visible);
   border-radius:var(--nd-r-tech);padding:2px 6px;}
 
 /* =====================================================================
@@ -289,7 +289,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   transition:background var(--nd-dur-fast) var(--nd-ease),
              border-color var(--nd-dur-fast) var(--nd-ease),
              color var(--nd-dur-fast) var(--nd-ease);}
-.q-btn--dense{min-height:36px;padding:0 var(--nd-space-md);font-size:11.5px;}
+.q-btn--dense{min-height:36px;padding:0 var(--nd-space-md);font-size:12px;}
 .q-btn--round,.q-btn--fab{border-radius:var(--nd-r-pill);padding:0;}
 .q-btn .q-icon{font-size:18px;}
 .q-btn--flat{color:var(--nd-text-secondary);}
@@ -326,7 +326,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   text-transform:uppercase;color:var(--nd-text-secondary);}
 .q-field--float .q-field__label{color:var(--nd-text-secondary);}
 .q-field__bottom{font-family:var(--nd-mono);font-size:var(--label);
-  color:var(--nd-text-disabled);}
+  color:var(--nd-text-secondary);}
 .q-select__dialog,.q-menu .q-item{font-family:var(--nd-mono);font-size:12.5px;}
 .q-uploader{border:1px dashed var(--nd-border-visible);border-radius:var(--nd-r-compact);
   background:transparent;box-shadow:none;color:var(--nd-text-secondary);
@@ -335,6 +335,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .q-uploader__list{background:transparent;}
 /* The drop label is a control caption: mono, ALL CAPS, and never wrapped. */
 .q-uploader__header-content{white-space:nowrap;}
+.q-uploader:not(:has(.q-uploader__file)) .q-uploader__subtitle{display:none;}
 .q-uploader__title{font-family:var(--nd-mono);font-size:var(--label);
   letter-spacing:.06em;text-transform:uppercase;color:var(--nd-text-primary);}
 
@@ -351,7 +352,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   border-color:var(--nd-border) !important;background:transparent !important;}
 .q-table tbody tr:hover td{background:var(--nd-hover) !important;}
 .q-table__bottom{font-family:var(--nd-mono);font-size:var(--label);
-  color:var(--nd-text-disabled);border-top:1px solid var(--nd-border);}
+  color:var(--nd-text-secondary);border-top:1px solid var(--nd-border);}
 
 /* =====================================================================
    10. TABS / SEGMENTED CONTROLS / EXPANSIONS
@@ -363,7 +364,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   max-width:100%;overflow-x:auto;scrollbar-width:none;}
 .q-tabs::-webkit-scrollbar{display:none;}
 .q-tab{font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--nd-text-disabled);min-height:38px;
+  text-transform:none;color:var(--nd-text-secondary);opacity:1;min-height:38px;
   border-radius:var(--nd-r-pill);padding:0 var(--nd-space-md);white-space:nowrap;}
 .q-tab--active{color:var(--nd-black);background:var(--nd-text-display);}
 .q-tab--active .q-icon{color:var(--nd-black);}
@@ -397,9 +398,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-pill{display:inline-flex;align-items:center;gap:var(--nd-space-sm);height:26px;
   padding:0 10px;border-radius:var(--nd-r-tech);border:1px solid var(--nd-border-visible);
   background:transparent;font-family:var(--nd-mono);font-size:var(--label);
-  font-weight:400;letter-spacing:.06em;text-transform:uppercase;
+  font-weight:400;letter-spacing:0;text-transform:none;
   color:var(--nd-text-secondary);white-space:nowrap;}
-.cc-pill--btn{cursor:pointer;
+.cc-pill--btn{min-height:36px;cursor:pointer;
   transition:border-color var(--nd-dur-fast) var(--nd-ease),
              color var(--nd-dur-fast) var(--nd-ease);}
 .cc-pill--btn:hover{border-color:var(--nd-text-display);color:var(--nd-text-primary);}
@@ -516,7 +517,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .q-notification--positive{border-left-color:var(--nd-success);}
 .q-notification--negative{border-left-color:var(--nd-accent);}
 .q-notification--warning{border-left-color:var(--nd-warning);}
-.q-notification__actions .q-btn{min-height:32px;}
+.q-notification__actions .q-btn{min-height:36px;}
 
 /* =====================================================================
    15. METRIC WIDGETS — label on top, Doto numeral below
@@ -607,7 +608,7 @@ pre,code,kbd{font-family:var(--nd-mono);}
 /* =====================================================================
    19. TYPE + SPACING UTILITY NORMALISATION — snaps every page to the scale
    ===================================================================== */
-.text-xs{font-size:11.5px !important;line-height:1.45 !important;}
+.text-xs{font-size:12px !important;line-height:1.45 !important;}
 .text-sm{font-size:13px !important;line-height:1.5 !important;}
 .text-base{font-size:14.5px !important;}
 .text-lg{font-size:16px !important;line-height:1.35 !important;}

@@ -121,3 +121,26 @@ def test_nlp_keeps_family_and_labels_record_numbers_as_ids():
     assert "Family at bedside" in res.text
     assert "[REDACTED_ID]" in res.text and "8847362519" not in res.text
     assert "John Doe" not in res.text
+
+
+def test_nlp_preserves_medication_unit_and_form():
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": True}
+    text = "cyanocobalamin 1,000 mcg tab\nPatient John Smith takes this daily."
+    result = Pipeline(cfg).run(text, wrap=False)
+    assert "cyanocobalamin 1,000 mcg tab" in result.text
+    assert "John Smith" not in result.text
+
+
+@pytest.mark.parametrize("candidate", ["mcg tab", "mg tablet", "mcg capsule", "mL", "IU"])
+def test_medication_units_and_forms_are_not_person_names(candidate):
+    from chartcleaner.clinical_whitelist import is_non_person_text
+
+    assert is_non_person_text(candidate)
+
+
+@pytest.mark.parametrize("candidate", ["mcg John Smith", "John Smith tab", "May Tab", "mg tablet John"])
+def test_medication_unit_protection_does_not_cover_adjacent_names(candidate):
+    from chartcleaner.clinical_whitelist import is_non_person_text
+
+    assert not is_non_person_text(candidate)

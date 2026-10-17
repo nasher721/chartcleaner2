@@ -67,7 +67,7 @@ async def test_copy_guard_asks_once_then_copies(user: User, page, monkeypatch):
     assert copied[-1].startswith("Safety header")
 
 
-async def test_copy_guard_off_copies_straight_away(user: User, page, monkeypatch):
+async def test_critical_copy_guard_remains_required_with_old_preference_off(user: User, page, monkeypatch):
     copied = []
     monkeypatch.setattr(clean_mod, "copy_to_clipboard", lambda text, note="": copied.append(text))
     monkeypatch.setitem(common.PREFS, "copy_guard", False)
@@ -75,5 +75,5 @@ async def test_copy_guard_off_copies_straight_away(user: User, page, monkeypatch
     await _clean(user, "/ss-guard-off")
     user.find(marker="copy-as").click()
     user.find(marker="copy-text").click()
-    assert copied
-    await user.should_not_see(marker="copy-guard")
+    assert not copied
+    await user.should_see(marker="copy-guard")

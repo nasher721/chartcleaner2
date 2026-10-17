@@ -17,6 +17,7 @@ from app_pages.rule_builder_ui import open_rule_builder
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
+from chartcleaner.review_state import review_findings, review_status, redaction_candidates
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
 from chartcleaner.timeline import build as build_timeline
@@ -102,6 +103,9 @@ async def clean_page():
                 if mode != "clean":
                     return Pipeline(cfg, mode=mode).run(text, track_changes=True, cache=cache), None
                 found = detect_note_type(text, cfg)
+                manual = CLEAN_STATE.get("manual_note_type")
+                if manual in NOTE_TYPE_LABELS:
+                    found.note_type, found.label = manual, NOTE_TYPE_LABELS[manual]
                 note_info.update(label=found.label, type=found.note_type, preset=None)
                 preset = (common.PREFS.get("note_presets") or {}).get(found.note_type or "")
                 if common.PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
@@ -283,14 +287,13 @@ async def clean_page():
             with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
                 ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
                 ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("opacity-70")
-                ui.label(f"{result.reduction:+.1f}%").classes(
-                    "font-semibold " + ("text-green-600" if result.reduction >= 0 else "text-orange-600"))
+                ui.label(f"{abs(result.reduction):.1f}% {'reduction' if result.reduction >= 0 else 'increase'}").classes("font-semibold")
                 if result_mode == "abbreviations":
                     ui.label(f"{sum(s.matches for s in result.stages)} abbreviations applied")
                 elif result_mode == "expand":
                     ui.label(f"{sum(s.matches for s in result.stages)} abbreviations expanded")
                 else:
-                    ui.label(f"{sum(phi.values())} PHI redacted").classes("text-red-600")
+                    ui.label(f"{sum(phi.values())} possible identifiers redacted")
                 ui.label(f"{result.duration_ms:.0f} ms").classes("opacity-60")
                 render_note_chip(result_mode)
             if result_mode == "abbreviations":
@@ -305,6 +308,10 @@ async def clean_page():
             with ui.tabs().props("dense align=left") as tabs:
                 t_out = ui.tab("Output", icon="description")
                 t_review = ui.tab("Review", icon="rule")
+                issue_count = len(review_findings(result.fact_check, CLEAN_STATE.get("audit")))
+                if issue_count:
+                    with t_review:
+                        ui.badge(str(issue_count), color="orange").props("floating").mark("review-count")
                 t_insights = ui.tab("Insights", icon="insights") if not single_pass else None
             refs["tabs"] = (tabs, [t for t in (t_out, t_review, t_insights) if t is not None])
             with ui.tab_panels(tabs, value=t_out).classes("w-full") \
@@ -322,30 +329,75 @@ async def clean_page():
                     ui.label(" | ".join(result.warnings)).classes("text-xs text-orange-600")
 
     def render_trust_strip(result, single_pass: bool) -> None:
-        """The one-glance "can I trust this?" badges above the output."""
-        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("trust-strip"):
-            report = result.fact_check
-            if report is not None and not single_pass:
-                status = report.status
-                icon, color = {"ok": ("verified", "green"), "review": ("rule", "orange"),
-                               "alert": ("report", "red")}[status]
-                badge = ui.button(report.headline(), icon=icon,
-                                  on_click=lambda: show_tab(1)) \
-                    .props(f"unelevated no-caps color={color}").classes("text-sm")
-                badge.mark("fact-check")
-                badge.tooltip("Clinical values (numbers with units, labs, vitals, medications, "
-                              "allergies, code status) counted before and after every stage. "
-                              "Click to review.")
-            audit = CLEAN_STATE.get("audit")
-            if audit is not None and not audit.skipped and not single_pass:
-                total = sum(audit.counts.values())
-                if total:
-                    ui.button(f"{total} possible PHI leftover(s)", icon="privacy_tip",
-                              on_click=lambda: show_tab(1)) \
-                        .props("outline no-caps color=orange").classes("text-sm")
-                else:
-                    ui.chip("No leftover PHI patterns", icon="shield", color="green-1",
-                            text_color="green-9").props("dense")
+        """One severity for clinical verification and the limited PHI pattern scan."""
+        if single_pass:
+            return
+        status = review_status(result.fact_check, CLEAN_STATE.get("audit"))
+        color = {"blocked": "red", "review": "orange", "clean": "grey"}[status]
+        title = {"blocked": "Blocked · review before copying", "review": "Review needed",
+                 "clean": "Checks passed · review before sharing"}[status]
+        with ui.column().classes("w-full gap-1").mark("trust-strip"):
+            ui.button(title, icon="report" if status == "blocked" else "rule",
+                      on_click=lambda: show_tab(1)).props(f"outline no-caps color={color}") \
+                .mark("fact-check")
+            ui.label("Pattern checks cannot guarantee de-identification.").classes("text-sm")
+            render_findings(result, limit=3)
+
+    def render_findings(result, limit=None) -> None:
+        findings = review_findings(result.fact_check, CLEAN_STATE.get("audit"),
+                                   source=CLEAN_STATE["input"], output=CLEAN_STATE.get("result_text") or result.text)
+        if not findings:
+            return
+        with ui.expansion(f"Findings ({len(findings)})", icon="rule", value=True).classes("w-full"):
+            for finding in findings[:limit]:
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.badge(finding["severity"], color="red" if finding["severity"] == "blocked" else "orange")
+                    ui.button(finding["title"], on_click=lambda f=finding: locate_finding(f)) \
+                        .props("flat no-caps align=left").classes("text-left").mark("locate-finding")
+                    ui.label(finding["detail"]).classes("text-sm")
+            if limit and len(findings) > limit:
+                ui.button(f"Review all {len(findings)} findings", on_click=lambda: show_tab(1)).props("flat no-caps")
+
+    def locate_finding(finding) -> None:
+        """Show source and output context; never invent a missing output span."""
+        before = CLEAN_STATE["input"]
+        after = CLEAN_STATE.get("result_text") or ""
+        source = finding["before"]
+        output = finding["after"]
+        # Stage context may have been reformatted: show its source text honestly.
+        if not output and source:
+            lines = after.splitlines()
+            from difflib import get_close_matches
+            nearby = get_close_matches(source, lines, n=1, cutoff=0.35)
+            output = nearby[0] if nearby else ""
+        with ui.dialog() as dlg, ui.card().classes("w-[900px] max-w-full gap-3").mark("finding-location"):
+            ui.label(finding["title"]).classes("text-lg font-semibold")
+            ui.label("Source context and corresponding output (nearest line when reformatted).")
+            for label, text in (("Source", source), ("Output", output)):
+                ui.label(label).classes("font-semibold")
+                ui.html("<mark>" + esc(text) + "</mark>" if text else
+                        "<p>No corresponding span remains.</p>").classes("whitespace-pre-wrap break-all")
+            def jump():
+                dlg.close()
+                show_tab(0)
+                import json
+                ui.run_javascript("setTimeout(() => {" +
+                    "for (const [selector, needle] of " + json.dumps([
+                        [".cc-learn-src textarea", source], [".cc-out textarea", output]]) + ") {" +
+                    "const el=document.querySelector(selector); if(!el || !needle) continue;" +
+                    "const start=el.value.indexOf(needle); if(start<0) continue;" +
+                    "el.focus(); el.setSelectionRange(start,start+needle.length);" +
+                    "el.scrollTop=el.value.slice(0,start).split('\\n').length*(parseFloat(getComputedStyle(el).lineHeight)||20);" +
+                    "} }, 100)")
+            ui.button("Locate in panes", on_click=jump).props("outline no-caps")
+            def edit_output():
+                dlg.close()
+                show_tab(0)
+                if not refs.get("editing"):
+                    toggle_edit()
+            ui.button("Edit output", icon="edit", on_click=edit_output).props("outline no-caps")
+            ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def render_note_chip(result_mode: str | None) -> None:
         note = CLEAN_STATE.get("note") or {}
@@ -361,13 +413,12 @@ async def clean_page():
     def open_note_type_dialog() -> None:
         note = CLEAN_STATE.get("note") or {}
         kind = note.get("type")
-        if not kind:
-            ui.notify("The note type wasn't recognized, so there's nothing to map.", type="info")
-            return
         presets = store.list_presets()
         mapping = dict(common.PREFS.get("note_presets") or {})
         with ui.dialog() as dlg, ui.card().classes("w-[440px] gap-2"):
-            ui.label(f"{note['label']} notes").classes("text-lg font-semibold")
+            ui.label("Choose note type").classes("text-lg font-semibold")
+            kind_sel = ui.select(NOTE_TYPE_LABELS, value=kind, label="Note type").classes("w-full") \
+                .mark("note-type-picker")
             ui.label("Pick the rule preset to clean this kind of note with.").classes("text-sm opacity-70")
             sel = ui.select({"": "(current rules)", **{p: p for p in presets}},
                             value=mapping.get(kind, ""), label="Preset").classes("w-full")
@@ -377,10 +428,15 @@ async def clean_page():
                 ui.label("No presets yet — save one on the Pipeline page.").classes("text-xs text-orange-600")
 
             async def save() -> None:
+                chosen = kind_sel.value
+                if not chosen:
+                    ui.notify("Choose a note type first.", type="warning")
+                    return
+                CLEAN_STATE["manual_note_type"] = chosen
                 if sel.value:
-                    mapping[kind] = sel.value
+                    mapping[chosen] = sel.value
                 else:
-                    mapping.pop(kind, None)
+                    mapping.pop(chosen, None)
                 common.PREFS["note_presets"] = mapping
                 common.PREFS["note_auto_apply"] = bool(auto.value)
                 save_prefs()
@@ -443,17 +499,18 @@ async def clean_page():
         """Run ``action`` (a copy), first asking when the fact check raised an alert.
 
         Lost clinical values, changed meaning or values new to the chart must be
-        seen before the text leaves the app (prefs ``copy_guard``). Acknowledging
+        seen before the text leaves the app. Acknowledging
         once covers every copy of this result; a new clean asks again.
         """
+        commit_edit()
         result = CLEAN_STATE.get("result")
         report = getattr(result, "fact_check", None)
-        if (not common.PREFS.get("copy_guard", True) or CLEAN_STATE.get("fact_ack")
+        if (CLEAN_STATE.get("fact_ack")
                 or report is None or report.status != "alert"
                 or CLEAN_STATE.get("result_mode") not in (None, "clean")):
             action()
             return
-        with ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full gap-2").mark("copy-guard"):
+        with results_col.client, ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full gap-2").mark("copy-guard"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.icon("report", color="red").classes("text-2xl")
                 ui.label("Check before copying").classes("text-lg font-semibold")
@@ -504,11 +561,47 @@ async def clean_page():
         if value == previous:
             return
         CLEAN_STATE["result_text"] = value
+        CLEAN_STATE["fact_ack"] = False
+        from chartcleaner.fact_check import FactTracker
+        result = CLEAN_STATE.get("result")
+        if result is not None:
+            baseline = refs.get("verification_baseline")
+            if not baseline or baseline[0] is not result:
+                baseline = (result, result.fact_check)
+                refs["verification_baseline"] = baseline
+            tracker = FactTracker(CLEAN_STATE["input"])
+            tracker.after_stage("edited_output", "Edited output", value)
+            report = tracker.report(value)
+            # Preserve pipeline attribution for losses the user did not create.
+            if baseline[1]:
+                from dataclasses import replace
+                attributed = []
+                for loss in report.losses:
+                    remaining = loss.count
+                    for prior in baseline[1].losses:
+                        if prior.key == loss.key and remaining:
+                            count = min(remaining, prior.count)
+                            attributed.append(replace(prior, count=count))
+                            remaining -= count
+                    if remaining:
+                        attributed.append(replace(loss, count=remaining))
+                report.losses = attributed
+            result.fact_check = report
+            result.text = value
+        CLEAN_STATE["review_html"] = None
+        CLEAN_STATE["audit"] = run_audit(value, load_config(common.CONFIG_PATH))
         try:
             if edit_log.record(previous, value):
                 asyncio.get_running_loop().create_task(refresh_inbox())
         except Exception:
             pass  # learning from edits is a bonus; never break editing
+        # Previous insights describe the pre-edit text; do not display stale claims.
+        for key in ("safety", "stale", "conflicts", "trends", "timeline", "problems", "devices",
+                    "micro", "overnight", "pending", "bundle", "delta", "summary"):
+            CLEAN_STATE.pop(key, None)
+        CLEAN_STATE["qa"] = []
+        with results_col.client:
+            render_results()
 
     def open_copy_default_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
@@ -542,11 +635,21 @@ async def clean_page():
             render_safety_strip()
         shown_text = CLEAN_STATE.get("result_text") or result.text
         out = ui.textarea("", value=shown_text)
-        out.props("outlined readonly input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
+        out.props("outlined readonly aria-label='Cleaned chart text' input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
         out.mark("result-output")
         out.on("blur", lambda _: commit_edit())
         refs["output"] = out
         refs["editing"] = False
+        candidates = redaction_candidates(CLEAN_STATE["input"], shown_text)
+        if candidates:
+            with ui.expansion(f"Inspect redactions ({len(candidates)})", icon="privacy_tip").classes("w-full"):
+                ui.label("Inspect a replacement before restoring source text. Restoring may reintroduce identifying information.") \
+                    .classes("text-sm")
+                with ui.row().classes("gap-2 flex-wrap"):
+                    for index, candidate in enumerate(candidates):
+                        ui.button(f"{candidate['token']} · {index + 1}",
+                                  on_click=lambda c=candidate: inspect_redaction(c)) \
+                            .props("outline no-caps").mark("redaction-chip")
         default = common.PREFS.get("copy_default") or "text"
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             with ui.dropdown_button(f"Copy · {COPY_FORMATS.get(default, COPY_FORMATS['text'])[0]}",
@@ -584,10 +687,10 @@ async def clean_page():
                     chart_markdown().encode("utf-8"), "cleaned_chart.md"))
                 if common.PREFS.get("notes_folder"):
                     ui.item("To my notes folder", on_click=save_to_notes_folder)
-            ui.button(icon="edit", on_click=toggle_edit).props("flat round").mark("edit-result") \
+            ui.button("Edit result", icon="edit", on_click=toggle_edit).props("flat no-caps").mark("edit-result") \
                 .tooltip("Edit the result before copying — copies use your edits, and lines you "
                          "keep deleting become rule suggestions")
-            with ui.button(icon="more_horiz").props("flat round").tooltip("More"):
+            with ui.button(icon="more_horiz").props("flat round aria-label='More result actions'").tooltip("More"):
                 with ui.menu():
                     ui.menu_item("Restore names in an AI reply…", on_click=open_restore_dialog) \
                         .mark("restore-reply")
@@ -605,6 +708,41 @@ async def clean_page():
                         .classes("text-sm")
                     ui.button("Choose meanings", icon="rule",
                               on_click=lambda amb=ambiguous: open_meanings_dialog(amb)).props("flat dense")
+
+    def inspect_redaction(candidate) -> None:
+        snapshot = CLEAN_STATE.get("result_text") or ""
+        original = candidate["original"]
+        with ui.dialog() as dlg, ui.card().classes("w-[600px] max-w-full gap-3").mark("redaction-inspector"):
+            ui.label("Inspect redaction").classes("text-lg font-semibold")
+            ui.label(candidate["token"]).classes("cc-mono")
+            if original is not None:
+                ui.label("Source text (may identify the patient)")
+                ui.label(original).classes("cc-mono whitespace-pre-wrap break-all")
+            else:
+                ui.label("Several source changes overlap here. Use Review and Edit result to make a precise correction.")
+            replacement = ui.select(["[REDACTED_NAME]", "[REDACTED_ID]", "[REDACTED_PHONE]",
+                                     "[REDACTED_EMAIL]", "[REDACTED_ADDRESS]"],
+                                    label="Replacement type").classes("w-full")
+
+            def apply(value):
+                if CLEAN_STATE.get("result_text") != snapshot:
+                    ui.notify("The result changed. Inspect the current redaction again.", type="warning")
+                    dlg.close()
+                    return
+                out = refs["output"]
+                out.set_value(snapshot[:candidate["start"]] + value + snapshot[candidate["end"]:])
+                refs["editing"] = True
+                commit_edit()
+                dlg.close()
+                render_results()
+
+            if original is not None:
+                ui.button("Restore source text (may include PHI)", on_click=lambda: apply(original)) \
+                    .props("outline no-caps color=orange").mark("restore-redaction")
+            ui.button("Change replacement type", on_click=lambda: apply(replacement.value) if replacement.value else None) \
+                .props("outline no-caps")
+            ui.button("Cancel", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def jump_to(start: int, end: int) -> None:
         ui.run_javascript(
@@ -673,6 +811,7 @@ async def clean_page():
     # ---- Review tab -----------------------------------------------------------
     def render_review(result, groups: list[dict], single_pass: bool) -> None:
         if result.fact_check is not None and not single_pass:
+            render_findings(result)
             render_fact_check(result.fact_check)
         audit = CLEAN_STATE.get("audit")
         flagged = flagged_lines(audit)
@@ -1012,7 +1151,7 @@ async def clean_page():
                             ui.label("removed by a rule: " + line) \
                                 .classes("text-xs cc-mono text-red-600 break-all")
                             ui.button(icon="content_copy",
-                                      on_click=lambda t=line: copy_to_clipboard(t)).props("flat dense")
+                                      on_click=lambda t=line: copy_to_clipboard(t)).props("flat dense aria-label='Copy removed safety line'")
 
     def render_conflicts(report) -> None:
         ui.label("Lines of the latest note that can't both be true. Nothing was changed — "
@@ -1158,7 +1297,9 @@ async def clean_page():
         box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
 
         def use_for_ai() -> None:
-            CLEAN_STATE["result_text"] = delta.compact_text
+            refs["output"].set_value(delta.compact_text)
+            refs["editing"] = True
+            commit_edit()
             ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
                       type="positive")
 
@@ -1218,7 +1359,7 @@ async def clean_page():
         with ai_col:
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Local AI").classes("text-lg font-semibold")
-                ui.button(icon="close", on_click=lambda: toggle_ai(False)).props("flat round dense")
+                ui.button(icon="close", on_click=lambda: toggle_ai(False)).props("flat round dense aria-label='Close Local AI panel'")
             if not result or CLEAN_STATE.get("result_mode") in ("abbreviations", "expand"):
                 ui.label("Do a full clean, then summarize the chart or ask questions about it — "
                          "on this computer, through Ollama.").classes("text-sm opacity-70")
@@ -1578,6 +1719,8 @@ async def clean_page():
             apply_preset(name)
 
     def on_input_change(e) -> None:
+        if e.value != CLEAN_STATE.get("input"):
+            CLEAN_STATE.pop("manual_note_type", None)
         CLEAN_STATE.update(input=e.value)
         state["edited"] = time.monotonic()
 
@@ -2224,7 +2367,7 @@ async def clean_page():
                         ui.label(text[:300] + ("…" if len(text) > 300 else "")) \
                             .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
                         ui.button(icon="content_copy",
-                                  on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense")
+                                  on_click=lambda t=text: copy_to_clipboard(t)).props("flat dense aria-label='Copy removed text'")
                         ui.button("Never remove this", icon="shield",
                                   on_click=lambda t=text, sid=g["sid"]: keep_text(sid, t)) \
                             .props("flat dense").mark("never-remove")
@@ -2259,7 +2402,7 @@ async def clean_page():
                             .classes("text-xs cc-mono flex-grow whitespace-pre-wrap break-all")
                         if x.lines:
                             ui.button(icon="content_copy",
-                                      on_click=lambda t=x.lines[0]: copy_to_clipboard(t)).props("flat dense")
+                                      on_click=lambda t=x.lines[0]: copy_to_clipboard(t)).props("flat dense aria-label='Copy clinical context'")
                         if x.lines and x.stage_id in EXCEPTION_STAGES:
                             ui.button("Never remove this", icon="shield",
                                       on_click=lambda t=x.lines[0], sid=x.stage_id: keep_text(sid, t)) \
@@ -2503,7 +2646,7 @@ async def clean_page():
         inbox["items"] = items
         try:
             inbox_btn.set_text(f"Suggestions ({len(items)})" if items else "Suggestions")
-            inbox_btn.props(f"color={'amber-9' if items else 'grey'}")
+            inbox_btn.props("color=grey")
         except Exception:
             pass  # the page may be gone
 
@@ -2706,7 +2849,7 @@ async def clean_page():
                 value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
                 label="Rule preset",
             ).props("dense outlined").classes("w-60")
-        mode_note = ui.label("").classes("text-sm opacity-70 -mt-2")
+        mode_note = ui.label("").classes("text-sm opacity-70")
 
         layout = ui.element("div").classes("grid grid-cols-1 gap-6 w-full items-start")
         with layout:
@@ -2731,8 +2874,8 @@ async def clean_page():
                         .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
-                                      "cc-tint--warn").mark("selection-bar") as sel_bar:
-                    ui.icon("highlight").classes("text-amber-700")
+                                      "cc-panel").mark("selection-bar") as sel_bar:
+                    ui.icon("highlight").classes("text-primary")
                     sel_text = ui.label("").classes("text-xs cc-mono max-w-[220px] truncate")
                     ui.button("Remove", icon="backspace", on_click=sel_remove) \
                         .props("flat dense no-caps").mark("sel-remove") \
@@ -2758,16 +2901,17 @@ async def clean_page():
                     ui.button("More…", icon="school", on_click=sel_more) \
                         .props("flat dense no-caps").mark("sel-more") \
                         .tooltip("Advanced: remove whole lines, edit the text, check your recent charts")
-                    with ui.button(icon="tune").props("flat dense round").tooltip("Matching options"):
+                    with ui.button(icon="tune").props("flat dense round aria-label='Matching options'").tooltip("Matching options"):
                         with ui.menu().classes("p-2"):
                             word_check = ui.checkbox("Whole words only", value=True)
                             case_check = ui.checkbox("Match case", value=False)
-                    ui.button(icon="close", on_click=hide_selection_bar).props("flat dense round")
+                    ui.button(icon="close", on_click=hide_selection_bar) \
+                        .props("flat dense round aria-label='Dismiss selection actions'")
                 sel_bar.set_visibility(False)
                 tray = ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
                                         "cc-panel").mark("collect-tray")
                 tray.set_visibility(False)
-                with ui.row().classes("w-full items-center gap-2 -mt-1 flex-wrap"):
+                with ui.expansion("Selection settings", icon="tune").classes("w-full"):
                     selection_mode = common.PREFS.get("selection_mode")
                     selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
                     ui.toggle({"ask": "Ask", "remove": "Remove text", "abbreviate": "Abbreviate"},
@@ -2778,6 +2922,7 @@ async def clean_page():
                                  "or abbreviate it")
                     highlight_status = ui.label(SELECTION_MODE_HELP[selection_mode]) \
                         .classes("text-xs opacity-70 flex-grow").props("role=status aria-live=polite")
+                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
                         .props("flat dense no-caps")
                     undo_btn.disable()
@@ -2821,17 +2966,18 @@ async def clean_page():
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:
                         f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
-                    tag_input = ui.input("Bed tag", value=CLEAN_STATE.get("tag") or "",
+                    tag_input = ui.input("Bed tag (optional)", value=CLEAN_STATE.get("tag") or "",
                                          autocomplete=recent_charts.tags(),
                                          on_change=lambda e: CLEAN_STATE.update(
                                              tag=recent_charts.clean_tag(e.value))) \
-                        .props("dense outlined clearable").classes("w-32").mark("bed-tag")
+                        .props("dense outlined clearable hint='Groups charts for Census and daily notes'") \
+                        .classes("w-56").mark("bed-tag")
                     tag_input.tooltip("e.g. G20-1 — kept with this chart (encrypted) so the daily "
                                       "note and trends follow the patient, not the paste")
                     ui.space()
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \
-                        .props("accept=.txt,.md,.docx,.pdf,text/plain flat bordered dense hide-upload-btn") \
+                        .props("accept=.txt,.md,.docx,.pdf,text/plain flat bordered dense hide-upload-btn hide-upload-progress") \
                         .classes("w-[280px]").style("max-height: 72px")
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
