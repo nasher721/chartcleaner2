@@ -245,12 +245,19 @@ def load_config(path: str | Path) -> dict:
     return cfg
 
 
-def save_config(config: dict, path: str | Path) -> None:
-    """Atomically write config, keeping a one-generation .bak beside it."""
+def save_config(config: dict, path: str | Path, *, source: str | None = None) -> dict | None:
+    """Atomically write config, keeping a one-generation .bak beside it.
+
+    Rule changes against the previous file are journaled (:mod:`rule_history`,
+    ``source`` says who made them) so each can be undone on its own later; the
+    journal entry is returned (``None`` when no rule changed).
+    """
     path = Path(path)
+    previous = None
     if path.exists():
         backup = path.with_suffix(path.suffix + ".bak")
-        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        previous = path.read_text(encoding="utf-8")
+        backup.write_text(previous, encoding="utf-8")
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -260,6 +267,15 @@ def save_config(config: dict, path: str | Path) -> None:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+    return _journal_rules(previous, config, source) if previous is not None else None
+
+
+def _journal_rules(previous: str, config: dict, source: str | None) -> dict | None:
+    try:
+        from . import rule_history
+        return rule_history.record(json.loads(previous), config, source)
+    except Exception:
+        return None  # the journal is an undo aid; it must never break a save
 
 
 def load_default_config() -> dict:

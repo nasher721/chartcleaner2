@@ -136,6 +136,8 @@ def _chart_data_paths() -> list[Path]:
         paths += list(_store().RECENT_DIR.glob("chart-*.enc"))
     if _store().EDIT_LOG_FILE.exists():
         paths.append(_store().EDIT_LOG_FILE)
+    if _store().RULE_HISTORY_FILE.exists():
+        paths.append(_store().RULE_HISTORY_FILE)
     if _store().EXPORTS_DIR.exists():
         paths += [p for p in _store().EXPORTS_DIR.iterdir() if p.name != ".gitkeep"]
     if _store().WATCHED_OUT_DIR.exists():

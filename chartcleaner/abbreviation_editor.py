@@ -383,6 +383,21 @@ def render(load_current: Callable[[], dict], save_current: Callable[[dict], None
     with ui.card().classes("w-full"):
         ui.label("Medical abbreviation dictionary").classes("text-lg font-semibold")
         search = ui.input("Search terms or replacements", on_change=lambda event: change_search(event.value)).props("clearable")
+        from .abbreviations import LEVEL_LABELS
+        current_level = (load_current().get("abbreviations") or {}).get("level", "standard")
+
+        def set_level(group: dict, level: str) -> None:
+            if level == "standard":
+                group.pop("level", None)
+            else:
+                group["level"] = level
+
+        ui.select(LEVEL_LABELS, value=current_level if current_level in LEVEL_LABELS else "standard",
+                  label="How much the dictionary shortens",
+                  on_change=lambda e: update(lambda g: set_level(g, e.value))) \
+            .props("outlined dense").classes("w-full max-w-md").mark("abbr-level") \
+            .tooltip("Conservative only uses clear acronyms with one meaning (HTN, CKD); Mine only "
+                     "applies just the abbreviations you added")
         with ui.row().classes("w-full items-center"):
             term_input = ui.input("New expanded term", on_change=lambda _: refresh_preview()).classes("flex-grow")
             replacement_input = ui.input("Replacement", on_change=lambda _: refresh_preview()).classes("flex-grow")

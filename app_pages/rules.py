@@ -4,6 +4,53 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from app_pages.rule_builder_ui import open_rule_builder
+from chartcleaner import rule_history, rule_meta
+
+# Rule journal sources shown on Recent changes.
+HISTORY_SOURCES = {"selection": "Clean page", "builder": "Rule builder", "batch": "Collected selections",
+                   "editor": "My text rules", "quick_add": "Quick add", "import": "Import",
+                   "restore": "Backup restore", "preset": "Preset", "rule_pack": "Rule pack",
+                   "undo": "Undo", "cli": "Command line", "api": "Integration", "app": "App"}
+
+
+def render_history(load_current, holder) -> None:
+    """Rules → Recent changes: the rule journal, each entry undoable on its own."""
+    holder.clear()
+    with holder:
+        ui.label("Every change to your rules, newest first — from any page, the command line or "
+                 "an import. Undo reverses just that change and keeps everything since.") \
+            .classes("text-sm opacity-70")
+        items = rule_history.entries(100)
+        if not items:
+            ui.label("No rule changes recorded yet.").classes("cc-page-sub")
+            return
+        for item in items:
+            with ui.card().classes("w-full gap-1 p-3" + (" opacity-60" if item.get("reverted") else "")) \
+                    .mark("history-row"):
+                with ui.row().classes("w-full items-start justify-between gap-3 no-wrap"):
+                    with ui.column().classes("min-w-0 gap-0"):
+                        ui.label(item["summary"]).classes("text-sm break-all")
+                        when = item["ts"].replace("T", " ")[:16]
+                        ui.label(f"{when} · {HISTORY_SOURCES.get(item['source'], item['source'])}"
+                                 + (" · undone" if item.get("reverted") else "")) \
+                            .classes("text-xs opacity-60")
+                    if not item.get("reverted"):
+                        ui.button("Undo", icon="undo",
+                                  on_click=lambda e, it=item: undo_entry(load_current, it, holder)) \
+                            .props("flat dense no-caps").mark("history-undo")
+
+
+def undo_entry(load_current, item: dict, holder) -> None:
+    try:
+        cfg = rule_history.revert(load_current(), item)
+        undone = save_config_with_backup(cfg, source="undo")
+        rule_history.mark_reverted(item["id"], by=(undone or {}).get("id"))
+    except Exception as ex:
+        ui.notify(f"Could not undo: {ex}", type="negative")
+        return
+    ui.notify("Undone. " + ("" if undone else "(It was already undone.)"), type="positive")
+    render_history(load_current, holder)
 
 
 def _abbreviation_preview_text() -> str:
@@ -271,7 +318,9 @@ def text_rules_page():
             ui.notify("That rule is no longer in your rules.", type="warning")
         else:
             lst.pop(index)
-            save_config_with_backup(cfg)
+            if key == "learned_rules":
+                cfg = rule_meta.prune(cfg)
+            save_config_with_backup(cfg, source="editor")
             ui.notify(f"Removed rule from {key}.", type="positive")
         render_rule_health(holder)
 
@@ -283,6 +332,7 @@ def text_rules_page():
             learned = ui.tab("Remove & replace", icon="find_replace")
             abbreviations = ui.tab("Abbreviations", icon="short_text")
             sharing = ui.tab("Share & import", icon="import_export")
+            history = ui.tab("Recent changes", icon="history")
         with ui.tab_panels(tabs, value=quick).classes("w-full"):
             with ui.tab_panel(quick):
                 quick_holder = ui.column().classes("w-full")
@@ -292,15 +342,30 @@ def text_rules_page():
                 abbreviation_holder = ui.column().classes("w-full")
             with ui.tab_panel(sharing):
                 sharing_holder = ui.column().classes("w-full")
+            with ui.tab_panel(history):
+                history_holder = ui.column().classes("w-full")
+
+        def open_builder(row: dict, on_save) -> None:
+            info = rule_meta.entry(load_current(), row["pattern"])
+            open_rule_builder(row["text"], chart=CLEAN_STATE.get("input") or "", on_save=on_save,
+                              initial=info.get("shape"), initial_scope=info.get("scope"),
+                              initial_note=info.get("note", ""))
+
+        def save_from_editor(cfg: dict):
+            return save_config_with_backup(cfg, source="editor")
 
         def render_tab(name: str) -> None:
             holder, renderer = {
-                "Quick add": (quick_holder, render_quick_add),
-                "Remove & replace": (learned_holder, render_learned_editor),
+                "Quick add": (quick_holder, lambda load, _save: render_quick_add(
+                    load, lambda cfg: save_config_with_backup(cfg, source="quick_add"))),
+                "Remove & replace": (learned_holder, lambda load, save: render_learned_editor(
+                    load, save_from_editor, load_runs=store.load_runs, open_builder=open_builder)),
                 "Abbreviations": (abbreviation_holder, lambda load, save:
-                    render_abbreviations(load, save, sample_text=_abbreviation_preview_text)),
+                    render_abbreviations(load, save_from_editor, sample_text=_abbreviation_preview_text)),
                 "Share & import": (sharing_holder, lambda load, save:
-                    render_rule_sharing(load, save, lambda: open_folder(store.EXPORTS_DIR))),
+                    render_rule_sharing(load, lambda cfg: save_config_with_backup(cfg, source="import"),
+                                        lambda: open_folder(store.EXPORTS_DIR))),
+                "Recent changes": (history_holder, lambda load, _save: render_history(load, history_holder)),
             }[name]
             holder.clear()
             with holder:

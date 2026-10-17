@@ -984,3 +984,73 @@ Shipped from `/multi-agent-brainstorming` + `/context-window-management`:
 - [x] **WF1 Budgeted prompt templates** — `prompt_templates.render(..., budget_tokens=...)`
   and `service.prompt(..., budget_tokens=...)` pack `{chart}` through `pack_context` when a
   token budget is given.
+
+---
+
+# Phase 15 (2026-10-17) — text replacement, removal and abbreviation UX
+
+Status: **done** except where noted. Implements the 29-idea rule-UX brainstorm.
+Cleaning output with existing configs is unchanged (`tests/golden` byte-identical):
+every new behavior is a new rule kind, a per-rule setting or a UI path.
+
+### Rule kinds between "exact text" and regex
+- [x] **1 Generalize** — `rule_shapes.generalize()` proposes exact text → any line containing
+  it → same line with `{date}` `{time}` `{number}` → also `{name}` → "lines starting with…"
+  (multi-line: up to blank line / next heading). Every pattern is bounded and passes `regex_risk`.
+- [x] **2/3/4 Whole line, block to a stop, prefix** — shape kinds `line`, `until`
+  (`blank_line`, `next_heading`, `{"marker": …}`; capped at `MAX_BLOCK_CHARS`) and
+  `line_start`. Removing a whole *section* stays the job of the `sections` stage.
+- [x] **5 Section-scoped rules** — per-rule `scope` in `rule_meta`, honored by `run_learned`
+  via `stage_core._apply_rules(rule_scopes=)`.
+
+### Confidence before saving
+- [x] **6 Hit preview** — `rule_builder.preview()` (this chart + recent charts) in the rule builder.
+  One-click Remove still saves first and reports recent-chart impact after (unchanged).
+- [x] **7 Clinical-content warning** — `facts_lost` from `fact_check.fact_counts` before/after.
+- [ ] **8 Ghost preview in the chart** — not built: the chart is a plain textarea that
+  can't highlight spans; the builder lists the matching lines instead.
+
+### Undo and history
+- [x] **9 Multi-step undo + Recent changes** — `rule_history.py`: `engine.save_config`
+  journals rule changes item by item (encrypted `data/rule_history.enc`, `MAX_ENTRIES`
+  300, removed by *Delete stored chart data*); `revert()` undoes one entry after later
+  edits. Clean page Undo is a stack (`UNDO_DEPTH`), Rules → Recent changes undoes any entry.
+- [x] **10 Per-rule pause / pause all** — `rule_meta` `enabled`; the stage switch on the list.
+- [x] **11 Why is this gone?** — the review dialog describes learned rules in words, shows
+  source/note and can pause the rule.
+
+### Abbreviations
+- [x] **12 Just here** — abbreviate one selection without saving a rule (undoable).
+- [x] **13/15 Conflicts + read-back** — `abbreviations.read_back()` names the dictionary's
+  other meanings of an abbreviation in the dialog (the existing "already stands for" warning stays).
+- [x] **14 Density** — `abbreviations.level`: `standard` | `conservative` (unambiguous,
+  capitalized acronyms) | `custom_only`; validated; Abbreviations tab select.
+- [x] **16 Phrase suggestions** — already in the Clean page's Suggestions inbox (`rule_inbox`
+  + `phrase_miner`); no change.
+- [ ] **17 Per-note-type abbreviation sets** — not built: note-type presets (prefs
+  `note_presets`) already switch the whole config, abbreviations included.
+
+### Organizing rules
+- [x] **18 Search / sort / filter** — `rule_catalog.rows/filter_rows`: sort by order, hits,
+  last use, newest, A→Z; filter by kind, source, status (tags are searchable).
+- [x] **19 Clean up unused** — `rule_catalog.archive_unused` pauses never-matched rules (`archived`).
+- [x] **20 Merge look-alikes** — `rule_catalog.merge_suggestions/merge`.
+- [x] **21 Notes and tags** — `rule_meta` `note` / `tags` (rule packs built from tags: not built).
+- [x] **22 Lines a rule must keep** — `rule_examples.record_keep` (`"kind": "keep"`), checked by
+  `rule_examples.check` even while the rule is paused.
+
+### Speed and safety
+- [x] **23 Shortcuts** — Alt+Shift+R/L/B/A/K/C on a selection, Alt+Z undo.
+- [x] **24 Right-click menu** on the chart.
+- [x] **25 Collect** — tray of selections saved as one config write (one Undo step).
+- [x] **26 Remove what's copied** — CLI `--add-remove-clipboard` (also `--add-line`,
+  `--add-line-start`, `--rule-changes`, `--undo-rule-change`; `service.add_shape_rule`,
+  `rule_changes`, `undo_rule_change`). Not on REST/MCP (rule editing never was).
+- [x] **27 Plain-text round trip** — `# [whole line]`, `[line starts with]`,
+  `[until blank line|next heading|“marker”]`, `[template]`, `[only in: …]`, `[paused]`.
+- [x] **28 Never-remove clashes** — `rule_builder.keep_conflicts` warns in the builder.
+- [x] **29 Import preview** — `rule_sharing.import_impact` (lines changed and clinical values
+  lost on recent charts) in Share & import.
+
+Tests: `test_rule_shapes.py`, `test_rule_history.py`, `test_rule_builder.py`,
+`test_rule_catalog.py`, `test_rule_cli.py`, `test_rule_ux_ui.py`, `test_rules_page_ui.py`.

@@ -13,7 +13,9 @@ import time
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
-from chartcleaner import edit_log, recent_charts, regression_set, rule_inbox
+from app_pages.rule_builder_ui import open_rule_builder
+from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
+from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
@@ -69,11 +71,14 @@ COPY_FORMATS = {
     "ai": ("Tokenized, for an external AI", "smart_toy"),
 }
 AUTO_CLEAN_PAUSE = 1.5  # seconds of no typing before auto-clean runs
+UNDO_DEPTH = 30  # Clean-page edits Undo can step back through
 
 
 async def clean_page():
     state = {"running": False, "edited": 0.0}
-    highlight = {"pending": False, "undo": None, "selection": None}
+    # stack: undo entries (newest last) — {"entry": rule journal entry or None,
+    # "before"/"after": chart text, "label"}; collected: selections saved together.
+    highlight = {"pending": False, "stack": [], "selection": None, "collected": []}
     refs: dict = {}          # result widgets (tabs, output box), repopulated by render_results
     inbox = {"items": []}    # rule-inbox suggestions for the current recent charts
     inbox_btn = None         # the "Suggestions" button; built in header_actions
@@ -767,6 +772,22 @@ async def clean_page():
         verb = "Removed" if g["kind"] == "removal" else "Changed"
         with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("change-dialog"):
             ui.label(f"{verb} by {g['stage']}").classes("text-lg font-semibold")
+            learned = None
+            if g["sid"] == "learned_rules":
+                cfg_now = load_config(common.CONFIG_PATH)
+                learned = next((list(p) for p in cfg_now.get("learned_rules") or []
+                                if isinstance(p, (list, tuple)) and p and p[0] == g["rule"]), None)
+            if learned is not None:
+                info = rule_meta.entry(cfg_now, learned[0])
+                ui.label(rule_meta.label(cfg_now, learned)).classes("text-sm font-medium") \
+                    .mark("change-rule-label")
+                bits = [rule_meta.SOURCE_LABELS.get(info.get("source", ""), "")]
+                if info.get("added"):
+                    bits.append("added " + info["added"][:10])
+                if info.get("note"):
+                    bits.append(f"note: {info['note']}")
+                if any(bits):
+                    ui.label(" · ".join(b for b in bits if b)).classes("text-xs opacity-70")
             ui.label(f"Rule: {g['rule'][:300]}").classes("text-xs cc-mono opacity-70 break-all")
             ui.label(f"{g['count']} change(s) in this chart").classes("text-xs opacity-70")
             for before, after in list(zip(g["befores"], g["afters"]))[:6]:
@@ -779,6 +800,11 @@ async def clean_page():
                     ui.button("Never remove this", icon="shield",
                               on_click=lambda: (dlg.close(), asyncio.get_running_loop().create_task(
                                   keep_text(g["sid"], g["befores"][0])))).props("flat")
+                if learned is not None:
+                    ui.button("Pause this rule", icon="pause_circle",
+                              on_click=lambda: (dlg.close(), pause_rule(learned))) \
+                        .props("flat").mark("pause-rule") \
+                        .tooltip("Keep the rule but stop applying it (resume it in My text rules)")
                 if g["sid"] in RULE_LISTS:
                     ui.button("Delete this rule", icon="delete",
                               on_click=lambda: confirm_dialog(
@@ -792,6 +818,18 @@ async def clean_page():
                 ui.button("Close", on_click=dlg.close).props("flat")
         dlg.open()
 
+    def pause_rule(pair: list[str]) -> None:
+        try:
+            cfg = rule_meta.set_enabled(load_config(common.CONFIG_PATH), [pair[0]], False)
+            entry = save_config_with_backup(cfg, source="selection")
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+            return
+        text = input_area.value or ""
+        push_undo(entry, text, text)
+        ui.notify("Rule paused — it stays in My text rules. Clean again to see the difference.",
+                  type="positive")
+
     async def delete_rule(g: dict) -> None:
         key = RULE_LISTS[g["sid"]]
         cfg = load_config(common.CONFIG_PATH)
@@ -801,8 +839,12 @@ async def clean_page():
             ui.notify("That rule changed since this clean; nothing deleted.", type="warning")
             return
         entries.pop(patterns.index(g["rule"]))
-        save_config_with_backup(cfg)
-        ui.notify("Rule deleted (a backup of the previous rules was kept).", type="positive")
+        if key == "learned_rules":
+            cfg = rule_meta.prune(cfg)
+        entry = save_config_with_backup(cfg, source="selection")
+        text = input_area.value or ""
+        push_undo(entry, text, text)
+        ui.notify("Rule deleted (Undo brings it back).", type="positive")
         await run_clean()
 
     # ---- Insights tab ---------------------------------------------------------
@@ -1631,6 +1673,126 @@ async def clean_page():
         if selection:
             open_learn_dialog(selection["text"])
 
+    def save_shape(shape: dict, scope: dict | None = None, note: str | None = None, *,
+                   source: str = "builder", example: str | None = None) -> bool:
+        """Save a rule shape, apply it to the chart on screen, and make it undoable."""
+        if state["running"]:
+            return False
+        before = input_area.value or ""
+        try:
+            pair = rule_shapes.build(shape)
+            literal = shape["kind"] == "text" and not shape["template"]
+            cfg = load_config(common.CONFIG_PATH)
+            cfg, added = rule_meta.add_rule(cfg, pair, shape=None if literal else shape,
+                                            source=source, scope=scope, note=note)
+            entry = save_config_with_backup(cfg, source=source)
+        except Exception as ex:
+            ui.notify(str(ex), type="warning")
+            return False
+        after = rule_builder._apply(cfg, pair, before, scope)[0] if before else before
+        if added and example:
+            remember_rule_example(pair, example, cfg)
+        push_undo(entry, before, after)
+        if after != before:
+            input_area.set_value(after)
+            invalidate_output()
+        hide_selection_bar()
+        highlight_status.set_text(f"Saved: {rule_shapes.describe(shape)}."
+                                  + ("" if added else " (That rule already existed.)"))
+        if added:
+            asyncio.get_running_loop().create_task(report_impact("learned_rules", pair, before))
+        return True
+
+    def sel_line() -> None:
+        """Remove every whole line that contains the selection (now and on every clean)."""
+        selection = current_selection()
+        if not selection:
+            return
+        text = selection["text"].strip()
+        if "\n" in text:
+            ui.notify("Select text on one line, or use Rule… for a block.", type="info")
+            return
+        save_shape(rule_shapes.normalize({"kind": "line", "text": text,
+                                          "case_sensitive": bool(case_check.value)}),
+                   source="selection", example=input_area.value or "")
+
+    def sel_build() -> None:
+        selection = current_selection()
+        if not selection:
+            return
+        open_rule_builder(selection["text"], chart=input_area.value or "",
+                          on_save=lambda shape, scope, note: save_shape(
+                              shape, scope, note, example=selection["text"]))
+
+    def sel_collect() -> None:
+        """Add the selection to the tray; Save all turns the tray into one undoable change."""
+        selection = current_selection()
+        if not selection:
+            return
+        text = selection["text"].strip()
+        if text and text.casefold() not in {t.casefold() for t in highlight["collected"]}:
+            highlight["collected"].append(text)
+        hide_selection_bar()
+        render_tray()
+
+    def render_tray() -> None:
+        tray.clear()
+        items = highlight["collected"]
+        tray.set_visibility(bool(items))
+        if not items:
+            return
+        with tray:
+            ui.icon("inventory_2").classes("opacity-70")
+            ui.label(f"Collected ({len(items)}):").classes("text-xs font-semibold")
+            for i, text in enumerate(items):
+                ui.chip(text[:40] + ("…" if len(text) > 40 else ""), removable=True,
+                        on_value_change=lambda _e, i=i: drop_collected(i)).props("dense outline")
+            ui.button("Remove all", icon="backspace", on_click=save_collected) \
+                .props("flat dense no-caps").mark("tray-save")
+            ui.button("Clear", on_click=lambda: (highlight["collected"].clear(), render_tray())) \
+                .props("flat dense no-caps")
+
+    def drop_collected(index: int) -> None:
+        if 0 <= index < len(highlight["collected"]):
+            del highlight["collected"][index]
+        render_tray()
+
+    def save_collected() -> None:
+        """Save every collected phrase as a removal in one config write (one Undo step)."""
+        from chartcleaner.quick_rules import add_removals
+        phrases = list(highlight["collected"])
+        if not phrases or state["running"]:
+            return
+        before = input_area.value or ""
+        try:
+            cfg, report = add_removals(load_config(common.CONFIG_PATH), phrases,
+                                       whole_words=bool(word_check.value),
+                                       case_sensitive=bool(case_check.value), source="batch")
+            entry = save_config_with_backup(cfg, source="batch") if report.changed else None
+        except Exception as ex:
+            ui.notify(str(ex), type="negative")
+            return
+        after = before
+        for phrase in phrases:
+            pair = make_rule(phrase, case_sensitive=bool(case_check.value),
+                             whole_words=bool(word_check.value))
+            after = rule_builder._apply(cfg, pair, after, None)[0]
+        push_undo(entry, before, after)
+        if after != before:
+            input_area.set_value(after)
+            invalidate_output()
+        highlight["collected"].clear()
+        render_tray()
+        highlight_status.set_text(report.summary("removal"))
+
+    def selection_shortcut(action) -> None:
+        if not highlight.get("selection"):
+            ui.notify("Select some text in the chart first.", type="info")
+            return
+        result = action()
+        if asyncio.iscoroutine(result):
+            asyncio.get_running_loop().create_task(result)
+
     async def sel_keep() -> None:
         selection = current_selection()
         if not selection:
@@ -1641,7 +1803,9 @@ async def clean_page():
             keep = cfg.setdefault("stage_options", {}).setdefault(sid, {}).setdefault("exceptions", [])
             if snippet not in keep:
                 keep.append(snippet)
-        save_config_with_backup(cfg)
+        entry = save_config_with_backup(cfg, source="selection")
+        text = input_area.value or ""
+        push_undo(entry, text, text)
         hide_selection_bar()
         highlight_status.set_text("Saved — rules will never remove text containing this selection.")
 
@@ -1657,24 +1821,18 @@ async def clean_page():
             pair = make_rule(selection["text"], replacement,
                              case_sensitive=case_check.value, whole_words=word_check.value)
             cfg = load_config(common.CONFIG_PATH)
-            rules = cfg.setdefault("learned_rules", [])
-            if any(p[0] == pair[0] and p[1] != pair[1] for p in rules):
-                ui.notify("This text already has a different rule. Edit it in My text rules.",
-                          type="warning")
-                return False
-            added = pair not in rules
             old_enabled = cfg.get("stage_options", {}).get("learned_rules", {}).get("enabled")
-            if added:
-                rules.append(pair)
-            cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})["enabled"] = True
-            save_config_with_backup(cfg)  # validates first
+            try:
+                cfg, added = rule_meta.add_rule(cfg, pair, source="selection")
+            except ValueError as ex:
+                ui.notify(str(ex), type="warning")
+                return False
+            entry = save_config_with_backup(cfg, source="selection")  # validates first
             if added:
                 remember_rule_example(pair, selection["text"], cfg)
-            highlight["undo"] = dict(before=before, after=after, pair=pair, added=added,
-                                     rules=[list(p) for p in rules], old_enabled=old_enabled)
+            push_undo(entry, before, after)
             input_area.set_value(after)
             invalidate_output()
-            undo_btn.enable()
             highlight_status.set_text("Selection updated. Rule saved for future full cleans."
                                       + (" Learned rules enabled." if old_enabled is False else ""))
             if added:
@@ -1720,7 +1878,6 @@ async def clean_page():
             trail = text[len(text.rstrip()):]
             after = replace_selection(before, selection, lead + abbreviation + trail)
             cfg = load_config(common.CONFIG_PATH)
-            old_group = cfg.get("abbreviations")
             old_enabled = cfg.get("stage_options", {}).get("medical_abbreviations", {}).get("enabled")
             cfg = abbreviation_with_custom(cfg, term, abbreviation, acknowledged=acknowledged)
             if old_enabled is False:
@@ -1728,13 +1885,10 @@ async def clean_page():
             errors, _ = validate_config(cfg)
             if errors:
                 raise ValueError(errors[0])
-            save_config_with_backup(cfg)
-            highlight["undo"] = dict(kind="abbreviation", before=before, after=after,
-                                     old_group=old_group, new_group=cfg["abbreviations"],
-                                     old_enabled=old_enabled)
+            entry = save_config_with_backup(cfg, source="selection")
+            push_undo(entry, before, after)
             input_area.set_value(after)
             invalidate_output()
-            undo_btn.enable()
             hide_selection_bar()
             highlight_status.set_text(
                 f"“{term}” → “{abbreviation}” added to your abbreviations."
@@ -1743,18 +1897,6 @@ async def clean_page():
         except Exception as ex:
             ui.notify(str(ex), type="negative")
             return False
-
-    def undo_abbreviation(undo: dict) -> None:
-        cfg = load_config(common.CONFIG_PATH)
-        if cfg.get("abbreviations") != undo["new_group"]:
-            raise ValueError("Abbreviations changed since that edit. Review them in My text rules.")
-        if undo["old_group"] is None:
-            cfg.pop("abbreviations", None)
-        else:
-            cfg["abbreviations"] = undo["old_group"]
-        if undo["old_enabled"] is False:
-            cfg.setdefault("stage_options", {}).setdefault("medical_abbreviations", {})["enabled"] = False
-        save_config_with_backup(cfg)
 
     def open_abbreviate_dialog(selection: dict) -> None:
         term = selection["text"].strip()
@@ -1770,9 +1912,11 @@ async def clean_page():
                 .props("outlined autofocus").classes("w-full")
             issues_box = ui.column().classes("gap-1")
             hits = ui.label("").classes("text-sm opacity-80")
+            reads = ui.label("").classes("text-sm text-orange-700").mark("abbr-read-back")
 
             def sync() -> None:
                 abbr = (abbr_input.value or "").strip()
+                reads.set_text(read_abbreviation_back(term, abbr, cfg)["message"] if abbr else "")
                 if not abbr:
                     issues_box.clear()
                     hits.set_text("")
@@ -1804,15 +1948,39 @@ async def clean_page():
             expanded, n_expanded, _ = expand_abbreviations(term, cfg)
             can_expand = n_expanded == 1 and expanded != term
 
+            def just_here() -> None:
+                """Shorten only this selection; nothing is saved to the dictionary."""
+                abbr = (abbr_input.value or "").strip()
+                if not abbr or abbr == term:
+                    ui.notify("Enter a different, shorter form.", type="warning")
+                    return
+                text = selection["text"]
+                lead = text[:len(text) - len(text.lstrip())]
+                trail = text[len(text.rstrip()):]
+                before = input_area.value or ""
+                try:
+                    after = replace_selection(before, selection, lead + abbr + trail)
+                except ValueError as ex:
+                    ui.notify(str(ex), type="warning")
+                    return
+                push_undo(None, before, after)
+                input_area.set_value(after)
+                invalidate_output()
+                hide_selection_bar()
+                highlight_status.set_text(f"“{term}” → “{abbr}” here only (no rule saved).")
+                dlg.close()
+
             def expand_instead() -> None:
                 text = selection["text"]
                 lead = text[:len(text) - len(text.lstrip())]
                 trail = text[len(text.rstrip()):]
+                before = input_area.value or ""
                 try:
-                    after = replace_selection(input_area.value or "", selection, lead + expanded + trail)
+                    after = replace_selection(before, selection, lead + expanded + trail)
                 except ValueError as ex:
                     ui.notify(str(ex), type="warning")
                     return
+                push_undo(None, before, after)
                 input_area.set_value(after)
                 invalidate_output()
                 hide_selection_bar()
@@ -1823,6 +1991,8 @@ async def clean_page():
                      "(used by Full clean and Abbreviations only).").classes("text-sm opacity-70")
             with ui.row():
                 ui.button("Abbreviate & remember", on_click=save).props("unelevated")
+                ui.button("Just here", on_click=just_here).props("flat").mark("abbr-just-here") \
+                    .tooltip("Shorten only this selection; don't add it to your dictionary")
                 if can_expand:
                     ui.button(f"Expand instead → {expanded}", on_click=expand_instead).props("flat")
                 ui.button("Cancel", on_click=dlg.close).props("flat")
@@ -1849,44 +2019,70 @@ async def clean_page():
         dlg.on("hide", lambda: (highlight.update(pending=False), dlg.delete()))
         dlg.open()
 
-    def undo_highlight() -> None:
-        undo = highlight["undo"]
-        if not undo or state["running"]:
-            return
-        if input_area.value != undo["after"]:
-            ui.notify("The chart changed since that edit. Use My text rules to remove the saved rule.",
-                      type="warning")
-            return
-        if undo.get("kind") == "abbreviation":
-            try:
-                undo_abbreviation(undo)
-                input_area.set_value(undo["before"])
-                invalidate_output()
-                highlight["undo"] = None
-                undo_btn.disable()
-                highlight_status.set_text("Edit undone; your previous abbreviations are restored.")
-            except Exception as ex:
-                ui.notify(str(ex), type="negative")
-            return
-        try:
-            cfg = load_config(common.CONFIG_PATH)
-            if cfg.get("learned_rules", []) != undo["rules"]:
-                raise ValueError("Saved rules changed since that edit. Review them in My text rules.")
-            if undo["added"]:
-                cfg["learned_rules"].remove(undo["pair"])
-            opts = cfg.setdefault("stage_options", {}).setdefault("learned_rules", {})
-            if undo["old_enabled"] is None:
-                opts.pop("enabled", None)
-            else:
-                opts["enabled"] = undo["old_enabled"]
-            save_config_with_backup(cfg)
-            input_area.set_value(undo["before"])
-            invalidate_output()
-            highlight["undo"] = None
+    def push_undo(entry: dict | None, before: str, after: str) -> None:
+        """Remember one Clean-page edit (and the rule change it saved) for Undo."""
+        label = (entry or {}).get("summary") or "Edit to this chart"
+        highlight["stack"].append({"entry": entry, "before": before, "after": after, "label": label})
+        del highlight["stack"][:-UNDO_DEPTH]
+        sync_undo()
+
+    def sync_undo() -> None:
+        stack = highlight["stack"]
+        if stack:
+            undo_btn.enable()
+            undo_tip.set_text(f"Undo: {stack[-1]['label'][:120]}"
+                              + (f" ({len(stack)} step(s) back)" if len(stack) > 1 else ""))
+        else:
             undo_btn.disable()
-            highlight_status.set_text("Edit undone; the previous saved rules are restored.")
+            undo_tip.set_text("Nothing to undo yet")
+
+    def undo_highlight() -> None:
+        """Undo the newest edit: its saved rule change, and the chart text if unchanged since."""
+        if not highlight["stack"] or state["running"]:
+            return
+        item = highlight["stack"].pop()
+        entry = item["entry"]
+        try:
+            if entry is not None:
+                cfg = rule_history.revert(load_config(common.CONFIG_PATH), entry)
+                undone = save_config_with_backup(cfg, source="undo")
+                rule_history.mark_reverted(entry["id"], by=(undone or {}).get("id"))
         except Exception as ex:
+            highlight["stack"].append(item)
             ui.notify(str(ex), type="negative")
+            return
+        if input_area.value == item["after"]:
+            input_area.set_value(item["before"])
+            invalidate_output()
+            highlight_status.set_text("Edit undone; the previous saved rules are restored."
+                                      if entry else "Edit undone.")
+        else:
+            highlight_status.set_text("Rule change undone. The chart text changed since, so it "
+                                      "was left as it is.")
+        sync_undo()
+
+    def open_undo_history() -> None:
+        """The edits Undo can step back through, newest first, plus the full journal link."""
+        with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("undo-history"):
+            ui.label("Undo history").classes("text-lg font-semibold")
+            stack = highlight["stack"]
+            if not stack:
+                ui.label("Nothing to undo on this page yet.").classes("text-sm opacity-70")
+            for depth, item in enumerate(reversed(stack), 1):
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.badge(str(depth)).props("outline")
+                    ui.label(item["label"][:160]).classes("text-sm flex-grow")
+            ui.label("Undo steps back one edit at a time. Every rule change (from any page) is in "
+                     "My text rules → Recent changes, where any one can be undone.") \
+                .classes("text-xs opacity-70")
+            with ui.row():
+                ui.button("Undo newest", icon="undo",
+                          on_click=lambda: (undo_highlight(), dlg.close())).props("flat") \
+                    .bind_enabled_from(undo_btn, "enabled")
+                ui.button("Recent rule changes", icon="history",
+                          on_click=lambda: ui.navigate.to("/rules")).props("flat")
+                ui.button("Close", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def open_learn_dialog(selected: str) -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
@@ -2453,6 +2649,14 @@ async def clean_page():
         ("alt+2", "Review tab", lambda: show_tab(1)),
         ("alt+3", "Insights tab", lambda: show_tab(2)),
         ("alt+a", "Open or close the AI panel", lambda: toggle_ai()),
+        ("alt+shift+r", "Remove the selected chart text", lambda: selection_shortcut(sel_remove)),
+        ("alt+shift+l", "Remove whole lines containing the selection",
+         lambda: selection_shortcut(sel_line)),
+        ("alt+shift+b", "Build a rule from the selection", lambda: selection_shortcut(sel_build)),
+        ("alt+shift+a", "Abbreviate the selection", lambda: selection_shortcut(sel_abbreviate)),
+        ("alt+shift+k", "Never remove the selection", lambda: selection_shortcut(sel_keep)),
+        ("alt+shift+c", "Collect the selection", lambda: selection_shortcut(sel_collect)),
+        ("alt+z", "Undo the last chart edit", lambda: undo_highlight()),
     ]
 
     with ui.right_drawer(value=bool(common.PREFS.get("ai_drawer")), fixed=False) \
@@ -2532,14 +2736,25 @@ async def clean_page():
                     sel_text = ui.label("").classes("text-xs cc-mono max-w-[220px] truncate")
                     ui.button("Remove", icon="backspace", on_click=sel_remove) \
                         .props("flat dense no-caps").mark("sel-remove") \
-                        .tooltip("Remove this selection now and on every future clean")
+                        .tooltip("Remove this selection now and on every future clean (Alt+Shift+R)")
+                    ui.button("Line", icon="horizontal_rule", on_click=sel_line) \
+                        .props("flat dense no-caps").mark("sel-line") \
+                        .tooltip("Remove every whole line containing this (Alt+Shift+L)")
+                    ui.button("Rule…", icon="tune", on_click=sel_build) \
+                        .props("flat dense no-caps").mark("sel-build") \
+                        .tooltip("Build a rule: any date/name, lines starting with, a block, "
+                                 "one section only — with a preview (Alt+Shift+B)")
                     ui.button("Replace…", icon="find_replace", on_click=sel_replace) \
                         .props("flat dense no-caps").mark("sel-replace")
                     ui.button("Abbreviate…", icon="short_text", on_click=sel_abbreviate) \
                         .props("flat dense no-caps").mark("sel-abbreviate")
                     ui.button("Never remove", icon="shield", on_click=sel_keep) \
                         .props("flat dense no-caps").mark("sel-keep") \
-                        .tooltip("Rules will never remove text containing this")
+                        .tooltip("Rules will never remove text containing this (Alt+Shift+K)")
+                    ui.button("Collect", icon="add_to_photos", on_click=sel_collect) \
+                        .props("flat dense no-caps").mark("sel-collect") \
+                        .tooltip("Add to a list and remove them all at once — one Undo step "
+                                 "(Alt+Shift+C)")
                     ui.button("More…", icon="school", on_click=sel_more) \
                         .props("flat dense no-caps").mark("sel-more") \
                         .tooltip("Advanced: remove whole lines, edit the text, check your recent charts")
@@ -2549,6 +2764,9 @@ async def clean_page():
                             case_check = ui.checkbox("Match case", value=False)
                     ui.button(icon="close", on_click=hide_selection_bar).props("flat dense round")
                 sel_bar.set_visibility(False)
+                tray = ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
+                                        "cc-panel").mark("collect-tray")
+                tray.set_visibility(False)
                 with ui.row().classes("w-full items-center gap-2 -mt-1 flex-wrap"):
                     selection_mode = common.PREFS.get("selection_mode")
                     selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
@@ -2563,6 +2781,11 @@ async def clean_page():
                     undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
                         .props("flat dense no-caps")
                     undo_btn.disable()
+                    with undo_btn:
+                        undo_tip = ui.tooltip("Nothing to undo yet")
+                    ui.button(icon="history", on_click=open_undo_history) \
+                        .props("flat dense round aria-label='Undo history'").mark("undo-history-button") \
+                        .tooltip("Undo history")
 
                 if HAS_EX4:
                     # ex4nicegui gives the textarea a reactive value signal; the plain
@@ -2581,6 +2804,19 @@ async def clean_page():
                     input_area.classes(f"cc-mode-{selection_mode}")
                 for event_name in ("mouseup", "keyup", "touchend"):
                     input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
+                with input_area:
+                    # Right-click on a selection: the same actions as the selection bar.
+                    with ui.context_menu().mark("chart-context-menu"):
+                        for label, icon, action, mark in (
+                                ("Remove", "backspace", sel_remove, "remove"),
+                                ("Remove whole line(s)", "horizontal_rule", sel_line, "line"),
+                                ("Replace…", "find_replace", sel_replace, "replace"),
+                                ("Abbreviate…", "short_text", sel_abbreviate, "abbreviate"),
+                                ("Build a rule…", "tune", sel_build, "build"),
+                                ("Never remove", "shield", sel_keep, "keep"),
+                                ("Collect", "add_to_photos", sel_collect, "collect")):
+                            ui.menu_item(label, on_click=lambda a=action: selection_shortcut(a)) \
+                                .props(f"icon={icon}").mark(f"ctx-{mark}")
 
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:

@@ -11,7 +11,13 @@ here, so every path builds the same rules:
 
 :func:`export_text` / :func:`parse_text` round-trip a readable plain-text
 rules file (``# Remove`` / ``# Replace`` / ``# Abbreviations`` sections) that
-is easy to edit by hand and share by email.
+is easy to edit by hand and share by email. Rule shapes (:mod:`rule_shapes`:
+whole lines, line starts, blocks, placeholders), section scopes and paused
+rules round-trip through the ``# [...]`` suffix::
+
+    Printed by  # [line starts with]
+    Signed by {name} on {date}  # [whole line, template]
+    Patient Education  # [until next heading, only in: assessment_and_plan]
 """
 
 from __future__ import annotations
@@ -19,9 +25,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import rule_meta
 from .abbreviation_safety import check, needs_override
 from .abbreviations import normalize_settings
 from .highlight_rules import describe_rule, make_rule
+from .rule_shapes import build as build_shape
+from .rule_shapes import normalize as normalize_shape
 
 # Longest first so "=>" wins over "=" and "->" over "-".
 ABBREVIATION_SEPARATORS = ("=>", "->", "→", "\t", "=")
@@ -143,8 +152,20 @@ class AddReport:
         return ", ".join(parts) + "."
 
 
+def _stamp(cfg: dict, patterns: list[str], source: str | None) -> dict:
+    """Record ``source`` + time for newly added learned rules (Rules page sort/filter)."""
+    import time
+    if not source:
+        return cfg
+    added = time.strftime("%Y-%m-%dT%H:%M:%S")
+    for pattern in patterns:
+        if "source" not in rule_meta.entry(cfg, pattern):
+            cfg = rule_meta.update(cfg, pattern, source=source, added=added)
+    return cfg
+
+
 def add_removals(cfg: dict, phrases: list[str], *, whole_words: bool = True,
-                 case_sensitive: bool = False) -> tuple[dict, AddReport]:
+                 case_sensitive: bool = False, source: str | None = "quick_add") -> tuple[dict, AddReport]:
     """Return a copy of ``cfg`` with a literal remove rule per phrase.
 
     Turns the learned-rules stage on when anything was added. A phrase that
@@ -152,6 +173,7 @@ def add_removals(cfg: dict, phrases: list[str], *, whole_words: bool = True,
     """
     report = AddReport()
     out = dict(cfg)
+    new_patterns: list[str] = []
     rules = [list(p) for p in cfg.get("learned_rules") or []]
     by_pattern = {p[0]: p[1] for p in rules if isinstance(p, list) and len(p) == 2}
     for phrase in phrases:
@@ -162,16 +184,18 @@ def add_removals(cfg: dict, phrases: list[str], *, whole_words: bool = True,
         rules.append(pair)
         by_pattern[pair[0]] = ""
         report.added.append(phrase)
+        new_patterns.append(pair[0])
     out["learned_rules"] = rules
     if report.added:
         options = dict(out.get("stage_options") or {})
         options["learned_rules"] = {**(options.get("learned_rules") or {}), "enabled": True}
         out["stage_options"] = options
-    return out, report
+    return _stamp(out, new_patterns, source), report
 
 
 def add_replacements(cfg: dict, pairs: list[tuple[str, str]], *, whole_words: bool = True,
-                     case_sensitive: bool = False) -> tuple[dict, AddReport]:
+                     case_sensitive: bool = False,
+                     source: str | None = "quick_add") -> tuple[dict, AddReport]:
     """Like :func:`add_removals` for ``(text, replacement)`` pairs; existing
     rules for the same text are updated in place (order is preserved)."""
     report = AddReport()
@@ -191,11 +215,53 @@ def add_replacements(cfg: dict, pairs: list[tuple[str, str]], *, whole_words: bo
         index[pair[0]] = len(rules)
         rules.append(pair)
         report.added.append(text)
+        new_patterns.append(pair[0])
     out["learned_rules"] = rules
     if report.changed:
         options = dict(out.get("stage_options") or {})
         options["learned_rules"] = {**(options.get("learned_rules") or {}), "enabled": True}
         out["stage_options"] = options
+    return _stamp(out, new_patterns, source), report
+
+
+def add_shapes(cfg: dict, items: list[dict], *, source: str | None = "quick_add",
+               update_replacements: bool = True) -> tuple[dict, AddReport]:
+    """Add rule shapes (:mod:`rule_shapes`), each optionally with ``scope`` / ``enabled`` / ``note``.
+
+    A shape whose pattern already has a different replacement is updated
+    (``update_replacements``) or reported as a conflict. Plain literal text
+    shapes build exactly the rule highlighting does, so they merge with it.
+    """
+    report = AddReport()
+    out = cfg
+    for item in items:
+        shape = normalize_shape(item)
+        label = shape["text"]
+        pair = build_shape(shape)
+        rules = [list(p) for p in out.get("learned_rules") or []]
+        current = next((p for p in rules if p[0] == pair[0]), None)
+        literal = shape["kind"] == "text" and not shape["template"]
+        extra = {"shape": None if literal else shape, "scope": item.get("scope") or None,
+                 "note": item.get("note") or None,
+                 "enabled": False if item.get("enabled") is False else True}
+        if current is not None and current[1] == pair[1]:
+            report.existing.append(label)
+            out = rule_meta.update(out, pair[0], **extra)
+            continue
+        if current is not None:
+            if not update_replacements or not pair[1]:
+                report.conflicts.append(label)
+                continue
+            rules[rules.index(current)] = pair
+            out = {**out, "learned_rules": rules}
+            out = rule_meta.update(out, pair[0], **extra)
+            report.updated.append(label)
+            continue
+        out, _ = rule_meta.add_rule(out, pair, shape=None if literal else shape, source=source,
+                                    scope=extra["scope"], note=extra["note"])
+        if extra["enabled"] is False:
+            out = rule_meta.set_enabled(out, [pair[0]], False)
+        report.added.append(label)
     return out, report
 
 
@@ -248,24 +314,55 @@ def current_rules(cfg: dict) -> dict:
     for pair in cfg.get("learned_rules") or []:
         if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
             continue
-        described = describe_rule(list(pair))
+        info = rule_meta.entry(cfg, pair[0])
+        described = None
+        shape = info.get("shape")
+        if isinstance(shape, dict):
+            try:
+                if build_shape(shape) == list(pair):
+                    described = normalize_shape(shape)
+            except ValueError:
+                described = None
+        if described is None:
+            described = describe_rule(list(pair))
+            if described is not None:
+                described = {"kind": "text", "template": False, **described}
         if described is None:
             regex.append(list(pair))
-        elif described["replacement"] == "":
-            remove.append(described)
-        else:
-            replace.append(described)
+            continue
+        described.update(enabled=info.get("enabled", True) is not False, scope=info.get("scope"),
+                         note=info.get("note", ""))
+        (remove if described["replacement"] == "" else replace).append(described)
     group = normalize_settings(cfg.get("abbreviations"))
     return {"remove": remove, "replace": replace, "regex": regex,
             "abbreviations": [c for c in group["custom"] if c.get("enabled", True)]}
 
 
+_KIND_NOTES = {"line": "whole line", "line_start": "line starts with"}
+_STOP_NOTES = {"blank_line": "until blank line", "next_heading": "until next heading"}
+
+
 def _options_note(rule: dict) -> str:
     notes = []
+    kind = rule.get("kind", "text")
+    if kind in _KIND_NOTES:
+        notes.append(_KIND_NOTES[kind])
+    if kind == "until":
+        until = rule.get("until")
+        notes.append(_STOP_NOTES[until] if isinstance(until, str)
+                     else f"until “{until['marker']}”")
+    if rule.get("template"):
+        notes.append("template")
     if rule["case_sensitive"]:
         notes.append("match case")
-    if not rule["whole_words"]:
+    if kind == "text" and not rule["whole_words"]:
         notes.append("inside words")
+    scope = rule.get("scope")
+    if isinstance(scope, dict) and scope.get("mode") in ("only", "except") and scope.get("sections"):
+        notes.append(f"{scope['mode'].replace('except', 'except in').replace('only', 'only in')}: "
+                     + "; ".join(scope["sections"]))
+    if rule.get("enabled") is False:
+        notes.append("paused")
     return f"  # [{', '.join(notes)}]" if notes else ""
 
 
@@ -287,15 +384,38 @@ def export_text(cfg: dict) -> str:
 
 
 _OPTIONS_NOTE = re.compile(r"\s+#\s*\[([^\]]*)\]\s*$")
+_UNTIL_MARKER = re.compile(r"until\s*[“\"](.+?)[”\"]")
 
 
 def _with_options(line: str) -> tuple[str, dict]:
     match = _OPTIONS_NOTE.search(line)
     if not match:
         return line, {"case_sensitive": False, "whole_words": True}
-    notes = {n.strip() for n in match.group(1).split(",")}
-    return line[:match.start()].rstrip(), {"case_sensitive": "match case" in notes,
-                                           "whole_words": "inside words" not in notes}
+    raw = match.group(1)
+    options: dict = {}
+    marker = _UNTIL_MARKER.search(raw)
+    if marker:
+        options.update(kind="until", until={"marker": marker.group(1)})
+        raw = raw[:marker.start()] + raw[marker.end():]
+    notes = {n.strip().casefold() for n in raw.split(",") if n.strip()}
+    for note in notes:
+        if note == "whole line":
+            options["kind"] = "line"
+        elif note == "line starts with":
+            options["kind"] = "line_start"
+        elif note in ("until blank line", "until next heading"):
+            options.update(kind="until", until=note.replace("until ", "").replace(" ", "_"))
+        elif note == "template":
+            options["template"] = True
+        elif note == "paused":
+            options["enabled"] = False
+        elif note.startswith(("only in:", "except in:")):
+            mode, _, names = note.partition(":")
+            sections = [n.strip() for n in names.split(";") if n.strip()]
+            if sections:
+                options["scope"] = {"mode": mode.split()[0], "sections": sections}
+    options.update(case_sensitive="match case" in notes, whole_words="inside words" not in notes)
+    return line[:match.start()].rstrip(), options
 
 
 def parse_text(text: str) -> dict:
@@ -338,21 +458,8 @@ def apply_text(cfg: dict, text: str) -> tuple[dict, dict[str, AddReport], list[s
     """
     parsed = parse_text(text)
     reports: dict[str, AddReport] = {}
-    out = cfg
-    total = AddReport()
-    for item in parsed["remove"]:
-        out, rep = add_removals(out, [item["text"]], whole_words=item["whole_words"],
-                                case_sensitive=item["case_sensitive"])
-        for name in ("added", "existing", "conflicts"):
-            getattr(total, name).extend(getattr(rep, name))
-    reports["remove"] = total
-    total = AddReport()
-    for item in parsed["replace"]:
-        out, rep = add_replacements(out, [(item["text"], item["replacement"])],
-                                    whole_words=item["whole_words"],
-                                    case_sensitive=item["case_sensitive"])
-        for name in ("added", "updated", "existing"):
-            getattr(total, name).extend(getattr(rep, name))
-    reports["replace"] = total
+    out, reports["remove"] = add_shapes(cfg, [{"replacement": "", **item} for item in parsed["remove"]],
+                                        source="import", update_replacements=False)
+    out, reports["replace"] = add_shapes(out, parsed["replace"], source="import")
     out, reports["abbreviations"] = add_abbreviations(out, parsed["abbreviations"])
     return out, reports, parsed["errors"]

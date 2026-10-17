@@ -305,6 +305,16 @@ def preview_import(config: dict, payload: dict, mode: str = "merge") -> dict:
             "enables_learned_rules": bool(incoming) and config.get("stage_options", {}).get("learned_rules", {}).get("enabled") is False}
 
 
+def import_impact(config: dict, payload: dict, texts: list[str], mode: str = "merge") -> dict:
+    """What an import would change on ``texts`` (your recent charts), before applying it.
+
+    ``rule_builder.config_impact`` of the current vs the merged rules: lines
+    changed, samples and clinical values the new rules would delete.
+    """
+    from .rule_builder import config_impact
+    return config_impact(config, apply_import(config, payload, mode), texts)
+
+
 def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
     """Return a changed copy after full validation; input is never mutated."""
     preview_import(config, payload, mode)
@@ -577,6 +587,23 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                         ui.label(f"Known-good charts: {len(impact['changed'])} of {impact['checked']} would "
                                  "change" + (": " + ", ".join(impact["changed"][:5]) if impact["changed"] else "")) \
                             .classes("text-sm " + ("text-orange-700" if impact["changed"] else "text-green-700"))
+                except Exception:
+                    pass  # the preview never blocks an import
+                try:
+                    from . import recent_charts
+                    recent = import_impact(load_current(), pending["payload"], recent_charts.texts(20),
+                                           mode.value)
+                    if recent["charts_checked"]:
+                        ui.label(f"Your recent charts: would change {recent['lines_changed']} line(s) in "
+                                 f"{recent['charts_changed']} of {recent['charts_checked']}.") \
+                            .classes("text-sm").mark("import-impact")
+                        if recent["facts_lost"]:
+                            ui.label("⚠ Would delete clinical values: " + ", ".join(
+                                f["display"] for f in recent["facts_lost"][:6])) \
+                                .classes("text-sm text-orange-700").mark("import-facts-lost")
+                        for smp in recent["samples"][:5]:
+                            ui.label(f"− {smp['before'][:140]}" + (f" → {smp['after'][:60]}" if smp["after"] else "")) \
+                                .classes("text-xs font-mono opacity-80 break-all")
                 except Exception:
                     pass  # the preview never blocks an import
                 ui.label(f"{pending['name']}: {summary['incoming']} rules; {summary['added']} new; {summary['duplicates']} duplicate(s); result {summary['result']}.").classes("text-sm")
