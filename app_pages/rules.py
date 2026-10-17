@@ -17,6 +17,178 @@ def _abbreviation_preview_text() -> str:
         return ""
 
 
+def _report_line(label: str, report) -> str:
+    return f"{label}: {report.summary('rule')}"
+
+
+def render_quick_add(load_current, save_current) -> None:
+    """Plain-text bulk entry: one phrase to remove / one ``term = abbreviation`` per line."""
+    from chartcleaner import quick_rules
+
+    chart = _abbreviation_preview_text()
+
+    def save(updated: dict, message: str) -> bool:
+        try:
+            save_current(updated)  # validates first, keeps a backup
+        except Exception as exc:
+            ui.notify(f"Could not save: {exc}", type="negative")
+            return False
+        ui.notify(message, type="positive", multi_line=True)
+        return True
+
+    ui.label("No regex needed: type or paste one rule per line, check the preview, save. "
+             "Rules apply to every future clean (and the Clean page's Remove text / "
+             "Abbreviate selection modes save the same rules).").classes("text-sm opacity-70")
+    with ui.element("div").classes("grid grid-cols-1 lg:grid-cols-2 gap-4 w-full items-start"):
+        # ---- Remove text ----
+        with ui.card().classes("w-full gap-2").mark("quick-remove"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("backspace").classes("text-red-700")
+                ui.label("Remove text").classes("text-lg font-semibold")
+            remove_box = ui.textarea(
+                "Text to remove — one phrase per line",
+                placeholder="Electronically signed by\nThis note was created using voice recognition\n"
+                            "Please see MAR for details") \
+                .props("outlined autogrow input-style='min-height: 140px'") \
+                .classes("w-full cc-mono").mark("quick-remove-input")
+            with ui.row().classes("items-center gap-4"):
+                whole = ui.checkbox("Whole words only", value=True)
+                case = ui.checkbox("Match case", value=False)
+            remove_preview = ui.column().classes("w-full gap-0")
+
+            def refresh_remove() -> None:
+                phrases = quick_rules.parse_removals(remove_box.value or "")
+                remove_preview.clear()
+                with remove_preview:
+                    if not phrases:
+                        return
+                    rows = quick_rules.preview_removals(chart, phrases, whole_words=bool(whole.value),
+                                                        case_sensitive=bool(case.value))
+                    total = sum(r["hits"] for r in rows)
+                    ui.label(f"{len(phrases)} phrase(s) · {total} match(es) in the current chart") \
+                        .classes("text-xs opacity-70")
+                    for r in rows[:30]:
+                        with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                            ui.label(str(r["hits"])).classes(
+                                "text-xs cc-mono w-8 text-right "
+                                + ("text-green-700" if r["hits"] else "opacity-50"))
+                            ui.label(r["text"]).classes("text-xs cc-mono truncate")
+
+            def save_removals() -> None:
+                phrases = quick_rules.parse_removals(remove_box.value or "")
+                if not phrases:
+                    ui.notify("Type at least one phrase to remove.", type="info")
+                    return
+                updated, report = quick_rules.add_removals(
+                    load_current(), phrases, whole_words=bool(whole.value),
+                    case_sensitive=bool(case.value))
+                if not report.changed:
+                    ui.notify(report.summary("removal"), type="info")
+                    return
+                if save(updated, report.summary("removal")):
+                    remove_box.set_value("")
+
+            for control in (remove_box, whole, case):
+                control.on_value_change(lambda _: refresh_remove())
+            ui.button("Save removals", icon="save", on_click=save_removals) \
+                .props("unelevated no-caps").mark("quick-remove-save")
+
+        # ---- Add abbreviations ----
+        with ui.card().classes("w-full gap-2").mark("quick-abbreviate"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("short_text").classes("text-blue-700")
+                ui.label("Add abbreviations").classes("text-lg font-semibold")
+            abbr_box = ui.textarea(
+                "One per line: full term = abbreviation",
+                placeholder="subarachnoid hemorrhage = SAH\nexternal ventricular drain = EVD\n"
+                            "as needed = PRN") \
+                .props("outlined autogrow input-style='min-height: 140px'") \
+                .classes("w-full cc-mono").mark("quick-abbreviate-input")
+            ui.label("Also accepts =>, -> or a tab (paste two columns from a spreadsheet). "
+                     "Do Not Use abbreviations are skipped.").classes("text-xs opacity-60")
+            abbr_preview = ui.column().classes("w-full gap-0")
+
+            def refresh_abbr() -> None:
+                pairs, errors = quick_rules.parse_abbreviations(abbr_box.value or "")
+                abbr_preview.clear()
+                with abbr_preview:
+                    for error in errors[:5]:
+                        ui.label(error).classes("text-xs text-orange-700")
+                    rows = quick_rules.preview_abbreviations(chart, pairs, load_current())
+                    for r in rows[:30]:
+                        color = {"ok": "text-green-700", "warn": "text-orange-700",
+                                 "blocked": "text-red-700"}[r["status"]]
+                        icon = {"ok": "check", "warn": "warning", "blocked": "block"}[r["status"]]
+                        with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                            ui.icon(icon).classes(f"{color} text-sm")
+                            ui.label(f"{r['term']} → {r['abbreviation']}").classes("text-xs cc-mono")
+                            ui.label(f"{r['hits']} in chart").classes("text-xs opacity-60")
+                        if r["message"]:
+                            ui.label(r["message"]).classes(f"text-xs {color} pl-6")
+
+            def save_abbreviations() -> None:
+                pairs, errors = quick_rules.parse_abbreviations(abbr_box.value or "")
+                if errors:
+                    ui.notify(errors[0], type="warning")
+                    return
+                if not pairs:
+                    ui.notify("Type at least one “term = abbreviation”.", type="info")
+                    return
+                updated, report = quick_rules.add_abbreviations(load_current(), pairs)
+                if not report.changed:
+                    ui.notify(report.summary("abbreviation"), type="warning" if report.blocked else "info")
+                    return
+                if save(updated, report.summary("abbreviation")):
+                    kept = [f"{t} = {a}" for t, a in pairs if t in report.blocked]
+                    abbr_box.set_value("\n".join(kept))
+
+            abbr_box.on_value_change(lambda _: refresh_abbr())
+            ui.button("Save abbreviations", icon="save", on_click=save_abbreviations) \
+                .props("unelevated no-caps").mark("quick-abbreviate-save")
+
+    # ---- plain-text export / import ----
+    with ui.card().classes("w-full gap-2").mark("quick-text-io"):
+        ui.label("Your rules as plain text").classes("text-lg font-semibold")
+        ui.label("Readable lists of what you remove, replace and abbreviate — edit them in any text "
+                 "editor, email them, and import them back here. (Advanced regex rules travel in the "
+                 "JSON export on the Share & import tab.)").classes("text-sm opacity-70")
+        with ui.row().classes("gap-2 flex-wrap items-center"):
+            def download_text() -> None:
+                ui.download.content(quick_rules.export_text(load_current()).encode("utf-8"),
+                                    "chart-cleaner-rules.txt")
+
+            async def copy_text() -> None:
+                text = quick_rules.export_text(load_current())
+                await ui.run_javascript(f"navigator.clipboard.writeText({json.dumps(text)})")
+                ui.notify("Rules copied as plain text.", type="positive")
+
+            ui.button("Download .txt", icon="download", on_click=download_text) \
+                .props("outline no-caps").mark("quick-export-txt")
+            ui.button("Copy", icon="content_copy", on_click=copy_text).props("flat no-caps")
+
+            async def import_text(event) -> None:
+                try:
+                    data = await event.file.read() if hasattr(event, "file") else event.content.read()
+                    updated, reports, errors = quick_rules.apply_text(
+                        load_current(), data.decode("utf-8-sig"))
+                except (UnicodeDecodeError, ValueError) as exc:
+                    ui.notify(f"Could not read the file: {exc}", type="negative")
+                    return
+                if errors:
+                    ui.notify(f"Nothing imported — {errors[0]}", type="warning")
+                    return
+                if not any(r.changed for r in reports.values()):
+                    ui.notify("Every rule in the file is already saved.", type="info")
+                    return
+                save(updated, "\n".join((_report_line("Remove", reports["remove"]),
+                                         _report_line("Replace", reports["replace"]),
+                                         _report_line("Abbreviations", reports["abbreviations"]))))
+
+            ui.upload(label="Import .txt", on_upload=import_text, auto_upload=True) \
+                .props("accept=.txt,text/plain flat bordered dense") \
+                .classes("w-[240px]").mark("quick-import-txt")
+
+
 def text_rules_page():
     from chartcleaner.abbreviation_editor import render as render_abbreviations
     from chartcleaner.learned_editor import render_learned_editor
@@ -107,10 +279,13 @@ def text_rules_page():
         ui.label("Manage what you remove, replace and abbreviate. Changes save immediately.") \
             .classes("cc-page-sub")
         with ui.tabs().classes("w-full") as tabs:
+            quick = ui.tab("Quick add", icon="bolt")
             learned = ui.tab("Remove & replace", icon="find_replace")
             abbreviations = ui.tab("Abbreviations", icon="short_text")
             sharing = ui.tab("Share & import", icon="import_export")
-        with ui.tab_panels(tabs, value=learned).classes("w-full"):
+        with ui.tab_panels(tabs, value=quick).classes("w-full"):
+            with ui.tab_panel(quick):
+                quick_holder = ui.column().classes("w-full")
             with ui.tab_panel(learned):
                 learned_holder = ui.column().classes("w-full")
             with ui.tab_panel(abbreviations):
@@ -120,6 +295,7 @@ def text_rules_page():
 
         def render_tab(name: str) -> None:
             holder, renderer = {
+                "Quick add": (quick_holder, render_quick_add),
                 "Remove & replace": (learned_holder, render_learned_editor),
                 "Abbreviations": (abbreviation_holder, lambda load, save:
                     render_abbreviations(load, save, sample_text=_abbreviation_preview_text)),
@@ -134,6 +310,6 @@ def text_rules_page():
                     render_rule_health(health_holder)
 
         tabs.on_value_change(lambda e: render_tab(e.value))
-        render_tab("Remove & replace")
+        render_tab("Quick add")
         ui.button("Full settings backup", icon="backup",
                   on_click=lambda: ui.navigate.to("/settings")).props("flat")

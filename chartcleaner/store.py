@@ -51,6 +51,7 @@ from .store_prefs import (
     preview_rules_import,
     prune_exports,
     restore_config_backup,
+    RULE_EXPORT_FORMATS,
     rotate_config_backup,
     save_export,
     save_prefs,
@@ -194,6 +195,9 @@ DEFAULT_PREFS = {
     "copy_guard": True,
     "ai_drawer": False,
     "onboarded": False,
+    # Clean page: what selecting chart text does — "ask" shows the selection
+    # bar; "remove" / "abbreviate" act at once (Remove text / Abbreviate modes).
+    "selection_mode": "ask",
 }
 
 DEFAULT_WATCH = {

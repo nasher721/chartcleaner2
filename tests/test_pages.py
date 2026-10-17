@@ -43,7 +43,7 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
     try:
         await user.open('/')
         with user.client:
-            next(iter(user.find(ui.toggle).elements)).set_value('abbreviations')
+            next(iter(user.find(marker="clean-mode").elements)).set_value('abbreviations')
         await user.should_see('Apply abbreviations')
         user.find('Apply abbreviations').click()
         await user.should_see('Abbreviations only — other text and formatting preserved.')
@@ -55,7 +55,7 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
         await user.should_not_see('Summarize')
 
         with user.client:
-            next(iter(user.find(ui.toggle).elements)).set_value('clean')
+            next(iter(user.find(marker="clean-mode").elements)).set_value('clean')
         assert CLEAN_STATE['result'] is None
         assert AUTO_LAST['text'] is None
         assert CLEAN_STATE['input'] == raw
@@ -318,14 +318,14 @@ async def test_expand_mode_and_abbreviations_tab_disable(user: User, monkeypatch
     try:
         await user.open('/')
         with user.client:
-            next(iter(user.find(ui.toggle).elements)).set_value('expand')
+            next(iter(user.find(marker="clean-mode").elements)).set_value('expand')
         user.find(marker='run-clean').click()
         await user.should_see('Abbreviations expanded', retries=50)
         assert CLEAN_STATE['result_text'] == 'Pt with hypertension, MS stable'
         await user.should_see('Choose meanings')
 
         with user.client:
-            next(iter(user.find(ui.toggle).elements)).set_value('abbreviations')
+            next(iter(user.find(marker="clean-mode").elements)).set_value('abbreviations')
         with user.client:
             cc_app.CLEAN_STATE['input'] = 'Hypertension noted'
         await user.open('/')

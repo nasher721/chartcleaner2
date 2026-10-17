@@ -364,50 +364,99 @@ def import_settings(zip_path: str | Path) -> tuple[bool, str]:
     return True, "Imported: " + ", ".join(applied) + "."
 
 
-def export_rules(dest: str | Path | None = None, fmt: str = "json") -> tuple[Path, dict]:
-    """Export learned removal/replacement rules without app state or history."""
-    from .rule_sharing import export_csv, export_json, payload_from_config
+RULE_EXPORT_FORMATS = ("json", "csv", "txt")
 
-    _store().ensure_dirs()
+
+def _current_config() -> dict:
     config = json.loads(_store().CONFIG_PATH.read_text(encoding="utf-8")) if _store().CONFIG_PATH.exists() else {}
     if not isinstance(config, dict):
         raise ValueError("Current config is not an object")
+    return config
+
+
+def export_rules(dest: str | Path | None = None, fmt: str = "json", *,
+                 complete: bool = False) -> tuple[Path, dict]:
+    """Export learned removal/replacement rules without app state or history.
+
+    ``fmt`` is ``json`` (everything, signable), ``csv`` (text rules only) or
+    ``txt`` (plain-text remove / replace / abbreviation lists). ``complete``
+    (JSON only) also exports the built-in stage rule lists and exceptions.
+    """
+    from .quick_rules import export_text
+    from .rule_sharing import export_csv, export_json, payload_from_config
+
+    _store().ensure_dirs()
+    config = _current_config()
     fmt = fmt.lower()
-    if fmt not in {"json", "csv"}:
-        raise ValueError("fmt must be 'json' or 'csv'")
+    if fmt not in RULE_EXPORT_FORMATS:
+        raise ValueError("fmt must be 'json', 'csv' or 'txt'")
     path = Path(dest) if dest is not None else _store().EXPORTS_DIR / (
         f"chart-cleaner-rules-{time.strftime('%Y%m%d-%H%M%S')}.{fmt}")
-    (export_csv if fmt == "csv" else export_json)(config, path)
-    payload = payload_from_config(config)
+    if fmt == "txt":
+        path.write_text(export_text(config), encoding="utf-8")
+    elif fmt == "csv":
+        export_csv(config, path)
+    else:
+        export_json(config, path, complete=complete)
+    payload = payload_from_config(config, complete=complete and fmt == "json")
     return path, {"removals": len(payload["removals"]),
                   "replacements": len(payload["replacements"]),
-                  "abbreviations": len((payload.get("abbreviations") or {}).get("custom", [])) if fmt == "json" else 0}
+                  "abbreviations": len((payload.get("abbreviations") or {}).get("custom", []))
+                  if fmt in ("json", "txt") else 0,
+                  "stage_rules": sum(len(v) for v in (payload.get("stage_rules") or {}).values())}
+
+
+def _read_rules_file(source: str | Path) -> dict:
+    from .rule_sharing import import_csv, import_json
+
+    suffix = Path(source).suffix.lower()
+    return import_csv(source) if suffix == ".csv" else import_json(source)
 
 
 def preview_rules_import(source: str | Path, mode: str = "merge") -> dict:
     """Validate a portable rules file and return counts before applying it."""
-    from .rule_sharing import import_csv, import_json, preview_import
+    from .rule_sharing import preview_import
 
-    config = json.loads(_store().CONFIG_PATH.read_text(encoding="utf-8")) if _store().CONFIG_PATH.exists() else {}
-    suffix = Path(source).suffix.lower()
-    payload = import_csv(source) if suffix == ".csv" else import_json(source)
-    return preview_import(config, payload, mode)
+    return preview_import(_current_config(), _read_rules_file(source), mode)
+
+
+def _import_text_rules(source: str | Path, config: dict) -> tuple[dict, str]:
+    """Merge a plain-text (.txt) rules file; raises ValueError on bad lines."""
+    from .quick_rules import apply_text
+
+    updated, reports, errors = apply_text(config, Path(source).read_text(encoding="utf-8-sig"))
+    if errors:
+        raise ValueError(errors[0])
+    return updated, (f"Imported {len(reports['remove'].added)} removal(s), "
+                     f"{len(reports['replace'].added) + len(reports['replace'].updated)} replacement(s) and "
+                     f"{len(reports['abbreviations'].added) + len(reports['abbreviations'].updated)} "
+                     f"abbreviation(s)" + (f"; {len(reports['abbreviations'].blocked)} Do Not Use "
+                                           "abbreviation(s) skipped" if reports['abbreviations'].blocked else "")
+                     + ".")
 
 
 def import_rules(source: str | Path, mode: str = "merge") -> tuple[bool, str]:
-    """Atomically apply a portable rules file after validation and preview."""
+    """Atomically apply a portable rules file after validation and preview.
+
+    ``.txt`` files (plain-text lists) always merge.
+    """
     from .engine import save_config
-    from .rule_sharing import apply_import, import_csv, import_json
+    from .rule_sharing import apply_import, preview_import
 
     try:
         if mode not in {"merge", "replace"}:
             return False, "mode must be 'merge' or 'replace'"
-        config = json.loads(_store().CONFIG_PATH.read_text(encoding="utf-8")) if _store().CONFIG_PATH.exists() else {}
-        if not isinstance(config, dict):
+        try:
+            config = _current_config()
+        except ValueError:
             return False, "Current config is not an object — nothing was changed."
-        suffix = Path(source).suffix.lower()
-        payload = import_csv(source) if suffix == ".csv" else import_json(source)
-        updated = apply_import(config, payload, mode)
+        if Path(source).suffix.lower() == ".txt":
+            updated, message = _import_text_rules(source, config)
+            payload = None
+        else:
+            payload = _read_rules_file(source)
+            preview = preview_import(config, payload, mode)
+            updated = apply_import(config, payload, mode)
         from .engine import validate_config
         errors, _ = validate_config(updated)
         if errors:
@@ -415,9 +464,13 @@ def import_rules(source: str | Path, mode: str = "merge") -> tuple[bool, str]:
         rotate_config_backup()
         _store().ensure_dirs()
         save_config(updated, _store().CONFIG_PATH)
+        if payload is None:
+            return True, message
         added = len(updated.get("learned_rules", [])) - len(config.get("learned_rules", []))
+        extra = preview["stage_rules_added"] + preview["exceptions_added"]
         return True, f"Imported {len(payload.get('removals', []))} removal(s) and " \
                      f"{len(payload.get('replacements', []))} replacement(s) " \
+                     + (f"plus {extra} new built-in stage rule(s)/exception(s) " if extra else "") + \
                      f"({mode}; net rule change {added:+d})."
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return False, f"Could not import rules — nothing was changed: {exc}"
