@@ -69,6 +69,7 @@ from chartcleaner.abbreviations import lookup as lookup_abbreviation
 from chartcleaner.abbreviations import meanings as abbreviation_meanings
 from chartcleaner.abbreviations import normalize_settings as normalize_abbreviation_settings
 from chartcleaner.abbreviations import preview as abbreviation_preview
+from chartcleaner.abbreviations import read_back as read_abbreviation_back
 from chartcleaner.abbreviations import suggest as suggest_abbreviation
 from chartcleaner.abbreviations import with_custom as abbreviation_with_custom
 from chartcleaner.highlight_rules import SELECTION_HANDLER, make_rule, replace_selection
@@ -200,10 +201,11 @@ def remember_rule_example(pair: list[str], text: str, cfg: dict) -> None:
         pass  # an example is a safety net; never block saving the rule itself
 
 
-def save_config_with_backup(cfg: dict, source: str = "app") -> None:
+def save_config_with_backup(cfg: dict, source: str = "app") -> dict | None:
     """Validate, keep the previous config, then atomically save changes.
 
-    ``source`` labels the change in the rule journal (Rules → Recent changes)."""
+    ``source`` labels the change in the rule journal (Rules → Recent changes);
+    the journal entry is returned so a caller can offer to undo it."""
     errors, _ = validate_config(cfg)
     if errors:
         raise ConfigError(errors[0])
@@ -211,7 +213,7 @@ def save_config_with_backup(cfg: dict, source: str = "app") -> None:
         store.rotate_config_backup()
     except Exception:
         pass  # backups must never block a save
-    save_config(cfg, CONFIG_PATH, source=source)
+    return save_config(cfg, CONFIG_PATH, source=source)
 
 
 def report_error(title: str, exc: Exception) -> None:

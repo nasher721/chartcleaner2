@@ -24,11 +24,29 @@ import time
 
 from .stage_core import rule_id
 
-__all__ = ["FIELDS", "SOURCES", "active", "add_rule", "entry", "is_enabled", "meta_map",
-           "prune", "set_enabled", "update"]
+__all__ = ["FIELDS", "SOURCES", "SOURCE_LABELS", "active", "add_rule", "describe_pair", "entry",
+           "is_enabled", "label", "meta_map", "prune", "set_enabled", "update"]
 
 FIELDS = ("shape", "enabled", "archived", "scope", "note", "tags", "source", "added")
 SOURCES = ("selection", "quick_add", "builder", "inbox", "import", "editor", "cli", "api")
+SOURCE_LABELS = {"selection": "Highlighted on Clean", "quick_add": "Quick add", "builder": "Rule builder",
+                 "inbox": "Suggestion", "import": "Imported", "editor": "Rules page", "cli": "Command line",
+                 "api": "Integration", "batch": "Collected selections"}
+
+
+def describe_pair(pair: list[str], meta: dict | None = None) -> str:
+    """A readable sentence for a learned rule (its shape, a literal, or the regex)."""
+    from .highlight_rules import describe_rule
+    from .rule_shapes import describe
+    shape = (meta or {}).get("shape")
+    if isinstance(shape, dict):
+        return describe(shape)
+    literal = describe_rule(list(pair))
+    if literal:
+        text = f"“{literal['text'][:60]}”"
+        return f"Replace {text} with “{literal['replacement'][:40]}”" if literal["replacement"] \
+            else f"Remove {text}"
+    return f"Regex {pair[0][:60]}"
 
 
 def _options(cfg: dict) -> dict:
@@ -46,6 +64,11 @@ def entry(cfg: dict, pattern: str) -> dict:
     """The settings for ``pattern`` (an empty dict when it has none)."""
     found = meta_map(cfg).get(rule_id(pattern))
     return dict(found) if isinstance(found, dict) else {}
+
+
+def label(cfg: dict, pair: list[str]) -> str:
+    """:func:`describe_pair` using the settings saved for ``pair`` in ``cfg``."""
+    return describe_pair(pair, entry(cfg, pair[0]))
 
 
 def is_enabled(cfg: dict, pattern: str) -> bool:

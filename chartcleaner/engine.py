@@ -245,11 +245,12 @@ def load_config(path: str | Path) -> dict:
     return cfg
 
 
-def save_config(config: dict, path: str | Path, *, source: str | None = None) -> None:
+def save_config(config: dict, path: str | Path, *, source: str | None = None) -> dict | None:
     """Atomically write config, keeping a one-generation .bak beside it.
 
     Rule changes against the previous file are journaled (:mod:`rule_history`,
-    ``source`` says who made them) so each can be undone on its own later.
+    ``source`` says who made them) so each can be undone on its own later; the
+    journal entry is returned (``None`` when no rule changed).
     """
     path = Path(path)
     previous = None
@@ -266,17 +267,15 @@ def save_config(config: dict, path: str | Path, *, source: str | None = None) ->
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    if previous is not None:
-        _journal_rules(previous, config, source)
+    return _journal_rules(previous, config, source) if previous is not None else None
 
 
-def _journal_rules(previous: str, config: dict, source: str | None) -> None:
+def _journal_rules(previous: str, config: dict, source: str | None) -> dict | None:
     try:
         from . import rule_history
-        old = json.loads(previous)
-        rule_history.record(old, config, source)
+        return rule_history.record(json.loads(previous), config, source)
     except Exception:
-        pass  # the journal is an undo aid; it must never break a save
+        return None  # the journal is an undo aid; it must never break a save
 
 
 def load_default_config() -> dict:

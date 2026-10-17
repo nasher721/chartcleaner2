@@ -91,6 +91,7 @@ def diff(old: dict, new: dict) -> list[dict]:
             changes.append({"kind": "meta", "id": rid, "before": copy.deepcopy(mb.get(rid)),
                             "after": copy.deepcopy(ma.get(rid))})
     (cb, db), (ca, da) = _abbr(old), _abbr(new)
+    abbr_changes_from = len(changes)
     for key in sorted(set(cb) | set(ca)):
         if cb.get(key) != ca.get(key):
             changes.append({"kind": "abbreviation", "term": (ca.get(key) or cb.get(key))["term"],
@@ -101,6 +102,9 @@ def diff(old: dict, new: dict) -> list[dict]:
     for term in da:
         if term not in db:
             changes.append({"kind": "abbr_disabled", "op": "add", "term": term})
+    if len(changes) > abbr_changes_from and "abbreviations" not in (old or {}):
+        # undone last (revert walks backwards): drops the group it created
+        changes.insert(abbr_changes_from, {"kind": "abbr_group", "before": None})
     for sid in EXCEPTION_STAGES:
         eb, ea = _exceptions(old, sid), _exceptions(new, sid)
         for text in eb:
@@ -120,17 +124,8 @@ def diff(old: dict, new: dict) -> list[dict]:
 # ---- describing ----------------------------------------------------------------
 
 def _rule_label(pair: list[str], meta: dict | None = None) -> str:
-    from .highlight_rules import describe_rule
-    from .rule_shapes import describe
-    shape = (meta or {}).get("shape")
-    if isinstance(shape, dict):
-        return describe(shape)
-    literal = describe_rule(list(pair))
-    if literal:
-        text = f"“{literal['text'][:60]}”"
-        return f"Replace {text} with “{literal['replacement'][:40]}”" if literal["replacement"] \
-            else f"Remove {text}"
-    return f"Regex {pair[0][:60]}"
+    from .rule_meta import describe_pair
+    return describe_pair(pair, meta)
 
 
 def summarize(changes: list[dict], new_meta: dict | None = None) -> str:
@@ -302,6 +297,10 @@ def revert(cfg: dict, entry: dict) -> dict:
             _set_opt(out, c["sid"], "exceptions", keep)
         elif kind == "stage":
             _set_opt(out, c["sid"], "enabled", c["before"])
+        elif kind == "abbr_group":
+            group = out.get("abbreviations")
+            if isinstance(group, dict) and not group.get("custom") and not group.get("disabled"):
+                out.pop("abbreviations", None)
     if "learned_rules" in out:
         from .rule_meta import prune
         out = prune(out)

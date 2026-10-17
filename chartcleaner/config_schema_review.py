@@ -37,6 +37,10 @@ class ReviewSchemaMixin:
                     or not all(isinstance(x, str) for x in scope.get("sections", []))):
                 self.errors.append('abbreviations.scope: must be {"mode": "all"|"only"|"except", '
                                    '"sections": [names]}')
+        if "level" in group:
+            from .abbreviations import LEVELS
+            if group["level"] not in LEVELS:
+                self.errors.append("abbreviations.level: must be " + ", ".join(f'"{x}"' for x in LEVELS))
         prefer = group.get("expand_prefer", {})
         if not isinstance(prefer, dict) or not all(
                 isinstance(k, str) and isinstance(v, str) and v.strip() for k, v in prefer.items()):

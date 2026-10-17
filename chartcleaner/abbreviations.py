@@ -156,6 +156,8 @@ def normalize_settings(group: dict | None) -> dict:
             custom.append(entry)
             seen.add(term.casefold())
     out: dict[str, Any] = {"disabled": disabled, "custom": custom}
+    if group.get("level") in LEVELS and group["level"] != "standard":
+        out["level"] = group["level"]
     scope = _normalize_scope(group.get("scope"))
     if scope:
         out["scope"] = scope
@@ -174,6 +176,42 @@ def normalize_settings(group: dict | None) -> dict:
 
 
 SCOPE_MODES = ("all", "only", "except")
+# How much of the bundled dictionary shortens text (``abbreviations.level``):
+# everything (standard), only unambiguous capitalized acronyms like HTN or CKD
+# (conservative), or nothing but your own entries (custom_only).
+LEVELS = ("standard", "conservative", "custom_only")
+LEVEL_LABELS = {"standard": "Standard — the whole dictionary",
+                "conservative": "Conservative — only clear acronyms (HTN, CKD, SAH)",
+                "custom_only": "Mine only — just the abbreviations I added"}
+
+
+def _level(cfg: dict | None) -> str:
+    group = cfg.get("abbreviations") if isinstance(cfg, dict) else None
+    level = group.get("level") if isinstance(group, dict) else None
+    return level if level in LEVELS else "standard"
+
+
+@lru_cache(maxsize=1)
+def _ambiguous_abbreviations() -> frozenset[str]:
+    """Bundled abbreviations with more than one distinct meaning."""
+    found: dict[str, list[str]] = {}
+    for row in _source_rows():
+        abbr, term = row["Abbreviation"].strip(), row["Expanded version"].strip()
+        if not abbr or not term or "not expanded in source" in term.casefold():
+            continue
+        meaning = display_term(term)
+        seen = found.setdefault(abbr, [])
+        if not any(_same_meaning(meaning, other) for other in seen):
+            seen.append(meaning)
+    return frozenset(a for a, seen in found.items() if len(seen) > 1)
+
+
+def _conservative(abbreviation: str) -> bool:
+    """A clear acronym: 2+ characters, capitalized, one meaning in the dictionary."""
+    base = abbreviation.split(" (", 1)[0]
+    return (len(base) >= 2 and any(c.isupper() for c in base)
+            and sum(c.isupper() for c in base) >= sum(c.islower() for c in base)
+            and base not in _ambiguous_abbreviations())
 
 
 def _normalize_scope(scope: Any) -> dict | None:
@@ -232,6 +270,7 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
     options = json.loads(settings) if settings else {"disabled": [], "custom": []}
     disabled = set(options.get("disabled", []))
     custom = options.get("custom", [])
+    level = options.get("level", "standard")
     rows = _source_rows()
 
     # Exact source cells win over any aliases derived below, including aliases
@@ -266,6 +305,11 @@ def _matcher(settings: str = "") -> tuple[re.Pattern[str], dict[str, str | None]
             if key and key not in by_term:
                 by_term[key] = None if blocked else replacement
             aliases_by_source.setdefault(expanded.casefold(), set()).add(key)
+
+    if level == "custom_only":
+        by_term = {}
+    elif level == "conservative":
+        by_term = {k: (v if v is not None and _conservative(v) else None) for k, v in by_term.items()}
 
     for source in disabled:
         for alias in aliases_by_source.get(source, {source}):
@@ -322,7 +366,11 @@ def _abbreviate_span(segment: str, cfg: dict | None, changes: list[dict] | None,
     """
     full = segment if full is None else full
     disabled, custom = _settings(cfg)
-    settings = json.dumps({"disabled": sorted(disabled), "custom": custom}, sort_keys=True, ensure_ascii=False)
+    options: dict[str, Any] = {"disabled": sorted(disabled), "custom": custom}
+    level = _level(cfg)
+    if level != "standard":
+        options["level"] = level  # the default keeps the cache key it always had
+    settings = json.dumps(options, sort_keys=True, ensure_ascii=False)
     pattern, replacements, row_count, custom_groups, group_terms = _matcher(settings)
     counts: dict[str, int] = {}
     lines = LineCounter(full)
@@ -572,6 +620,26 @@ def meanings(abbreviation: str) -> list[str]:
     return found
 
 
+def read_back(term: str, abbreviation: str, cfg: dict | None = None) -> dict:
+    """How ``abbreviation`` reads back *without* a custom entry for ``term``.
+
+    ``others``: the dictionary's other meanings of it (a reader — or Expand —
+    may take it that way); ``expands_to``: what Expand turns it into today when
+    that isn't ``term``. Both empty means the abbreviation reads back cleanly.
+    """
+    wanted = display_term(term.strip())
+    others = [m for m in meanings(abbreviation) if not _same_meaning(m, wanted)]
+    expanded, n, _details = expand(abbreviation, cfg)
+    today = expanded if n and not _same_meaning(expanded, wanted) else None
+    message = ""
+    if others:
+        shown = ", ".join(others[:4]) + (f" and {len(others) - 4} more" if len(others) > 4 else "")
+        message = f"In the dictionary “{abbreviation}” also means {shown} — a reader may take it that way."
+    elif today:
+        message = f"Expand mode reads “{abbreviation}” as “{today}” today."
+    return {"others": others, "expands_to": today, "message": message}
+
+
 def _shouting(text: str, start: int, end: int, known: dict) -> bool:
     """True when the rest of the line is mostly upper-case words (abbreviations
     themselves don't count, so "Pt w/ HTN s/p CABG" is not shouting)."""
@@ -630,5 +698,5 @@ def expand(text: str, cfg: dict | None = None,
     return result, sum(counts.values()), details
 
 
-__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "SCOPE_MODES", "abbreviate", "display_term", "expand",
-           "lookup", "meanings", "normalize_settings", "preview", "scoped_spans", "suggest", "with_custom"]
+__all__ = ["SOURCE_PATH", "SOURCE_ROW_COUNT", "SCOPE_MODES", "LEVELS", "LEVEL_LABELS", "abbreviate", "display_term", "expand",
+           "lookup", "meanings", "normalize_settings", "preview", "read_back", "scoped_spans", "suggest", "with_custom"]

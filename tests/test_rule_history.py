@@ -96,7 +96,7 @@ def test_abbreviations_and_exceptions(path):
     assert "Turned off 1 abbreviation(s)" in entry["summary"]
     assert "Never remove “keep me”" in entry["summary"]
     out = rule_history.revert(load_config(path), entry)
-    assert out["abbreviations"]["custom"] == [] and out["abbreviations"]["disabled"] == []
+    assert "abbreviations" not in out  # the edit created the group, so undo drops it
     assert out["stage_options"]["boilerplate"]["exceptions"] == []
 
 
@@ -140,3 +140,13 @@ def test_a_broken_journal_never_blocks_saving(path, monkeypatch):
     monkeypatch.setattr(rule_history, "record", lambda *a, **k: 1 / 0)
     _save(path, lambda c: c["learned_rules"].append(make_rule("x")))
     assert load_config(path)["learned_rules"] == [make_rule("x")]
+
+
+def test_undoing_the_first_abbreviation_drops_the_group(path):
+    cfg = load_config(path)
+    cfg.pop("abbreviations", None)
+    save_config(cfg, path)
+    entry = save_config({**cfg, "abbreviations": {"custom": [{"term": "x y", "replacement": "XY"}]}},
+                        path, source="selection")
+    assert entry is not None and entry["source"] == "selection"
+    assert "abbreviations" not in rule_history.revert(load_config(path), entry)
