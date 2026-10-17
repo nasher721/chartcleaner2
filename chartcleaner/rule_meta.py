@@ -25,7 +25,7 @@ import time
 from .stage_core import rule_id
 
 __all__ = ["FIELDS", "SOURCES", "SOURCE_LABELS", "active", "add_rule", "describe_pair", "entry",
-           "is_enabled", "label", "meta_map", "prune", "set_enabled", "update"]
+           "is_enabled", "label", "meta_map", "prune", "replace", "set_enabled", "update"]
 
 FIELDS = ("shape", "enabled", "archived", "scope", "note", "tags", "source", "added")
 SOURCES = ("selection", "quick_add", "builder", "inbox", "import", "editor", "cli", "api")
@@ -187,3 +187,23 @@ def add_rule(cfg: dict, pair: list[str], *, shape: dict | None = None, source: s
         fields["added"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     out = update(out, pair[0], **fields)
     return out, added
+
+
+def replace(cfg: dict, old_pattern: str, pair: list[str], **fields) -> dict:
+    """Swap the rule ``old_pattern`` for ``pair`` in place, carrying its settings over.
+
+    ``fields`` (e.g. a new ``shape`` or ``scope``) override the carried settings;
+    ``ValueError`` when ``old_pattern`` is gone or ``pair`` already exists.
+    """
+    rules = _pairs(cfg)
+    index = next((i for i, p in enumerate(rules) if p[0] == old_pattern), None)
+    if index is None:
+        raise ValueError("The rule list changed; reopen this rule and try again.")
+    if any(p == list(pair) for i, p in enumerate(rules) if i != index):
+        raise ValueError("That exact rule already exists.")
+    carried = entry(cfg, old_pattern)
+    rules[index] = list(pair)
+    out = prune({**cfg, "learned_rules": rules})
+    merged = {**carried, **fields}
+    merged = {k: v for k, v in merged.items() if k in FIELDS}
+    return update(out, pair[0], **merged) if merged else out

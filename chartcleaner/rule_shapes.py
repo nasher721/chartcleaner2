@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from .regex_risk import risks as regex_risks
 
 __all__ = ["KINDS", "PLACEHOLDERS", "STOPS", "Candidate", "build", "describe", "generalize",
-           "normalize", "placeholders_in", "template_regex"]
+           "generalized_text", "normalize", "placeholders_in", "template_regex"]
 
 KINDS = ("text", "line", "line_start", "until")
 STOPS = ("blank_line", "next_heading")
@@ -214,7 +214,8 @@ def _replace_names(text: str) -> str:
     return _NAME.sub(repl, text)
 
 
-def _generalized_text(text: str, *, names: bool) -> str:
+def generalized_text(text: str, *, names: bool = True) -> str:
+    """``text`` with its dates, times, numbers (and names) as ``{placeholders}``."""
     out = _DATE.sub("{date}", text)
     out = _TIME.sub("{time}", out)
     out = _NUMBER.sub("{number}", out)
@@ -251,11 +252,11 @@ def generalize(text: str, *, case_sensitive: bool = False) -> list[Candidate]:
     add({"kind": "text", "text": snippet}, "Exactly this text")
     if one_line:
         add({"kind": "line", "text": snippet}, "Any line containing this text")
-    numbers = _generalized_text(snippet, names=False)
+    numbers = generalized_text(snippet, names=False)
     if numbers != snippet and one_line:
         add({"kind": "line", "text": numbers, "template": True},
             "Lines like this with any date, time or number")
-    named = _generalized_text(snippet, names=True)
+    named = generalized_text(snippet, names=True)
     if named not in (snippet, numbers) and one_line:
         add({"kind": "line", "text": named, "template": True},
             "Lines like this with any name, date, time or number")

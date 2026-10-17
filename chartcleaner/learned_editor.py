@@ -14,6 +14,7 @@ from typing import Any
 
 from nicegui import ui
 
+from . import rule_catalog, rule_examples, rule_meta
 from .engine import validate_config
 from .highlight_rules import describe_rule, make_rule
 
@@ -63,23 +64,37 @@ def _current_index(pairs: list[list[str]], original_index: int, target: list[str
         return None
 
 
-def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver):
+def _default_runs() -> list[dict]:
+    try:
+        from . import store
+        return store.load_runs()
+    except Exception:
+        return []
+
+
+def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver, *,
+                          load_runs: Callable[[], list[dict]] | None = None,
+                          open_builder: Callable[[dict, Callable], Any] | None = None):
     """Render the learned-rule editor and return its root NiceGUI element.
 
     ``load_current`` is called for every mutation.  This matters when another
     page changes settings while the editor is open: the editor never writes a
     stale snapshot over those changes.  ``save_current`` owns atomic writing
-    and backup creation.
+    and backup creation. ``load_runs`` (run history, for hits / last use) and
+    ``open_builder(row, on_save)`` (edit a shaped rule in the rule builder) are
+    optional.
     """
+    load_runs = load_runs or _default_runs
     with ui.column().classes("w-full max-w-5xl gap-3") as root:
         ui.label("Learned rules").classes("text-2xl font-semibold")
         ui.label(
             "Rules learned from highlighted text run on every future Clean. "
-            "New rules use literal matching; existing regex rules stay unchanged."
+            "Pause a rule to keep it without applying it; every change can be undone "
+            "under Recent changes."
         ).classes("text-sm opacity-70")
 
         with ui.row().classes("w-full items-end gap-2"):
-            search = ui.input("Search rules", placeholder="text or replacement").props(
+            search = ui.input("Search rules", placeholder="text, replacement, note or tag").props(
                 "outlined dense clearable"
             ).classes("grow")
             filter_select = ui.select(
@@ -87,7 +102,17 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
                 value="all",
                 label="Show",
             ).props("outlined dense")
+            sort_select = ui.select(rule_catalog.SORTS, value="order", label="Sort") \
+                .props("outlined dense").mark("rules-sort")
+            source_select = ui.select({"all": "Any source", **rule_meta.SOURCE_LABELS}, value="all",
+                                      label="Source").props("outlined dense").mark("rules-source")
+            status_select = ui.select({"all": "Any status", "paused": "Paused",
+                                       "never matched": "Never matched", "very broad": "Very broad",
+                                       "slow": "Slow", "ok": "Working"},
+                                      value="all", label="Status").props("outlined dense") \
+                .mark("rules-status")
             add_button = ui.button("Add rule", icon="add").props("unelevated color=primary")
+        tools = ui.row().classes("w-full items-center gap-2")
 
         list_box = ui.column().classes("w-full gap-2")
 
@@ -172,7 +197,8 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
                     if target_index is None:
                         ui.notify("The rule list changed; reopen this dialog and try again.", type="warning")
                         return
-                    current[target_index] = pair
+                    fresh = rule_meta.replace(fresh, current[target_index][0], pair, shape=None)
+                    current = _pairs(fresh)
                 fresh["learned_rules"] = current
                 enabled = _ensure_enabled(fresh)
                 try:
@@ -213,6 +239,7 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
                     return
                 del current[target_index]
                 fresh["learned_rules"] = current
+                fresh = rule_meta.prune(fresh)
                 try:
                     ok, error = _save(fresh, save_current)
                 except Exception as exc:
@@ -230,23 +257,181 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
                 ui.button("Cancel", on_click=dialog.close).props("flat")
         dialog.open()
 
+    def save_or_warn(fresh: dict, message: str) -> bool:
+        try:
+            ok, error = _save(fresh, save_current)
+        except Exception as exc:
+            ui.notify(f"Could not save: {exc}", type="negative")
+            return False
+        if not ok:
+            ui.notify(f"Cannot save: {error}", type="negative")
+            return False
+        ui.notify(message, type="positive")
+        render_list()
+        return True
+
+    def toggle(row: dict) -> None:
+        fresh = load_current()
+        if row["pattern"] not in [p[0] for p in _pairs(fresh)]:
+            ui.notify("The rule list changed; nothing was changed.", type="warning")
+            return
+        enable = not rule_meta.is_enabled(fresh, row["pattern"])
+        fresh = rule_meta.set_enabled(fresh, [row["pattern"]], enable)
+        save_or_warn(fresh, "Rule resumed." if enable else "Rule paused — kept, but not applied.")
+
+    def set_stage(enabled: bool) -> None:
+        fresh = load_current()
+        fresh.setdefault("stage_options", {}).setdefault("learned_rules", {})["enabled"] = enabled
+        save_or_warn(fresh, "Learned rules are on." if enabled else
+                     "All learned rules paused — turn them back on here any time.")
+
+    def details_dialog(row: dict) -> None:
+        """Note, tags and lines this rule must never change."""
+        with ui.context.client.content, ui.dialog() as dialog, \
+                ui.card().classes("w-full max-w-xl gap-3").mark("rule-details"):
+            ui.label("Rule details").classes("text-lg font-semibold")
+            ui.label(row["label"]).classes("text-sm")
+            note = ui.input("Note", value=row["note"]).props("outlined dense").classes("w-full")
+            tags = ui.input("Tags (comma-separated)", value=", ".join(row["tags"])) \
+                .props("outlined dense").classes("w-full")
+            ui.label("Lines this rule must never change — checked by Settings → Check my "
+                     "learned rules after every rule change.").classes("text-xs opacity-70")
+            keeps = [ex for ex in rule_examples.for_rule(row["pattern"]) if ex.get("kind") == "keep"]
+            keep_box = ui.column().classes("w-full gap-1")
+
+            def render_keeps() -> None:
+                keep_box.clear()
+                with keep_box:
+                    for ex in keeps:
+                        with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                            ui.label(ex["text"][:160]).classes("text-xs font-mono flex-grow break-all")
+                            ui.button(icon="close", on_click=lambda t=ex["text"]: drop_keep(t)) \
+                                .props("flat dense round aria-label='Remove example'")
+
+            def drop_keep(text: str) -> None:
+                rule_examples.forget(row["pattern"], text)
+                keeps[:] = [ex for ex in keeps if ex["text"] != text]
+                render_keeps()
+
+            keep_in = ui.input("Add a line it must keep").props("outlined dense").classes("w-full") \
+                .mark("keep-example-input")
+
+            def add_keep() -> None:
+                text = (keep_in.value or "").strip()
+                if not text:
+                    return
+                import re
+                try:
+                    if re.sub(row["pattern"], row["replacement"], text, flags=re.IGNORECASE) != text:
+                        ui.notify("This rule already changes that line — edit the rule first.",
+                                  type="warning")
+                        return
+                except re.error:
+                    pass
+                keeps.append(rule_examples.record_keep(row["pair"], text))
+                keep_in.set_value("")
+                render_keeps()
+
+            keep_in.on("keydown.enter", add_keep)
+            render_keeps()
+
+            def commit() -> None:
+                fresh = load_current()
+                if row["pattern"] not in [p[0] for p in _pairs(fresh)]:
+                    ui.notify("The rule list changed; reopen this rule.", type="warning")
+                    return
+                tag_list = [t.strip() for t in (tags.value or "").split(",") if t.strip()]
+                fresh = rule_meta.update(fresh, row["pattern"], note=(note.value or "").strip() or None,
+                                         tags=tag_list or None)
+                if save_or_warn(fresh, "Rule details saved."):
+                    dialog.close()
+
+            with ui.row().classes("justify-end gap-2"):
+                ui.button("Add line", icon="add", on_click=add_keep).props("flat")
+                ui.button("Save", icon="save", on_click=commit).props("unelevated color=primary") \
+                    .mark("rule-details-save")
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+        dialog.open()
+
+    def edit_row(row: dict) -> None:
+        shaped = isinstance(rule_meta.entry(load_current(), row["pattern"]).get("shape"), dict)
+        if shaped and open_builder is not None:
+            def on_save(shape, scope, note) -> bool:
+                from .rule_shapes import build
+                fresh = load_current()
+                try:
+                    fresh = rule_meta.replace(fresh, row["pattern"], build(shape), shape=shape,
+                                              scope=scope, note=note)
+                except ValueError as exc:
+                    ui.notify(str(exc), type="warning")
+                    return False
+                return save_or_warn(fresh, "Rule updated.")
+            open_builder(row, on_save)
+        else:
+            edit_dialog(row["index"])
+
+    def archive_unused() -> None:
+        fresh, dead = rule_catalog.archive_unused(load_current(), load_runs())
+        if not dead:
+            ui.notify("Every rule has matched recently — nothing to clean up.", type="info")
+            return
+        save_or_warn(fresh, f"Paused {len(dead)} rule(s) that never matched (marked archived; "
+                     "resume any of them here).")
+
+    def merge_dialog() -> None:
+        suggestions = rule_catalog.merge_suggestions(load_current())
+        with ui.context.client.content, ui.dialog() as dialog, \
+                ui.card().classes("w-full max-w-2xl gap-3").mark("merge-dialog"):
+            ui.label("Merge look-alike rules").classes("text-lg font-semibold")
+            if not suggestions:
+                ui.label("No look-alike rules to merge.").classes("text-sm opacity-70")
+            for sug in suggestions:
+                with ui.card().classes("w-full gap-1 p-3"):
+                    ui.label(sug["label"]).classes("text-sm font-medium")
+                    for text in sug["texts"][:5]:
+                        ui.label(f"replaces “{text[:120]}”").classes("text-xs font-mono opacity-70")
+                    ui.button(f"Merge {len(sug['patterns'])} rules into one", icon="call_merge",
+                              on_click=lambda sg=sug: (save_or_warn(
+                                  rule_catalog.merge(load_current(), sg), "Rules merged."),
+                                  dialog.close())).props("flat").mark("merge-apply")
+            ui.button("Close", on_click=dialog.close).props("flat")
+        dialog.open()
+
+    def render_tools(config: dict, items: list[dict]) -> None:
+        tools.clear()
+        stage_on = ((config.get("stage_options") or {}).get("learned_rules") or {}).get("enabled") is not False
+        unused = sum(1 for r in items if r["enabled"] and r["status"] == "never matched")
+        merges = len(rule_catalog.merge_suggestions(config))
+        with tools:
+            ui.switch("Apply learned rules", value=stage_on,
+                      on_change=lambda e: set_stage(bool(e.value)) if e.value != stage_on else None) \
+                .mark("rules-stage-switch").tooltip("Pause every learned rule at once")
+            paused = sum(1 for r in items if not r["enabled"])
+            if paused:
+                ui.label(f"{paused} paused").classes("text-xs opacity-70")
+            ui.space()
+            ui.button(f"Clean up unused ({unused})", icon="inventory", on_click=archive_unused) \
+                .props("flat dense no-caps").mark("rules-archive-unused") \
+                .tooltip("Pause the rules that never matched in your recent cleans")
+            ui.button(f"Merge look-alikes ({merges})", icon="call_merge", on_click=merge_dialog) \
+                .props("flat dense no-caps").mark("rules-merge")
+
     def render_list() -> None:
         list_box.clear()
         config = load_current()
-        pairs = _pairs(config)
-        query = str(search.value or "").strip().casefold()
-        kind = filter_select.value or "all"
-        shown: list[tuple[int, list[str]]] = []
-        for index, pair in enumerate(pairs):
-            source, repl, _ = _label(pair)
-            mode = "replace" if pair[1] else "remove"
-            if kind != "all" and mode != kind:
-                continue
-            if query and query not in f"{source} {repl}".casefold():
-                continue
-            shown.append((index, pair))
+        try:
+            runs = load_runs()
+        except Exception:
+            runs = []
+        items = rule_catalog.rows(config, runs)
+        render_tools(config, items)
+        shown = rule_catalog.filter_rows(items, query=str(search.value or ""),
+                                         kind=filter_select.value or "all",
+                                         source=source_select.value or "all",
+                                         status=status_select.value or "all",
+                                         sort=sort_select.value or "order")
         with list_box:
-            if not pairs:
+            if not items:
                 with ui.column().classes("w-full items-start gap-3 py-6"):
                     ui.element("div").classes("cc-dotgrid")
                     ui.label("No learned rules yet. Add one here or highlight text on Clean.").classes(
@@ -258,33 +443,57 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver)
                     ui.element("div").classes("cc-dotgrid")
                     ui.label("No rules match this search or filter.").classes("cc-page-sub")
                 return
-            for index, pair in shown:
-                source, repl, generated = _label(pair)
-                mode = "Replacement" if pair[1] else "Removal"
-                with ui.card().classes("w-full gap-1 p-3"):
+            for row in shown:
+                source, repl, generated = _label(row["pair"])
+                mode = "Replacement" if row["replacement"] else "Removal"
+                with ui.card().classes("w-full gap-1 p-3" + ("" if row["enabled"] else " opacity-60")) \
+                        .mark("rule-row"):
                     with ui.row().classes("w-full items-start justify-between gap-3"):
                         with ui.column().classes("min-w-0 gap-0"):
-                            ui.label(mode).classes(
-                                "text-xs font-semibold uppercase tracking-wide "
-                                + ("text-blue-700" if pair[1] else "text-orange-700")
-                            )
-                            ui.label(source).classes("font-mono text-sm break-all")
-                            ui.label(f"→ {repl}" if pair[1] else "Removed").classes(
-                                "text-sm opacity-70 break-all"
-                            )
-                            ui.label("Literal rule" if generated else "Legacy regex rule").classes(
-                                "text-xs opacity-50"
-                            )
+                            with ui.row().classes("items-center gap-2"):
+                                ui.label(mode).classes(
+                                    "text-xs font-semibold uppercase tracking-wide "
+                                    + ("text-blue-700" if row["replacement"] else "text-orange-700")
+                                )
+                                if not row["enabled"]:
+                                    ui.badge("Archived" if row["archived"] else "Paused",
+                                             color="grey").props("outline")
+                                if row["scope"]:
+                                    scope = row["scope"]
+                                    ui.badge(("only in " if scope["mode"] == "only" else "not in ")
+                                             + ", ".join(scope["sections"])[:40]).props("outline")
+                                if row["runs"]:
+                                    ui.badge(f"{row['hits']} hit(s)"
+                                             + (f" · last {row['last_hit'][:10]}" if row["last_hit"] else ""),
+                                             color="teal" if row["hits"] else "orange").props("outline")
+                                for tag in row["tags"]:
+                                    ui.badge(tag, color="purple").props("outline")
+                            ui.label(row["label"]).classes("text-sm break-all")
+                            ui.label(source).classes("font-mono text-xs opacity-70 break-all")
+                            if row["note"]:
+                                ui.label(row["note"]).classes("text-xs italic opacity-70")
+                            ui.label(("Literal rule" if generated else
+                                      "Shaped rule" if row["shape_kind"] != "regex" else "Legacy regex rule")
+                                     + (f" · {row['source_label']}" if row["source_label"] else "")
+                                     + (f" · added {row['added'][:10]}" if row["added"] else "")
+                                     ).classes("text-xs opacity-50")
                         with ui.row().classes("shrink-0"):
-                            ui.button(icon="edit", on_click=lambda i=index: edit_dialog(i)).props(
+                            ui.button(icon="play_circle" if not row["enabled"] else "pause_circle",
+                                      on_click=lambda r=row: toggle(r)).props(
+                                "flat round dense aria-label='Pause or resume rule'"
+                            ).tooltip("Resume rule" if not row["enabled"] else "Pause rule").mark("rule-toggle")
+                            ui.button(icon="sticky_note_2", on_click=lambda r=row: details_dialog(r)).props(
+                                "flat round dense aria-label='Note, tags and examples'"
+                            ).tooltip("Note, tags, lines it must keep").mark("rule-details-open")
+                            ui.button(icon="edit", on_click=lambda r=row: edit_row(r)).props(
                                 "flat round dense aria-label='Edit rule'"
-                            ).tooltip("Edit rule")
-                            ui.button(icon="delete", on_click=lambda i=index: delete_dialog(i)).props(
+                            ).tooltip("Edit rule").mark("rule-edit")
+                            ui.button(icon="delete", on_click=lambda i=row["index"]: delete_dialog(i)).props(
                                 "flat round dense color=negative aria-label='Delete rule'"
                             ).tooltip("Delete rule")
 
-    search.on_value_change(lambda _: render_list())
-    filter_select.on_value_change(lambda _: render_list())
+    for control in (search, filter_select, sort_select, source_select, status_select):
+        control.on_value_change(lambda _: render_list())
     add_button.on_click(lambda _: edit_dialog())
     render_list()
     return root

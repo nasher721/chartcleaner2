@@ -589,6 +589,23 @@ def render_rule_sharing(load_current, save_current, open_exports=None):
                             .classes("text-sm " + ("text-orange-700" if impact["changed"] else "text-green-700"))
                 except Exception:
                     pass  # the preview never blocks an import
+                try:
+                    from . import recent_charts
+                    recent = import_impact(load_current(), pending["payload"], recent_charts.texts(20),
+                                           mode.value)
+                    if recent["charts_checked"]:
+                        ui.label(f"Your recent charts: would change {recent['lines_changed']} line(s) in "
+                                 f"{recent['charts_changed']} of {recent['charts_checked']}.") \
+                            .classes("text-sm").mark("import-impact")
+                        if recent["facts_lost"]:
+                            ui.label("⚠ Would delete clinical values: " + ", ".join(
+                                f["display"] for f in recent["facts_lost"][:6])) \
+                                .classes("text-sm text-orange-700").mark("import-facts-lost")
+                        for smp in recent["samples"][:5]:
+                            ui.label(f"− {smp['before'][:140]}" + (f" → {smp['after'][:60]}" if smp["after"] else "")) \
+                                .classes("text-xs font-mono opacity-80 break-all")
+                except Exception:
+                    pass  # the preview never blocks an import
                 ui.label(f"{pending['name']}: {summary['incoming']} rules; {summary['added']} new; {summary['duplicates']} duplicate(s); result {summary['result']}.").classes("text-sm")
                 ui.label(f"Abbreviation custom rows: {summary['abbreviations']}; conflicts: {summary['abbreviation_conflicts']}; conflicting text rules skipped: {summary['rule_conflicts']}").classes("text-xs opacity-70")
                 if summary["stage_rules"]:

@@ -30,16 +30,28 @@ PLACEHOLDER_HELP = "Placeholders: " + ", ".join(
     f"{{{name}}} = {help_}" for name, (_rx, help_) in rule_shapes.PLACEHOLDERS.items())
 
 
-def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20) -> None:
-    """Show the builder for ``selected`` (text highlighted in ``chart``)."""
+def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
+                      initial: dict | None = None, initial_scope: dict | None = None,
+                      initial_note: str = "") -> None:
+    """Show the builder for ``selected`` (text highlighted in ``chart``).
+
+    ``initial`` (a shape, with ``initial_scope`` / ``initial_note``) opens an
+    existing rule for editing: it is the first choice, followed by the
+    generalizations of its text.
+    """
     candidates = rule_shapes.generalize(selected) or [
         rule_shapes.Candidate(rule_shapes.normalize({"text": selected or " x"}), "Exactly this text", "")]
+    if initial is not None:
+        current = rule_shapes.normalize(initial)
+        candidates = [rule_shapes.Candidate(current, "The rule as saved", rule_shapes.build(current)[0])] + [
+            c for c in candidates if c.shape != current]
     cfg = load_config(common.CONFIG_PATH)
     scores = rule_builder.rank(cfg, [c.shape for c in candidates], chart)
     state = {"recent": None}
 
     with ui.dialog() as dlg, ui.card().classes("w-[820px] max-w-full gap-2").mark("rule-builder"):
-        ui.label("Build a rule from this selection").classes("text-lg font-semibold")
+        ui.label("Edit rule" if initial is not None else "Build a rule from this selection") \
+            .classes("text-lg font-semibold")
         ui.label("Pick how much it should catch, check the preview, then save. The rule runs on "
                  "every future clean and can be paused, edited or undone later.") \
             .classes("text-sm opacity-70 -mt-1")
@@ -66,12 +78,15 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20) -
             template = ui.checkbox("Use placeholders", value=candidates[0].shape["template"]) \
                 .mark("builder-template")
         with ui.row().classes("w-full items-end gap-2"):
-            scope_mode = ui.select(SCOPE_LABELS, value="all", label="Where") \
-                .props("outlined dense").classes("w-56").mark("builder-scope")
-            sections = ui.select(SECTION_LABELS, multiple=True, value=[], label="Sections") \
-                .props("outlined dense use-chips").classes("flex-grow")
-        note = ui.input("Note (optional, e.g. “Epic MyChart footer”)").props("outlined dense") \
-            .classes("w-full")
+            scope_mode = ui.select(SCOPE_LABELS, value=(initial_scope or {}).get("mode", "all"),
+                                   label="Where").props("outlined dense").classes("w-56") \
+                .mark("builder-scope")
+            sections = ui.select(SECTION_LABELS, multiple=True,
+                                 value=[x for x in (initial_scope or {}).get("sections", [])
+                                        if x in SECTION_LABELS],
+                                 label="Sections").props("outlined dense use-chips").classes("flex-grow")
+        note = ui.input("Note (optional, e.g. “Epic MyChart footer”)", value=initial_note or "") \
+            .props("outlined dense").classes("w-full")
 
         ui.separator()
         headline = ui.label("").classes("text-sm font-medium").mark("builder-headline")
@@ -137,6 +152,9 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20) -
             text_in.set_value(with_shape["text"])
             kind.set_value(with_shape["kind"])
             template.set_value(with_shape["template"])
+            case.set_value(with_shape["case_sensitive"])
+            whole.set_value(with_shape["whole_words"])
+            replacement.set_value(with_shape.get("replacement", ""))
             if with_shape["kind"] == "until":
                 until = with_shape["until"]
                 stop.set_value("marker" if isinstance(until, dict) else until)
@@ -170,6 +188,8 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20) -
                 dlg.close()
 
         choice.on_value_change(lambda e: pick(e.value))
+        if initial is not None:
+            pick(0)
         for element in (text_in, kind, stop, marker, replacement, case, whole, template, scope_mode,
                         sections):
             element.on_value_change(lambda _e: refresh())

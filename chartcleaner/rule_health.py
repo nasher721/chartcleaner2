@@ -10,6 +10,8 @@ config and flags:
   chart's lines: worth checking it isn't removing real content.
 * **slow** — it took at least ``stages.SLOW_RULE_MS`` on two or more charts
   (``details["slow_rules"]``), or once past ``very_slow_ms``.
+* **paused** — a learned rule switched off in its settings (:mod:`rule_meta`):
+  it can't match, so it is never reported as dead weight.
 
 Every row also carries ``risks``: backtracking shapes found by
 :mod:`chartcleaner.regex_risk`, so a rule can be fixed before it ever hangs.
@@ -20,6 +22,7 @@ Runs from before rule tracking existed carry no ``rule_hits`` and are ignored.
 from __future__ import annotations
 
 from .regex_risk import risks as regex_risks
+from .rule_meta import is_enabled
 from .stages import rule_id
 
 __all__ = ["RULE_SOURCES", "report"]
@@ -59,6 +62,7 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
             if not isinstance(pattern, str):
                 continue
             rid = rule_id(pattern)
+            paused = sid == "learned_rules" and not is_enabled(cfg, pattern)
             # per-run: (matches for this rule, lines in the chart before cleaning)
             per = [(h.get(rid, 0), lb) for _run, h, _slow, lb in ran]
             timings = [float(slow[rid]) for _run, _h, slow, _lb in ran if rid in slow]
@@ -67,7 +71,9 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
                        default="")
             shares = [n / max(1, lb) for n, lb in per]
             avg_share = sum(shares) / len(shares) if shares else 0.0
-            if timings and (len(timings) >= 2 or max(timings) >= very_slow_ms) and len(per) < min_runs:
+            if paused:
+                status = "paused"
+            elif timings and (len(timings) >= 2 or max(timings) >= very_slow_ms) and len(per) < min_runs:
                 status = "slow"
             elif len(per) < min_runs:
                 status = "not enough runs yet"
@@ -84,5 +90,6 @@ def report(cfg: dict, runs: list[dict], *, recent: int = 30, min_runs: int = 5,
                          "avg_share": round(avg_share, 3), "status": status,
                          "max_ms": max(timings, default=0.0),
                          "risks": regex_risks(pattern)})
-    order = {"very broad": 0, "slow": 1, "never matched": 2, "ok": 3, "not enough runs yet": 4}
+    order = {"very broad": 0, "slow": 1, "never matched": 2, "ok": 3, "not enough runs yet": 4,
+             "paused": 5}
     return sorted(rows, key=lambda r: (order[r["status"]], r["stage"], r["index"]))
