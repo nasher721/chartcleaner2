@@ -305,6 +305,16 @@ def preview_import(config: dict, payload: dict, mode: str = "merge") -> dict:
             "enables_learned_rules": bool(incoming) and config.get("stage_options", {}).get("learned_rules", {}).get("enabled") is False}
 
 
+def import_impact(config: dict, payload: dict, texts: list[str], mode: str = "merge") -> dict:
+    """What an import would change on ``texts`` (your recent charts), before applying it.
+
+    ``rule_builder.config_impact`` of the current vs the merged rules: lines
+    changed, samples and clinical values the new rules would delete.
+    """
+    from .rule_builder import config_impact
+    return config_impact(config, apply_import(config, payload, mode), texts)
+
+
 def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
     """Return a changed copy after full validation; input is never mutated."""
     preview_import(config, payload, mode)
