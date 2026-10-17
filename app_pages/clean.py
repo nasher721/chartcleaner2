@@ -1271,9 +1271,9 @@ async def clean_page():
             ui.badge(f"Grounded {score}%", color="amber")
 
     def context_badge(ctx) -> None:
-        if ctx is None or not hasattr(ctx, "tier_label"):
+        if ctx is None:
             return
-        color = "teal" if getattr(ctx, "was_compacted", False) else "grey"
+        color = "teal" if ctx.was_compacted else "grey"
         ui.badge(ctx.tier_label(), color=color).props("outline").mark("ai-context-badge")
 
     def render_summary_output() -> None:

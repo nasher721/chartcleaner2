@@ -41,6 +41,7 @@ __all__ = [
     "MIN_CONTEXT_TOKENS",
     "PackedContext",
     "pack_context",
+    "resolve_context_tokens",
     "should_bookend",
 ]
 
@@ -107,15 +108,7 @@ class PackedContext:
     def was_compacted(self) -> bool:
         return self.tier != "full"
 
-    @property
-    def tokens_before(self) -> int:
-        return self.input_tokens
-
-    @property
-    def tokens_after(self) -> int:
-        return self.packed_tokens
-
-    def badge_text(self) -> str:
+    def tier_label(self) -> str:
         if self.tier == "full":
             return f"Context: full (~{self.packed_tokens:,} / {self.context_window:,} tok)"
         if self.tier == "delta":
@@ -123,9 +116,6 @@ class PackedContext:
                     f"from ~{self.input_tokens:,} tok — copied-forward repeats removed)")
         return (f"Context: routed (~{self.packed_tokens:,} / {self.context_window:,} tok "
                 f"from ~{self.input_tokens:,} tok — {self.omitted_paragraphs} earlier paragraph(s) omitted)")
-
-    def tier_label(self) -> str:
-        return self.badge_text()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +135,14 @@ def should_bookend(chart: str, bookend: bool | None = None) -> bool:
     if bookend is not None:
         return bool(bookend)
     return estimate_tokens(chart) >= BOOKEND_MIN_TOKENS
+
+
+def resolve_context_tokens(opts: dict) -> int:
+    """``local_llm.context_tokens`` from a merged config dict, defaulting when unset/invalid."""
+    try:
+        return int(opts.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
+    except (TypeError, ValueError):
+        return DEFAULT_CONTEXT_TOKENS
 
 
 def _expand_query_tokens(query: str, preset: str) -> dict[str, float]:

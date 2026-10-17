@@ -36,7 +36,7 @@ from .compactors import note_order as note_order_compactor
 from .compactors import tables as tables_compactor
 from .compactors import vent as vent_compactor
 from .compactors import vitals as vitals_compactor
-from .token_estimator import estimate_tokens
+from .token_estimator import estimate_tokens, token_reduction as _token_reduction
 from .stages import (
     DEFAULT_BULLETS,
     DEFAULT_CAPS,
@@ -364,9 +364,7 @@ class RunResult:
 
     @property
     def token_reduction(self) -> float:
-        if not self.tokens_before:
-            return 0.0
-        return round(100.0 * (1.0 - self.tokens_after / self.tokens_before), 1)
+        return _token_reduction(self.tokens_before, self.tokens_after)
 
     def phi_counts(self) -> dict[str, int]:
         out: dict[str, int] = {}

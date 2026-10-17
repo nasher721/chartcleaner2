@@ -407,93 +407,58 @@ def _find_lab_hit(lines: list[str], rx: re.Pattern, pred) -> tuple[float, str] |
     return None
 
 
+def _find_active_med(lines: list[str], med_rx: re.Pattern, clause_ok) -> tuple[re.Match, str] | None:
+    """First ``(match, line)`` where ``med_rx`` hits a clause that reads as an active order."""
+    for line in lines:
+        if _ALLERGY_LINE.search(line):
+            continue
+        for clause in _split_clauses(line):
+            m = med_rx.search(clause)
+            if m and not _LAB_MED_INACTIVE.search(clause) and clause_ok(clause, m):
+                return m, line
+    return None
+
+
 def _lab_med_conflicts(lines: list[str]) -> list[Conflict]:
     out: list[Conflict] = []
 
+    def lab_med(lab_rx, lab_pred, med_rx, clause_ok, why) -> None:
+        hit = _find_lab_hit(lines, lab_rx, lab_pred)
+        if hit is None:
+            return
+        val, lab_line = hit
+        med = _find_active_med(lines, med_rx, clause_ok)
+        if med:
+            m, med_line = med
+            out.append(Conflict("lab-medication", why(val, m), [_clean(lab_line), _clean(med_line)]))
+
     # 1. Hyperkalemia (K >= 5.5) + active potassium / K-sparing diuretic
-    k_hit = _find_lab_hit(lines, _K_LAB, lambda v: 5.5 <= v <= 9.9)
-    if k_hit is not None:
-        k_val, k_line = k_hit
-        for line in lines:
-            if _ALLERGY_LINE.search(line):
-                continue
-            for clause in _split_clauses(line):
-                m = _K_MED.search(clause)
-                if m and not _LAB_MED_INACTIVE.search(clause) and (
-                    _MED_LINE.search(clause) or re.search(r"\b(?:KCl|klor-?con|k-?dur)\b", clause, re.I)
-                ):
-                    out.append(Conflict(
-                        "lab-medication",
-                        f"hyperkalemia (K {k_val:g}) with active {m.group('drug')}",
-                        [_clean(k_line), _clean(line)],
-                    ))
-                    break
-            else:
-                continue
-            break
+    lab_med(
+        _K_LAB, lambda v: 5.5 <= v <= 9.9, _K_MED,
+        lambda c, m: _MED_LINE.search(c) or re.search(r"\b(?:KCl|klor-?con|k-?dur)\b", c, re.I),
+        lambda v, m: f"hyperkalemia (K {v:g}) with active {m.group('drug')}",
+    )
 
     # 2. Severe thrombocytopenia (Plt < 50) + active therapeutic anticoagulation
-    plt_hit = _find_lab_hit(lines, _PLT_LAB, lambda v: 1 <= v < 50)
-    if plt_hit is not None:
-        plt_val, plt_line = plt_hit
-        for line in lines:
-            if _ALLERGY_LINE.search(line):
-                continue
-            for clause in _split_clauses(line):
-                m = _THERAPEUTIC_AC.search(clause)
-                if m and not _AC_INACTIVE.search(clause) and not _LAB_MED_INACTIVE.search(clause):
-                    out.append(Conflict(
-                        "lab-medication",
-                        f"severe thrombocytopenia (Plt {plt_val:g}) with active anticoagulation ({m.group(0).strip()})",
-                        [_clean(plt_line), _clean(line)],
-                    ))
-                    break
-            else:
-                continue
-            break
+    lab_med(
+        _PLT_LAB, lambda v: 1 <= v < 50, _THERAPEUTIC_AC,
+        lambda c, m: not _AC_INACTIVE.search(c),
+        lambda v, m: f"severe thrombocytopenia (Plt {v:g}) with active anticoagulation ({m.group(0).strip()})",
+    )
 
     # 3. Supratherapeutic INR (INR >= 3.5) + active warfarin/coumadin
-    inr_hit = _find_lab_hit(lines, _INR_LAB, lambda v: 3.5 <= v <= 20.0)
-    if inr_hit is not None:
-        inr_val, inr_line = inr_hit
-        for line in lines:
-            if _ALLERGY_LINE.search(line):
-                continue
-            for clause in _split_clauses(line):
-                m = _WARFARIN_MED.search(clause)
-                if (m and not _AC_INACTIVE.search(clause) and not _LAB_MED_INACTIVE.search(clause)
-                        and not _WARFARIN_REVERSAL.search(clause) and _MED_LINE.search(clause)):
-                    out.append(Conflict(
-                        "lab-medication",
-                        f"supratherapeutic INR ({inr_val:g}) with active {m.group('drug')}",
-                        [_clean(inr_line), _clean(line)],
-                    ))
-                    break
-            else:
-                continue
-            break
+    lab_med(
+        _INR_LAB, lambda v: 3.5 <= v <= 20.0, _WARFARIN_MED,
+        lambda c, m: not _AC_INACTIVE.search(c) and not _WARFARIN_REVERSAL.search(c) and _MED_LINE.search(c),
+        lambda v, m: f"supratherapeutic INR ({v:g}) with active {m.group('drug')}",
+    )
 
     # 4. Significant hyponatremia (Na < 130) + active hypotonic fluid or DDAVP
-    na_hit = _find_lab_hit(lines, _NA_LAB, lambda v: 95 <= v < 130)
-    if na_hit is not None:
-        na_val, na_line = na_hit
-        for line in lines:
-            if _ALLERGY_LINE.search(line):
-                continue
-            for clause in _split_clauses(line):
-                m = _HYPOTONIC_MED.search(clause)
-                if m and not _LAB_MED_INACTIVE.search(clause) and (
-                    _MED_LINE.search(clause) or re.search(r"\b(?:gtt|infusion|at\s+\d+|@\s*\d+|mL/h)\b", clause, re.I)
-                ):
-                    out.append(Conflict(
-                        "lab-medication",
-                        f"hyponatremia (Na {na_val:g}) with active {m.group('drug')}",
-                        [_clean(na_line), _clean(line)],
-                    ))
-                    break
-            else:
-                continue
-            break
+    lab_med(
+        _NA_LAB, lambda v: 95 <= v < 130, _HYPOTONIC_MED,
+        lambda c, m: _MED_LINE.search(c) or re.search(r"\b(?:gtt|infusion|at\s+\d+|@\s*\d+|mL/h)\b", c, re.I),
+        lambda v, m: f"hyponatremia (Na {v:g}) with active {m.group('drug')}",
+    )
 
     return out
 

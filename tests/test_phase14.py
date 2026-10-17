@@ -37,13 +37,10 @@ from chartcleaner.engine import (
 
 def test_token_estimator_empty_and_basic():
     assert token_estimator.estimate_tokens("") == 0
-    assert token_estimator.estimate_tokens_fast("") == 0
     assert token_estimator.token_reduction(0, 0) == 0.0
     text = "67 y/o male admitted with right MCA stroke, NIHSS 14, started on nicardipine gtt."
     tok = token_estimator.estimate_tokens(text)
     assert tok >= 15
-    summary = token_estimator.format_token_summary(200, 120)
-    assert "~200" in summary and "~120" in summary and "+40.0%" in summary
 
 
 def test_token_estimator_weights_punctuation_and_numbers_higher_than_prose():
@@ -131,7 +128,7 @@ def test_context_router_tier2_delta_has_no_synthetic_numbers():
     packed = context_router.pack_context(MULTI_NOTE_CHART, budget_tokens=int(full_tok * 0.72))
     assert packed.tier == "delta"
     assert packed.was_compacted
-    assert packed.tokens_after < packed.tokens_before
+    assert packed.packed_tokens < packed.input_tokens
     # Every line in packed.text must come verbatim from MULTI_NOTE_CHART (no synthetic % headers)
     assert "Redundant Text Pruned" not in packed.text
     for line in packed.text.splitlines():

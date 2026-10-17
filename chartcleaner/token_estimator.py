@@ -7,8 +7,8 @@ medication sigs ``q6h PRN``, dates ``10/02/2026``, and PHI placeholders
 chars/token).
 
 This module provides a fast, 100% offline estimator calibrated against modern
-LLM tokenizers (Llama-3, cl100k/o200k) on inpatient EMR text, plus helpers for
-reporting token savings across cleaning runs and context-window budgets.
+LLM tokenizers (Llama-3, cl100k/o200k) on inpatient EMR text, plus a helper for
+reporting token savings across cleaning runs.
 """
 
 from __future__ import annotations
@@ -16,15 +16,9 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "CHARS_PER_TOKEN_FAST",
     "estimate_tokens",
-    "estimate_tokens_fast",
     "token_reduction",
-    "format_token_summary",
 ]
-
-# Fast constant for large (>100k char) strings or live keystroke counters.
-CHARS_PER_TOKEN_FAST = 3.2
 
 # Matches BPE-like units in clinical text:
 # - PHI placeholder tokens [[T12]] -> ~3 tokens
@@ -38,16 +32,6 @@ _CLINICAL_TOKEN_RE = re.compile(
     r"|[^\sA-Za-z0-9]"
     r"|\n"
 )
-
-
-def estimate_tokens_fast(text: str) -> int:
-    """O(1) character-based clinical token estimate for live UI keystroke bindings."""
-    if not text:
-        return 0
-    stripped = text.strip()
-    if not stripped:
-        return 0
-    return max(1, int(round(len(stripped) / CHARS_PER_TOKEN_FAST)))
 
 
 def estimate_tokens(text: str) -> int:
@@ -91,9 +75,3 @@ def token_reduction(tokens_before: int, tokens_after: int) -> float:
     if tokens_before <= 0:
         return 0.0
     return round(100.0 * (1.0 - tokens_after / tokens_before), 1)
-
-
-def format_token_summary(tokens_before: int, tokens_after: int) -> str:
-    """Human-readable token delta string (e.g. ``~4,120 → ~1,680 tok (-59.2%)``)."""
-    pct = token_reduction(tokens_before, tokens_after)
-    return f"~{tokens_before:,} → ~{tokens_after:,} tok ({pct:+.1f}%)"

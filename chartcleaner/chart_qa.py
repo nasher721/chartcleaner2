@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from chartcleaner.context_router import DEFAULT_CONTEXT_TOKENS, pack_context, should_bookend
+from chartcleaner.context_router import pack_context, resolve_context_tokens, should_bookend
 from chartcleaner.local_llm import GroundingResult, LocalLlmClient, verify_clinical_grounding
 from chartcleaner.summarizer import (LlmUnavailableError, NoModelError, _check_facts, _cite,
                                      merge_llm_config, run_model)
@@ -36,11 +36,15 @@ __all__ = [
 
 MAX_HISTORY_TURNS = 3
 
+# The exact no-answer sentinel the model is instructed to produce; turns whose
+# answer is this carry no reusable context and are dropped from history.
+_NO_ANSWER = "The chart does not say."
+
 QA_INSTRUCTION = (
     "Answer the question using ONLY facts explicitly present in the chart "
     "below. Never invent or extrapolate any medication, dose, lab value, "
     "date, or diagnosis. If the chart does not contain the answer, say "
-    "exactly: The chart does not say."
+    f"exactly: {_NO_ANSWER}"
 )
 
 
@@ -82,7 +86,7 @@ def filter_grounded_history(
     valid = [
         t for t in history
         if not getattr(t, "ungrounded", False)
-        and t.answer.strip() != "The chart does not say."
+        and t.answer.strip() != _NO_ANSWER
     ]
     recent = valid[-MAX_HISTORY_TURNS:]
     if max_tokens <= 0:
@@ -129,8 +133,8 @@ def build_qa_prompt(
         parts.append("---")
         parts.append(
             f"Question: {q_clean}\n"
-            "(Answer using ONLY facts explicitly present in the chart above. "
-            "If the chart does not contain the answer, say: The chart does not say.)"
+            f"(Answer using ONLY facts explicitly present in the chart above. "
+            f"If the chart does not contain the answer, say: {_NO_ANSWER})"
         )
     return "\n".join(parts)
 
@@ -162,10 +166,7 @@ def ask_chart(
     opts: dict[str, Any] = merge_llm_config(cfg)
     base_url: str = opts["base_url"]
     threshold = min(max(float(opts["grounding_threshold"]), 0.0), 100.0)
-    try:
-        context_tokens = int(opts.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
-    except (TypeError, ValueError):
-        context_tokens = DEFAULT_CONTEXT_TOKENS
+    context_tokens = resolve_context_tokens(opts)
 
     try:
         client = client or LocalLlmClient(base_url, timeout=120.0, num_ctx=context_tokens)

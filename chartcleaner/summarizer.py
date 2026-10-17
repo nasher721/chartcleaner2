@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from chartcleaner.context_router import DEFAULT_CONTEXT_TOKENS, pack_context, should_bookend
+from chartcleaner.context_router import DEFAULT_CONTEXT_TOKENS, pack_context, resolve_context_tokens, should_bookend
 from chartcleaner.local_llm import (
     GroundingResult,
     LocalLlmClient,
@@ -193,10 +193,7 @@ def summarize(
     opts = merge_llm_config(cfg)
     base_url: str = opts["base_url"]
     threshold = min(max(float(opts["grounding_threshold"]), 0.0), 100.0)
-    try:
-        context_tokens = int(opts.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
-    except (TypeError, ValueError):
-        context_tokens = DEFAULT_CONTEXT_TOKENS
+    context_tokens = resolve_context_tokens(opts)
 
     try:
         client = client or LocalLlmClient(base_url, timeout=60.0, num_ctx=context_tokens)

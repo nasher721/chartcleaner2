@@ -92,10 +92,10 @@ _VENT_LINE_PREFIX = re.compile(
 )
 _VENT_MODE_TOKEN = re.compile(rf"\b(?P<mode>{_VENT_MODES})\b", re.IGNORECASE)
 _VENT_KV = re.compile(
-    r"\b(?P<k>Mode|RR|f|rate|TV|Vt|tidal[ \t]+volume|FiO2|PEEP|PS|pressure[ \t]+support|"
+    rf"\b(?P<k>Mode|RR|f|rate|TV|Vt|tidal[ \t]+volume|FiO2|PEEP|PS|pressure[ \t]+support|"
     r"Pplat|plateau|PIP|Ppeak|Ve|MV|minute[ \t]+ventilation|I:E)"
     r"[ \t]*(?:[:=][ \t]*|[ \t]+)"
-    r"(?P<v>(?:AC/VC|VC/AC|A/C|AC-VC|VC|PRVC|PCV|AC/PC|SIMV|PSV|CPAP|BiPAP|APRV|HFNC)"
+    rf"(?P<v>(?:{_VENT_MODES})"
     r"|\d+(?:\.\d+)?(?::\d+(?:\.\d+)?)?[ \t]*(?:%|mL|ml|L/min|cmH2O)?)",
     re.IGNORECASE,
 )
@@ -309,13 +309,18 @@ def _collapse_series(values: list[str]) -> str:
     return " → ".join(deduped)
 
 
+def _stamp_window(readings: list) -> str:
+    """, ``first–last`` (or ``only``) timestamp suffix for a block header."""
+    stamps = [r.stamp for r in readings if r.stamp]
+    if len(stamps) >= 2 and stamps[0] != stamps[-1]:
+        return f", {stamps[0]}–{stamps[-1]}"
+    return f", {stamps[0]}" if stamps else ""
+
+
 def _format_abg_block(readings: list[_AbgReading]) -> str:
     kinds = {r.kind for r in readings}
     label = next(iter(kinds)) if len(kinds) == 1 else "ABG/VBG"
-    stamps = [r.stamp for r in readings if r.stamp]
-    window = f", {stamps[0]}–{stamps[-1]}" if len(stamps) >= 2 and stamps[0] != stamps[-1] else (
-        f", {stamps[0]}" if stamps else ""
-    )
+    window = _stamp_window(readings)
 
     parts: list[str] = []
     ph_series = _collapse_series([r.ph for r in readings])
@@ -349,10 +354,7 @@ def _format_abg_block(readings: list[_AbgReading]) -> str:
 
 
 def _format_vent_block(readings: list[_VentReading]) -> str:
-    stamps = [r.stamp for r in readings if r.stamp]
-    window = f", {stamps[0]}–{stamps[-1]}" if len(stamps) >= 2 and stamps[0] != stamps[-1] else (
-        f", {stamps[0]}" if stamps else ""
-    )
+    window = _stamp_window(readings)
     parts: list[str] = []
     mode_series = _collapse_series([r.mode for r in readings])
     if mode_series:
@@ -367,6 +369,34 @@ def _format_vent_block(readings: list[_VentReading]) -> str:
     sbts = [r.sbt for r in readings if r.sbt]
     sbt_suffix = f" ({_collapse_series(sbts)})" if sbts else ""
     return f"Vent ({len(readings)}{window}): " + ", ".join(parts) + sbt_suffix
+
+
+def _condense_block(
+    lines: list[str],
+    i: int,
+    header_re: re.Pattern,
+    parse_line,
+    format_block,
+) -> tuple[int, list[str], int] | None:
+    """From line ``i``, condense a contiguous run of parsable readings.
+
+    Returns ``(next_index, output_lines, readings_count)`` when the run holds at
+    least 2 readings (an optional header line is kept); ``None`` otherwise.
+    """
+    has_hdr = bool(header_re.match(lines[i]))
+    start = i + 1 if has_hdr else i
+    readings = []
+    j = start
+    while j < len(lines):
+        parsed = parse_line(lines[j])
+        if parsed is None:
+            break
+        readings.append(parsed)
+        j += 1
+    if len(readings) < 2:
+        return None
+    out = ([lines[i]] if has_hdr else []) + [format_block(readings)]
+    return j, out, len(readings)
 
 
 def run(text: str, cfg: dict, ctx: Any = None) -> tuple[str, int, dict]:
@@ -386,49 +416,19 @@ def run(text: str, cfg: dict, ctx: Any = None) -> tuple[str, int, dict]:
     condensed = 0
 
     while i < n:
-        line = lines[i]
-
-        # Check for contiguous ABG block (with optional header)
+        hit = None
         if do_abg:
-            has_hdr = bool(_ABG_HEADER.match(line))
-            start = i + 1 if has_hdr else i
-            abgs: list[_AbgReading] = []
-            j = start
-            while j < n:
-                parsed = _parse_abg_line(lines[j])
-                if parsed is None:
-                    break
-                abgs.append(parsed)
-                j += 1
-            if len(abgs) >= 2:
-                if has_hdr:
-                    out.append(line)
-                out.append(_format_abg_block(abgs))
-                condensed += len(abgs)
-                i = j
-                continue
+            hit = _condense_block(lines, i, _ABG_HEADER, _parse_abg_line, _format_abg_block)
+        if hit is None and do_settings:
+            hit = _condense_block(lines, i, _VENT_HEADER, _parse_vent_line, _format_vent_block)
+        if hit is not None:
+            next_i, block, count = hit
+            out.extend(block)
+            condensed += count
+            i = next_i
+            continue
 
-        # Check for contiguous Ventilator settings block (with optional header)
-        if do_settings:
-            has_hdr = bool(_VENT_HEADER.match(line))
-            start = i + 1 if has_hdr else i
-            vents: list[_VentReading] = []
-            j = start
-            while j < n:
-                parsed = _parse_vent_line(lines[j])
-                if parsed is None:
-                    break
-                vents.append(parsed)
-                j += 1
-            if len(vents) >= 2:
-                if has_hdr:
-                    out.append(line)
-                out.append(_format_vent_block(vents))
-                condensed += len(vents)
-                i = j
-                continue
-
-        out.append(line)
+        out.append(lines[i])
         i += 1
 
     if not condensed:
