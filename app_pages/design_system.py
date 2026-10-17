@@ -272,6 +272,11 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-tint{border:1px solid var(--nd-border);border-radius:var(--nd-r-card);}
 .cc-tint--accent{background:var(--nd-tint);border-color:var(--nd-border-visible);}
 .cc-tint--warn{background:var(--cc-warn-soft);border-color:var(--nd-warning);}
+/* Clean page selection modes: the chart box shows which tool is armed. */
+.cc-mode-remove .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-error);}
+.cc-mode-remove textarea::selection{background:rgba(198,40,40,.35);}
+.cc-mode-abbreviate .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-accent);}
+.cc-mode-abbreviate textarea::selection{background:rgba(21,101,192,.3);}
 .cc-tint--danger{background:var(--cc-neg-soft);border-color:var(--nd-accent);}
 .cc-panel{background:var(--nd-surface-raised);}
 

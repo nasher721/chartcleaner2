@@ -12,6 +12,8 @@ Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation �
 - **Rule suggestions** — findings that keep surviving run after run surface as suggestion cards on the Pipeline page, with a pre-drafted regex and live match counts. Adopt, or dismiss forever. The Clean page's **Suggestions** inbox goes further: from your recent charts (kept encrypted) it offers lines that keep coming back ("appeared in 9 of your last 10 charts — remove it?") and phrases worth abbreviating. Lines holding clinical values or section headings are never suggested.
 - **Known-good charts** — mark a result as known good (⋯ → *Mark as known good*). Saving rule changes on the Pipeline page re-cleans those charts first and shows any that would come out differently.
 - **Learn rules by highlighting** — select any text in the chart on the Clean page and use the selection toolbar (**More…** for the full dialog): remove that text everywhere, remove the whole line(s), or replace it with your own text. The rule is remembered (Pipeline → *Learned rules*) and applied to every future clean, with a live preview of how many times it would match — and *Check my recent charts* shows what else it would change.
+- **Remove text & Abbreviate modes** — on the Clean page, flip the selection toggle to **Remove text** and every bit of chart text you select is removed at once and remembered (Undo is one click), or to **Abbreviate** to pick an abbreviation for each term you select. **My text rules → Quick add** takes whole lists, no regex: one phrase to remove per line, one `full term = abbreviation` per line (also `=>`, `->` or two pasted spreadsheet columns), with a live match count against the current chart. Do Not Use abbreviations are refused.
+- **Export your rules** — *Quick add → Download .txt* gives a readable list (Remove / Replace / Abbreviations) you can edit and import back; *Share & import* exports signed JSON (tick *Include built-in lists* for a complete copy including the metadata, boilerplate, PHI and replacement lists and your "Never remove" exceptions) or CSV. CLI: `--export-rules`, `--import-rules`, `--list-rules`.
 - **Settings export / import** — one `.zip` carries all your customization (rules, learned rules, options, presets, custom scripts, watcher config) to a clean install: Settings → *Export & import settings*.
 - **Rule packs** — curated rule sets shipped with the app: *HIPAA Safe Harbor (strict)* and *Philter core PHI* (ported from the published UCSF pipeline). Install as a preset or apply directly from the Pipeline page.
 - **Reversible tokenization** — optionally swap PHI for stable `[[T1]]`-style codes instead of deleting it. Value→token maps are saved locally and can restore the original text later (Settings → Token maps, or `clean-chart --untoken`). Round trip with an external AI: *Copy as → Tokenized, for an external AI*, then ⋯ → *Restore names in an AI reply* puts the real values back into what the AI wrote.
@@ -59,6 +61,11 @@ clean-chart.cmd               # Windows
 ./clean-chart --watch ~/Inbox/charts   # auto-clean every file dropped in the folder
 ./clean-chart --untoken       # restore [[Tn]] tokens using the newest saved map
 ./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
+./clean-chart --add-remove "Electronically signed by"   # always remove this text (no regex)
+./clean-chart --add-abbreviation "subarachnoid hemorrhage = SAH"   # always shorten this term
+./clean-chart --list-rules                # your rules as a plain-text list
+./clean-chart --export-rules rules.json --complete   # .txt | .csv | .json (--complete adds built-in lists)
+./clean-chart --import-rules rules.txt    # .txt | .csv | .json (--import-mode replace to overwrite)
 ./clean-chart --mode expand   # spell abbreviations out (or --mode abbreviations to shorten only)
 ./clean-chart --stdin --stdout --mode abbreviations   # pipe text through (scripts, Quick Actions)
 ./clean-chart --prompt "Progress note"   # clean, then wrap in a prompt template

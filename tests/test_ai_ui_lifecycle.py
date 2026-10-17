@@ -76,7 +76,7 @@ def _restore_state(before, auto_before):
 
 def _change_chart(user: User, change: str) -> None:
     if change == "mode":
-        next(iter(user.find(ui.toggle).elements)).set_value("abbreviations")
+        next(iter(user.find(marker="clean-mode").elements)).set_value("abbreviations")
     elif change == "clear":
         clear_button = next(e for e in user.find(ui.button).elements
                             if e.props.get("label") == "Clear")
