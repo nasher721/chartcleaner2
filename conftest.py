@@ -20,6 +20,7 @@ def _isolate_user_data(tmp_path, monkeypatch):
                        "RECENT_DIR": data / "recent", "KNOWN_GOOD_DIR": data / "known_good",
                        "INBOX_STATE_FILE": data / "inbox_state.json",
                        "EDIT_LOG_FILE": data / "edit_log.enc",
+                       "RULE_HISTORY_FILE": data / "rule_history.enc",
                        "SIGNING_KEY_FILE": data / "signing_key.enc",
                        "TRUSTED_KEYS_FILE": data / "trusted_keys.json"}.items():
         monkeypatch.setattr(store, name, path)

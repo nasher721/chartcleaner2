@@ -200,8 +200,10 @@ def remember_rule_example(pair: list[str], text: str, cfg: dict) -> None:
         pass  # an example is a safety net; never block saving the rule itself
 
 
-def save_config_with_backup(cfg: dict) -> None:
-    """Validate, keep the previous config, then atomically save changes."""
+def save_config_with_backup(cfg: dict, source: str = "app") -> None:
+    """Validate, keep the previous config, then atomically save changes.
+
+    ``source`` labels the change in the rule journal (Rules → Recent changes)."""
     errors, _ = validate_config(cfg)
     if errors:
         raise ConfigError(errors[0])
@@ -209,7 +211,7 @@ def save_config_with_backup(cfg: dict) -> None:
         store.rotate_config_backup()
     except Exception:
         pass  # backups must never block a save
-    save_config(cfg, CONFIG_PATH)
+    save_config(cfg, CONFIG_PATH, source=source)
 
 
 def report_error(title: str, exc: Exception) -> None:
@@ -530,7 +532,7 @@ def apply_preset(name: str) -> bool:
         if perrs:
             ui.notify("Preset has invalid rules: " + "; ".join(perrs[:3]), type="negative")
             return False
-        save_config(cfg, CONFIG_PATH)
+        save_config(cfg, CONFIG_PATH, source="preset")
         PREFS.update(last_preset=name)
         save_prefs()
         ui.notify(f"Preset '{name}' applied.", type="positive")

@@ -395,7 +395,7 @@ def census(*, preset: str | None = None, config: dict | None = None) -> dict:
 
 def add_rules(*, remove: list[str] | tuple[str, ...] = (), abbreviations: list[tuple[str, str]] | tuple = (),
               whole_words: bool = True, case_sensitive: bool = False,
-              config_path: str | Path | None = None) -> dict:
+              config_path: str | Path | None = None, caller: str = "cli") -> dict:
     """Save plain-text "remove this" phrases and ``(term, abbreviation)`` pairs.
 
     The same rules the Rules page's Quick add saves (no regex). Do Not Use
@@ -409,7 +409,7 @@ def add_rules(*, remove: list[str] | tuple[str, ...] = (), abbreviations: list[t
     path = Path(config_path or store.CONFIG_PATH)
     cfg = load_config(path)
     cfg, removed = add_removals(cfg, list(remove), whole_words=whole_words,
-                                case_sensitive=case_sensitive)
+                                case_sensitive=case_sensitive, source=caller)
     cfg, abbreviated = add_abbreviations(cfg, [tuple(p) for p in abbreviations])
     saved = removed.changed or abbreviated.changed
     if saved:
@@ -418,7 +418,7 @@ def add_rules(*, remove: list[str] | tuple[str, ...] = (), abbreviations: list[t
             raise ValueError(errors[0])
         if config_path is None:
             store.rotate_config_backup()
-        save_config(cfg, path)
+        save_config(cfg, path, source=caller)
     return {"remove": vars(removed), "abbreviations": vars(abbreviated), "saved": saved}
 
 

@@ -208,7 +208,7 @@ def restore_config_backup(path: str | Path) -> tuple[bool, str]:
     errors, _ = validate_config(cfg)
     if errors:
         return False, "Backup has invalid rules: " + errors[0]
-    save_config(cfg, _store().CONFIG_PATH)
+    save_config(cfg, _store().CONFIG_PATH, source="restore")
     return True, f"Restored backup from {p.name} ({_rule_count(cfg)} rule entries)."
 
 
@@ -318,7 +318,7 @@ def import_settings(zip_path: str | Path) -> tuple[bool, str]:
                 if errs:
                     return False, "Bundle rules are invalid (" + errs[0] + ") — nothing was changed."
                 rotate_config_backup()
-                save_config(cfg, _store().CONFIG_PATH)
+                save_config(cfg, _store().CONFIG_PATH, source="restore")
                 applied.append(f"{_rule_count(cfg)} rule entries")
 
             if "data/prefs.json" in names:
@@ -463,7 +463,7 @@ def import_rules(source: str | Path, mode: str = "merge") -> tuple[bool, str]:
             return False, "Imported rules are invalid (" + errors[0] + ") — nothing was changed."
         rotate_config_backup()
         _store().ensure_dirs()
-        save_config(updated, _store().CONFIG_PATH)
+        save_config(updated, _store().CONFIG_PATH, source="import")
         if payload is None:
             return True, message
         added = len(updated.get("learned_rules", [])) - len(config.get("learned_rules", []))

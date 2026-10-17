@@ -76,6 +76,7 @@ __all__ = [
     "KNOWN_GOOD_DIR",
     "INBOX_STATE_FILE",
     "EDIT_LOG_FILE",
+    "RULE_HISTORY_FILE",
     "SIGNING_KEY_FILE",
     "TRUSTED_KEYS_FILE",
     "TOKENS_DIR",
@@ -157,6 +158,7 @@ RECENT_DIR = DATA_DIR / "recent"            # encrypted recent inputs (recent_ch
 KNOWN_GOOD_DIR = DATA_DIR / "known_good"    # encrypted regression charts (regression_set.py)
 INBOX_STATE_FILE = DATA_DIR / "inbox_state.json"  # dismissed rule-inbox ids (no chart text)
 EDIT_LOG_FILE = DATA_DIR / "edit_log.enc"    # encrypted lines you deleted from outputs (edit_log.py)
+RULE_HISTORY_FILE = DATA_DIR / "rule_history.enc"  # encrypted journal of rule changes (rule_history.py)
 SIGNING_KEY_FILE = DATA_DIR / "signing_key.enc"     # encrypted Ed25519 key for rule files
 TRUSTED_KEYS_FILE = DATA_DIR / "trusted_keys.json"  # colleagues' public keys (no chart text)
 TOKENS_DIR = DATA_DIR / "tokens"

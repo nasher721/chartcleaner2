@@ -114,5 +114,5 @@ def apply_pack(name: str) -> tuple[bool, str]:
         return False, "Pack has invalid rules: " + errors[0]
     store.rotate_config_backup()
     from .engine import save_config
-    save_config(cfg, store.CONFIG_PATH)
+    save_config(cfg, store.CONFIG_PATH, source="rule_pack")
     return True, "Pack applied."
