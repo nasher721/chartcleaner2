@@ -422,6 +422,65 @@ def add_rules(*, remove: list[str] | tuple[str, ...] = (), abbreviations: list[t
     return {"remove": vars(removed), "abbreviations": vars(abbreviated), "saved": saved}
 
 
+def add_shape_rule(shape: dict, *, scope: dict | None = None, note: str | None = None,
+                   config_path: str | Path | None = None, caller: str = "cli") -> dict:
+    """Save one rule shape (:mod:`rule_shapes`: whole line, line start, block, placeholders).
+
+    Returns ``{"added": bool, "label": str, "saved": bool}``; the config is
+    validated and backed up first, and the change is journaled (undoable).
+    """
+    from .engine import save_config, validate_config
+    from .rule_meta import add_rule
+    from .rule_shapes import build, describe, normalize
+
+    shape = normalize(shape)
+    path = Path(config_path or store.CONFIG_PATH)
+    cfg = load_config(path)
+    literal = shape["kind"] == "text" and not shape["template"]
+    cfg, added = add_rule(cfg, build(shape), shape=None if literal else shape, source=caller,
+                          scope=scope, note=note)
+    if added:
+        errors, _ = validate_config(cfg)
+        if errors:
+            raise ValueError(errors[0])
+        if config_path is None:
+            store.rotate_config_backup()
+        save_config(cfg, path, source=caller)
+    return {"added": added, "label": describe(shape), "saved": added}
+
+
+def rule_changes(limit: int = 20) -> list[dict]:
+    """The newest rule-journal entries (``id``, ``ts``, ``source``, ``summary``, ``reverted``)."""
+    from . import rule_history
+    return [{k: e.get(k) for k in ("id", "ts", "source", "summary", "reverted")}
+            for e in rule_history.entries(limit)]
+
+
+def undo_rule_change(entry_id: str = "last", *, config_path: str | Path | None = None,
+                     caller: str = "cli") -> dict:
+    """Undo one journaled rule change (``"last"``: the newest not yet undone)."""
+    from . import rule_history
+    from .engine import save_config, validate_config
+
+    if entry_id == "last":
+        entry = next((e for e in rule_history.entries() if not e.get("reverted")
+                      and e.get("source") != "undo"), None)
+    else:
+        entry = rule_history.get(entry_id)
+    if entry is None:
+        raise ValueError("No such rule change." if entry_id != "last" else "Nothing to undo.")
+    path = Path(config_path or store.CONFIG_PATH)
+    cfg = rule_history.revert(load_config(path), entry)
+    errors, _ = validate_config(cfg)
+    if errors:
+        raise ValueError(errors[0])
+    if config_path is None:
+        store.rotate_config_backup()
+    undone = save_config(cfg, path, source="undo")
+    rule_history.mark_reverted(entry["id"], by=(undone or {}).get("id"))
+    return {"id": entry["id"], "summary": entry["summary"], "changed": undone is not None}
+
+
 def list_rules(*, preset: str | None = None, config: dict | None = None) -> dict:
     """The user's plain-text rules: ``remove``, ``replace``, ``regex``, ``abbreviations``."""
     from .quick_rules import current_rules

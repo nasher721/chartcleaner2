@@ -248,10 +248,48 @@ def _run_export_abbreviations(args) -> None:
 
 
 def _run_rules(args) -> int:
-    """--add-remove / --add-abbreviation / --list-rules / --export-rules / --import-rules."""
+    """--add-remove / --add-line / --add-abbreviation / --list-rules / --export-rules /
+    --import-rules / --rule-changes / --undo-rule-change."""
     from chartcleaner import service, store
     from chartcleaner.quick_rules import parse_abbreviations
+    from chartcleaner.rule_shapes import placeholders_in
 
+    if args.add_remove_clipboard:
+        try:
+            import pyperclip
+            copied = pyperclip.paste() or ""
+        except Exception as e:
+            print(f"Error: could not read the clipboard: {e}", file=sys.stderr)
+            return 1
+        lines = [ln.strip() for ln in copied.splitlines() if ln.strip()]
+        if not lines:
+            print("Error: the clipboard is empty.", file=sys.stderr)
+            return 1
+        args.add_remove = list(args.add_remove) + lines
+    for kind, texts in (("line", args.add_line), ("line_start", args.add_line_start)):
+        for text in texts:
+            try:
+                report = service.add_shape_rule({"kind": kind, "text": text, "template":
+                                                 bool(placeholders_in(text)),
+                                                 "case_sensitive": args.match_case})
+            except (ConfigError, ValueError) as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            print(("Added: " if report["added"] else "Already saved: ") + report["label"])
+    if args.undo_rule_change:
+        try:
+            report = service.undo_rule_change(args.undo_rule_change)
+        except (ConfigError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        print(f"Undone: {report['summary']}" + ("" if report["changed"] else " (it was already undone)"))
+    if args.rule_changes:
+        changes = service.rule_changes(30)
+        if not changes:
+            print("No rule changes recorded yet.")
+        for c in changes:
+            print(f"{c['id']}  {c['ts'].replace('T', ' ')[:16]}  {c['source']:<10} {c['summary']}"
+                  + ("  (undone)" if c.get("reverted") else ""))
     if args.add_remove or args.add_abbreviation:
         pairs, errors = parse_abbreviations("\n".join(args.add_abbreviation))
         if errors:
@@ -562,6 +600,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="--add-remove: match upper/lower case exactly.")
     rules.add_argument("--inside-words", action="store_true",
                        help="--add-remove: also match inside longer words.")
+    rules.add_argument("--add-line", action="append", metavar="TEXT", default=[],
+                       help="Always remove every whole line containing TEXT (repeatable). Placeholders "
+                            "{date} {time} {number} {name} {word} {any} match look-alikes, e.g. "
+                            '--add-line "Signed by {name} on {date}".')
+    rules.add_argument("--add-line-start", action="append", metavar="TEXT", default=[],
+                       help="Always remove every line that starts with TEXT (repeatable).")
+    rules.add_argument("--add-remove-clipboard", action="store_true",
+                       help="Always remove what is on the clipboard (one rule per non-empty line).")
+    rules.add_argument("--rule-changes", action="store_true",
+                       help="List your recent rule changes (newest first) with their ids.")
+    rules.add_argument("--undo-rule-change", nargs="?", const="last", metavar="ID",
+                       help="Undo one rule change (default: the newest); ids from --rule-changes.")
     rules.add_argument("--list-rules", action="store_true",
                        help="Print your rules as a plain-text list (the --export-rules .txt format).")
     rules.add_argument("--export-rules", type=str, metavar="PATH",
@@ -688,7 +738,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_export_abbreviations(args)
         return
     if (args.add_remove or args.add_abbreviation or args.list_rules or args.export_rules
-            or args.import_rules):
+            or args.import_rules or args.add_line or args.add_line_start or args.add_remove_clipboard
+            or args.rule_changes or args.undo_rule_change):
         sys.exit(_run_rules(args))
 
     if args.untoken is not None:

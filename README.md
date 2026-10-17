@@ -63,6 +63,10 @@ clean-chart.cmd               # Windows
 ./clean-chart --export-abbreviations plist   # text-expander file (plist|espanso|textexpander|ahk)
 ./clean-chart --add-remove "Electronically signed by"   # always remove this text (no regex)
 ./clean-chart --add-abbreviation "subarachnoid hemorrhage = SAH"   # always shorten this term
+./clean-chart --add-line "Signed by {name} on {date}"   # remove every look-alike line
+./clean-chart --add-line-start "Printed by"   # remove every line starting with this
+./clean-chart --add-remove-clipboard     # always remove what is on the clipboard
+./clean-chart --rule-changes             # recent rule changes; --undo-rule-change [ID] undoes one
 ./clean-chart --list-rules                # your rules as a plain-text list
 ./clean-chart --export-rules rules.json --complete   # .txt | .csv | .json (--complete adds built-in lists)
 ./clean-chart --import-rules rules.txt    # .txt | .csv | .json (--import-mode replace to overwrite)
