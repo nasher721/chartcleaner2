@@ -104,9 +104,12 @@ CSS = r"""
   --nd-ease:cubic-bezier(.22,.61,.36,1);
   --nd-dur-fast:140ms; --nd-dur:220ms; --nd-dur-slow:320ms;
 
-  /* --- status colours: identical in both modes ---------------------- */
+  /* --- status colours ------------------------------------------------
+     Hue stays put. Lightness is per theme so 12px status text clears
+     WCAG 4.5:1 and APCA Lc 60 on that theme's surfaces. Light mode uses
+     the darker ink; dark mode overrides these with the lighter ink. */
   --nd-accent:#D71921; --nd-accent-subtle:rgba(215,25,33,.15);
-  --nd-success:#4A9E5C; --nd-warning:#D4A843; --nd-error:#D71921;
+  --nd-success:#1D7637; --nd-warning:#7E5D00; --nd-error:#D71921;
 
   /* --- LIGHT (warm off-white paper, black ink) ---------------------- */
   --nd-black:#F5F5F5; --nd-surface:#FFFFFF; --nd-surface-raised:#F0F0F0;
@@ -134,9 +137,9 @@ CSS = r"""
   --cc-accent:var(--nd-text-display); --cc-accent-strong:var(--nd-text-display);
   --cc-on-accent:var(--nd-black);
   --cc-accent-soft:var(--nd-tint); --cc-accent-line:var(--nd-border-visible);
-  --cc-pos:var(--nd-success); --cc-pos-soft:rgba(74,158,92,.16);
+  --cc-pos:var(--nd-success); --cc-pos-soft:rgba(29,118,55,.16);
   --cc-neg:var(--nd-accent);  --cc-neg-soft:rgba(215,25,33,.12);
-  --cc-warn:var(--nd-warning); --cc-warn-soft:rgba(212,168,67,.18);
+  --cc-warn:var(--nd-warning); --cc-warn-soft:rgba(126,93,0,.18);
   --cc-info:var(--nd-interactive); --cc-purple:var(--nd-text-secondary);
   --cc-header:var(--nd-black); --cc-shadow:none;
 }
@@ -149,8 +152,10 @@ CSS = r"""
   --nd-text-primary:#E8E8E8; --nd-text-display:#FFFFFF;
   --nd-interactive:#5B9BF6;
   --nd-hover:rgba(255,255,255,.05); --nd-tint:rgba(255,255,255,.06);
-  --cc-pos-soft:rgba(74,158,92,.18); --cc-neg-soft:rgba(215,25,33,.18);
-  --cc-warn-soft:rgba(212,168,67,.18);
+  --nd-accent:#FBADA4; --nd-accent-subtle:rgba(251,173,164,.22);
+  --nd-success:#7ACE89; --nd-warning:#E3B753; --nd-error:#FBADA4;
+  --cc-pos-soft:rgba(122,206,137,.18); --cc-neg-soft:rgba(251,173,164,.18);
+  --cc-warn-soft:rgba(227,183,83,.18);
   /* Quasar re-declares its brand colours on .body--dark; point them back. */
   --q-primary:var(--nd-text-display); --q-secondary:var(--nd-text-secondary);
   --q-accent:var(--nd-text-display);
@@ -189,8 +194,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-shell{width:100%;max-width:1440px;margin:0 auto;padding:0 var(--nd-space-lg);}
 .cc-topbar{min-height:56px;gap:var(--nd-space-md);}
 .cc-navbar{display:flex;align-items:stretch;gap:0;
-  overflow-x:auto;scrollbar-width:none;}
-.cc-navbar::-webkit-scrollbar{display:none;}
+  overflow-x:auto;}
 .cc-navlink{display:flex;align-items:center;height:40px;padding:0 var(--nd-space-md);
   font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.06em;
   text-transform:uppercase;color:var(--nd-text-secondary);cursor:pointer;
@@ -263,8 +267,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   transition:color var(--nd-dur-fast) var(--nd-ease),
              background var(--nd-dur-fast) var(--nd-ease);}
 .cc-headbtn:hover{color:var(--nd-text-display);background:var(--nd-hover);}
-.cc-brand{font-family:var(--nd-mono);font-size:13px;font-weight:700;letter-spacing:.16em;
-  text-transform:uppercase;color:var(--nd-text-display);}
+.cc-brand{display:inline-flex;align-items:center;font-family:var(--nd-mono);font-size:13px;
+  font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--nd-text-display);
+  text-decoration:none;cursor:pointer;}
 .cc-version{font-family:var(--nd-mono);font-size:12px;letter-spacing:.08em;
   color:var(--nd-text-secondary);border:1px solid var(--nd-border-visible);
   border-radius:var(--nd-r-tech);padding:2px 6px;}
@@ -473,7 +478,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-segbar--accent > span.on{background:var(--nd-accent);}
 .cc-segbar--over > span.on{background:var(--nd-accent);}
 .cc-segbar-note{font-family:var(--nd-mono);font-size:var(--label);
-  color:var(--nd-text-disabled);}
+  color:var(--nd-text-primary);}
 
 /* Dot-matrix motif — the empty-state illustration and decorative grid. */
 .cc-dotgrid{width:108px;height:54px;
@@ -695,7 +700,12 @@ pre,code,kbd{font-family:var(--nd-mono);}
     background:var(--nd-surface-raised) !important;color:var(--nd-text-primary) !important;}
   .bg-negative,.bg-red{background:var(--nd-accent) !important;color:#fff !important;}
   .bg-positive,.bg-green{background:var(--nd-success) !important;color:#fff !important;}
-  .bg-warning,.bg-orange,.bg-amber{background:var(--nd-warning) !important;color:#000 !important;}
+  .bg-warning,.bg-orange,.bg-amber{background:var(--nd-warning) !important;color:#fff !important;}
+  /* Dark status fills are the light ink, so badge labels flip to black. */
+  .body--dark .bg-negative,.body--dark .bg-red,
+  .body--dark .bg-positive,.body--dark .bg-green,
+  .body--dark .bg-warning,.body--dark .bg-orange,.body--dark .bg-amber{
+    color:#000 !important;}
   .text-negative,.text-red,.text-red-500,.text-red-600,.text-red-700,.text-red-9,
   .text-red-8{color:var(--nd-accent) !important;}
   .text-positive,.text-green,.text-green-500,.text-green-600,.text-green-8,
@@ -717,6 +727,16 @@ pre,code,kbd{font-family:var(--nd-mono);}
   .border-red-300,.border-red-400{border-color:var(--nd-accent) !important;}
   .border-amber-400,.border-orange-300{border-color:var(--nd-warning) !important;}
   .border-green-400{border-color:var(--nd-success) !important;}
+  /* Outlined destructive buttons stay transparent with accent-coloured text.
+     This has to live in the layer: an unlayered rule loses to the fills above. */
+  .q-btn.bg-negative,.q-btn.bg-red{background:transparent !important;
+    color:var(--nd-accent) !important;border:1px solid var(--nd-accent);}
+  .q-btn.bg-negative:hover,.q-btn.bg-red:hover{background:var(--cc-neg-soft) !important;}
+  @media (max-width:599px){
+    .cc-topbar,.cc-topbar .no-wrap{flex-wrap:wrap !important;row-gap:var(--nd-space-xs);}
+    .cc-narrow-icon .block{display:none !important;}
+    .q-field__native,.q-field__input{font-size:16px !important;}
+  }
 }
 
 /* =====================================================================
@@ -776,19 +796,26 @@ pre,code,kbd{font-family:var(--nd-mono);}
   .cc-stage-row{flex-wrap:wrap !important;row-gap:6px;}
   .cc-stage-row .q-space{display:none;}
   .cc-stage-row .cc-drag{display:none;}
+}
+@media (max-width:599px){
+  .cc-brand{display:none;}
+  .cc-page-title{font-size:24px;}
+  /* The header action row is one line on desktop. On a phone it wraps, and
+     Suggestions keeps its icon so palette, shortcuts and theme stay on screen. */
+  .cc-topbar,.cc-topbar .no-wrap{flex-wrap:wrap !important; row-gap:var(--nd-space-xs);}
+  .cc-narrow-icon .block{display:none !important;}
+  .cc-narrow-icon{padding:0 !important; min-width:44px;}
+  /* iOS Safari zooms the page when an input is under 16px. */
+  .q-field__native,.q-field__input{font-size:16px;}
+  /* Touch targets: every control earns at least 44px on a phone. */
+  .q-btn{min-height:44px;}
+  .cc-headbtn{min-height:44px;}
   /* A three-way toggle cannot fit a phone; stack it instead of clipping. */
   .q-btn-group{flex-direction:column;align-items:stretch;width:100%;
     border-radius:var(--nd-r-compact);}
   .q-btn-group>.q-btn{border-right:0 !important;
     border-bottom:1px solid var(--nd-border-visible);}
   .q-btn-group>.q-btn:last-child{border-bottom:0;}
-}
-@media (max-width:599px){
-  .cc-brand{display:none;}
-  .cc-page-title{font-size:24px;}
-  /* Touch targets: every control earns at least 44px on a phone. */
-  .q-btn{min-height:44px;}
-  .cc-headbtn{min-height:44px;}
   /* Dialogs are laid out at desktop widths in the page code — clamp them. */
   .q-dialog .q-card{width:auto !important;max-width:calc(100vw - 32px) !important;}
   .q-dialog__inner{padding:16px;}
@@ -811,7 +838,41 @@ pre,code,kbd{font-family:var(--nd-mono);}
     transition-duration:.01ms !important;}
 }
 </style>
-<script>requestAnimationFrame(function(){document.documentElement.classList.add("cc-ready");});</script>
+<script>
+requestAnimationFrame(function(){document.documentElement.classList.add("cc-ready");});
+/* Quasar's uploader names its add button and file input from the icon ligature.
+   Label the chart drop once Vue mounts it, and again if it re-renders. */
+(function(){
+  var NAME = "Upload a chart file";
+  function labelDrop(drop){
+    drop.querySelectorAll(".q-btn").forEach(function(btn){
+      var current = btn.getAttribute("aria-label");
+      if(!current || current === "add_box") btn.setAttribute("aria-label", NAME);
+      var icon = btn.querySelector(".q-icon");
+      if(icon) icon.setAttribute("aria-hidden", "true");
+    });
+    drop.querySelectorAll("input[type=file]").forEach(function(input){
+      if(!input.getAttribute("aria-label")) input.setAttribute("aria-label", NAME);
+    });
+  }
+  function scan(node){
+    if(!node) return;
+    if(node.nodeType === 9 || node.nodeType === 11){
+      node.querySelectorAll(".cc-chart-drop").forEach(labelDrop);
+      return;
+    }
+    if(node.nodeType !== 1) return;
+    var drop = (node.matches && node.matches(".cc-chart-drop")) ? node
+      : (node.closest ? node.closest(".cc-chart-drop") : null);
+    if(drop) labelDrop(drop);
+    if(node.querySelectorAll) node.querySelectorAll(".cc-chart-drop").forEach(labelDrop);
+  }
+  scan(document);
+  new MutationObserver(function(records){
+    records.forEach(function(record){ record.addedNodes.forEach(scan); });
+  }).observe(document.documentElement, {childList:true, subtree:true});
+})();
+</script>
 """
 
 
@@ -945,6 +1006,8 @@ _DARK_TOKENS = {
     "disabled": "#666666", "interactive": "#5B9BF6",
     "display-60": "rgba(255,255,255,.6)", "display-30": "rgba(255,255,255,.3)",
     "ink": "255,255,255",
+    "success": "#7ACE89", "warning": "#E3B753", "accent": "#FBADA4",
+    "success-soft": "rgba(122,206,137,.14)",
 }
 _LIGHT_TOKENS = {
     "black": "#F5F5F5", "surface": "#FFFFFF", "surface-raised": "#F0F0F0",
@@ -953,10 +1016,13 @@ _LIGHT_TOKENS = {
     "disabled": "#999999", "interactive": "#007AFF",
     "display-60": "rgba(0,0,0,.6)", "display-30": "rgba(0,0,0,.3)",
     "ink": "0,0,0",
+    "success": "#1D7637", "warning": "#7E5D00", "accent": "#D71921",
+    "success-soft": "rgba(29,118,55,.14)",
 }
+# Fallback only. Live charts read the per-theme values above.
 _STATUS_TOKENS = {
-    "success": "#4A9E5C", "warning": "#D4A843", "accent": "#D71921",
-    "success-soft": "rgba(74,158,92,.14)",
+    "success": "#1D7637", "warning": "#7E5D00", "accent": "#D71921",
+    "success-soft": "rgba(29,118,55,.14)",
 }
 
 

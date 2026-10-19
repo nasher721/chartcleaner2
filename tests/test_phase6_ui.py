@@ -84,7 +84,7 @@ async def test_review_click_can_delete_the_rule(user: User, page):
     await _clean(user)
     user.find(marker="review-diff").trigger("click", "g0")
     user.find("Delete this rule").click()
-    user.find("Confirm").click()
+    user.find("Delete rule").click()
     for _ in range(200):
         if "Printed by" in (CLEAN_STATE.get("result_text") or ""):
             break

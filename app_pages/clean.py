@@ -949,7 +949,8 @@ async def clean_page():
                               on_click=lambda: confirm_dialog(
                                   "Delete this rule? A backup of your rules is kept.",
                                   lambda: (dlg.close(), asyncio.get_running_loop().create_task(
-                                      delete_rule(g))))).props("flat color=negative")
+                                      delete_rule(g))),
+                                  confirm_label="Delete rule")).props("flat color=negative")
                 ui.button("Edit on Pipeline page", icon="tune",
                           on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
                 ui.button("Copy", icon="content_copy",
@@ -2812,7 +2813,8 @@ async def clean_page():
             .props("flat round aria-label='Local AI panel'").classes("cc-headbtn") \
             .tooltip("Local AI panel (Alt+A)")
         inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
-            .props("flat no-caps color=grey").classes("cc-headbtn").mark("inbox") \
+            .props("flat no-caps color=grey aria-label='Suggestions'") \
+            .classes("cc-headbtn cc-narrow-icon").mark("inbox") \
             .tooltip("Suggestions")
 
     with shell("Clean a chart", "clean", commands=commands, shortcuts=shortcuts,
@@ -2978,7 +2980,7 @@ async def clean_page():
                     ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
                               label="Drop .txt / .docx / .pdf") \
                         .props("accept=.txt,.md,.docx,.pdf,text/plain flat bordered dense hide-upload-btn hide-upload-progress") \
-                        .classes("w-[280px]").style("max-height: 72px")
+                        .classes("w-[280px] cc-chart-drop").style("max-height: 72px")
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 

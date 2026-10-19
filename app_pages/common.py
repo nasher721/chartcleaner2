@@ -682,7 +682,6 @@ def shell(title: str, active: str, *, measure: bool = False,
     # last-in-document stylesheet wins the order battle at equal specificity.
     ui.add_body_html(CSS)
     ui.add_body_html(a11y.SR_CSS)
-    a11y.skip_link()
     dark = ui.dark_mode(bool(PREFS.get("dark", True)))
     set_chart_theme(bool(PREFS.get("dark", True)))
     clear_charts()
@@ -704,6 +703,9 @@ def shell(title: str, active: str, *, measure: bool = False,
         retheme_charts()
 
     with ui.header().classes("cc-header").props("role=banner"):
+        # First child of the header, which Quasar places ahead of page content,
+        # so this is the first tab stop rather than one after the nav.
+        a11y.skip_link()
         with ui.element("div").classes("cc-band"):
             with ui.row().classes("cc-shell cc-topbar w-full items-center justify-between no-wrap"):
                 with ui.row().classes("items-center gap-3 no-wrap"):
@@ -711,9 +713,8 @@ def shell(title: str, active: str, *, measure: bool = False,
                         .props("flat round aria-label='Toggle navigation menu'") \
                         .classes("cc-headbtn cc-mobile-only")
                     ui.html(BRAND_SVG)
-                    brand = ui.label("Chart Cleaner").classes("cc-brand cursor-pointer") \
-                        .on("click", lambda: ui.navigate.to("/"))
-                    a11y.activate_on_key(brand, role="link", label="Chart Cleaner home")
+                    with ui.element("a").classes("cc-brand").props('href="/"'):
+                        ui.label("Chart Cleaner")
                     ui.label(f"v{__version__}").classes("cc-version")
                 with ui.row().classes("items-center gap-2 no-wrap"):
                     with ui.row().classes("cc-desktop-only items-center gap-2 no-wrap"):
@@ -799,11 +800,11 @@ def shell(title: str, active: str, *, measure: bool = False,
             yield
 
 
-def confirm_dialog(message: str, action) -> None:
+def confirm_dialog(message: str, action, *, confirm_label: str = "Confirm") -> None:
     with ui.dialog() as dlg, ui.card():
         ui.label(message)
         with ui.row():
-            ui.button("Confirm", color="negative", on_click=lambda: (dlg.close(), action()))
+            ui.button(confirm_label, color="negative", on_click=lambda: (dlg.close(), action()))
             ui.button("Cancel", on_click=dlg.close).props("flat")
     dlg.open()
 
