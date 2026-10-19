@@ -3,7 +3,7 @@
 The Clean page's rule builder (and the generalize list) call :func:`preview`
 for the rule being built and show:
 
-* how often it matches in the chart on screen, with the lines it changes;
+* how often it matches in the chart on screen, with each change shown in place;
 * what it would do to the recent charts (:mod:`rule_preview` — one stage only,
   so every difference is this rule's), slow or risky patterns included;
 * clinical values it would delete from the chart on screen
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from .fact_check import extract_facts, fact_counts
 from .regex_risk import risks as regex_risks
-from .rule_preview import _changed_lines, preview as stage_preview
+from .rule_preview import _align_changes, _changed_lines, excerpt_windows, preview as stage_preview
 from .rule_shapes import build, normalize
 
 __all__ = ["BuilderPreview", "config_impact", "keep_conflicts", "preview", "rank", "trial"]
@@ -47,6 +47,7 @@ class BuilderPreview:
     conflict: str = ""                  # an existing rule with another replacement
     risks: list[str] = field(default_factory=list)
     impact: dict | None = None          # rule_preview.RuleImpact.to_dict() on recent charts
+    excerpt: dict | None = None        # in-place windows; None if that view could not be built
 
     @property
     def warnings(self) -> list[str]:
@@ -78,7 +79,7 @@ class BuilderPreview:
                 "samples": list(self.samples), "facts_lost": list(self.facts_lost),
                 "protected": list(self.protected), "conflict": self.conflict,
                 "risks": list(self.risks), "impact": self.impact, "warnings": self.warnings,
-                "headline": self.headline}
+                "headline": self.headline, "excerpt": self.excerpt}
 
 
 def _pair(rule) -> list[str]:
@@ -156,12 +157,22 @@ def preview(cfg: dict, rule, chart: str, recent: list[str] | None = None, *,
                 and existing[1] != pair[1]:
             result.conflict = "This text already has a rule with a different replacement."
     chart = chart or ""
+    result.excerpt = {"windows": [], "omitted": 0}
     if chart:
         after, result.hits = _apply(cfg, pair, chart, scope)
+        # One alignment for this refresh: samples and the excerpt share it.
+        # Applying the rule a second time would only repeat the same trial.
+        aligned = _align_changes(chart, after)
         result.samples = [{"before": c["before"][:300], "after": c["after"][:300]}
-                          for c in _changed_lines(chart, after)[:max_samples]]
+                          for c in aligned[:max_samples]]
         result.facts_lost = _facts_lost(chart, after)
         result.protected = keep_conflicts(cfg, pair, chart)
+        try:
+            result.excerpt = excerpt_windows(chart, after, aligned=aligned)
+        except Exception:
+            result.excerpt = None
+            result.samples = [{"before": c["before"][:300], "after": c["after"][:300]}
+                              for c in _changed_lines(chart, after)[:max_samples]]
     if recent:
         base = copy.deepcopy(cfg)
         if scope:

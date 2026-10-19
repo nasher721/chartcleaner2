@@ -23,7 +23,14 @@ from dataclasses import dataclass, field
 from .regex_risk import risks as regex_risks
 from .stages import SLOW_RULE_MS, run_learned, run_regex_list, run_regex_pairs
 
-__all__ = ["RuleImpact", "preview", "trial_config"]
+__all__ = ["ELLIPSIS", "RuleImpact", "clip_segments", "excerpt_windows", "preview",
+           "trial_config", "visible_line"]
+
+# How much of the note to show around a cluster, and how many clusters to draw.
+EXCERPT_CONTEXT = 2
+EXCERPT_MAX_WINDOWS = 12
+EXCERPT_VISIBLE_CHARS = 240
+ELLIPSIS = "…"
 
 # stage id -> (config key, entries are [pattern, replacement] pairs, flags)
 _STAGES = {
@@ -124,6 +131,260 @@ def _changed_lines(before: str, after: str) -> list[dict]:
             if old.strip() or new.strip():
                 out.append({"before": old, "after": new})
     return out
+
+
+# A gap larger than this is aligned the fast surplus way. Diffing every line
+# of a copy-forward chart is what made _changed_lines necessary.
+_REGION_LIMIT = 200
+
+
+def _emit_change(out: list[dict], old: str, new: str, index: int | None) -> None:
+    # Blank lines are not changes, matching _changed_lines.
+    if old.strip() or new.strip():
+        out.append({"before": old, "after": new, "index": index})
+
+
+def _surplus_indexed(lines: list[str], other: list[str], origin: int) -> list[tuple[int, str]]:
+    """Surplus lines of ``lines``, with indexes shifted by ``origin``."""
+    remaining = Counter(other)
+    out = []
+    for i, line in enumerate(lines):
+        if remaining.get(line, 0) > 0:
+            remaining[line] -= 1
+        elif line.strip():
+            out.append((origin + i, line))
+    return out
+
+
+def _anchors(a: list[str], b: list[str]) -> list[tuple[int, int]]:
+    """Lines that occur once on each side, in order. They are not the surplus."""
+    count_a, count_b = Counter(a), Counter(b)
+    b_at = {line: i for i, line in enumerate(b) if count_b[line] == 1 and count_a[line] == 1}
+    found = []
+    last = -1
+    for i, line in enumerate(a):
+        j = b_at.get(line)
+        if j is not None and j > last:
+            found.append((i, j))
+            last = j
+    return [(-1, -1), *found, (len(a), len(b))]
+
+
+def _align_slice(a: list[str], i0: int, i1: int, b: list[str], j0: int, j1: int) -> list[dict]:
+    """Changes in ``a[i0:i1]`` / ``b[j0:j1]``, indexes pointing into ``a``."""
+    if i0 >= i1 and j0 >= j1:
+        return []
+    if j0 >= j1:
+        out: list[dict] = []
+        for i in range(i0, i1):
+            _emit_change(out, a[i], "", i)
+        return out
+    if i0 >= i1:
+        out = []
+        for j in range(j0, j1):
+            _emit_change(out, "", b[j], None)
+        return out
+    if (i1 - i0) > _REGION_LIMIT or (j1 - j0) > _REGION_LIMIT:
+        return _align_surplus_slice(a, i0, i1, b, j0, j1)
+    aa, bb = a[i0:i1], b[j0:j1]
+    out = []
+    for tag, x1, x2, y1, y2 in difflib.SequenceMatcher(a=aa, b=bb, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        n = max(x2 - x1, y2 - y1)
+        for k in range(n):
+            has_old = x1 + k < x2
+            old = aa[x1 + k] if has_old else ""
+            new = bb[y1 + k] if y1 + k < y2 else ""
+            _emit_change(out, old, new, i0 + x1 + k if has_old else None)
+    return out
+
+
+def _align_surplus_slice(a: list[str], i0: int, i1: int, b: list[str], j0: int, j1: int) -> list[dict]:
+    """The :func:`_changed_lines` pairing, with original indexes on the before side."""
+    aa, bb = a[i0:i1], b[j0:j1]
+    left, right = _surplus_indexed(aa, bb, i0), _surplus_indexed(bb, aa, 0)
+    out: list[dict] = []
+    matcher = difflib.SequenceMatcher(a=[t for _, t in left], b=[t for _, t in right], autojunk=False)
+    for tag, x1, x2, y1, y2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        n = max(x2 - x1, y2 - y1)
+        for k in range(n):
+            has_old = x1 + k < x2
+            old = left[x1 + k][1] if has_old else ""
+            new = right[y1 + k][1] if y1 + k < y2 else ""
+            _emit_change(out, old, new, left[x1 + k][0] if has_old else None)
+    return out
+
+
+def _align_changes(before: str, after: str) -> list[dict]:
+    """Changed lines in document order, each mapped back to the original note.
+
+    Lines that occur once on both sides are anchors, the same idea as
+    :func:`_changed_lines` keeping only the surplus. Only the gaps between
+    anchors are paired, so a repeated line that the rule left in place is not
+    the copy that gets struck. Blank lines are ignored. An inserted line has
+    ``index`` None.
+    """
+    a, b = before.splitlines(), after.splitlines()
+    out: list[dict] = []
+    points = _anchors(a, b)
+    for (i0, j0), (i1, j1) in zip(points, points[1:]):
+        out.extend(_align_slice(a, i0 + 1, i1, b, j0 + 1, j1))
+    return out
+
+
+def _segments(before: str, after: str) -> list[tuple[str, str]]:
+    """Shared text plain, text only on the original struck, text only on the result green."""
+    if not after:
+        return [("del", before)] if before else []
+    if not before:
+        return [("ins", after)]
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=before, b=after, autojunk=False).get_opcodes():
+        if tag == "equal":
+            out.append(("plain", before[i1:i2]))
+        elif tag == "delete":
+            out.append(("del", before[i1:i2]))
+        elif tag == "insert":
+            out.append(("ins", after[j1:j2]))
+        else:
+            if before[i1:i2]:
+                out.append(("del", before[i1:i2]))
+            if after[j1:j2]:
+                out.append(("ins", after[j1:j2]))
+    return [(kind, text) for kind, text in out if text]
+
+
+def _inserted(text: str) -> dict:
+    return {"kind": "change", "index": None, "segments": [("ins", text)]}
+
+
+def _nearest_anchor(pos: int, indexed: list[int]) -> tuple[int | None, str]:
+    prev = max((i for i in indexed if i < pos), default=None)
+    nxt = min((i for i in indexed if i > pos), default=None)
+    if prev is None and nxt is None:
+        return None, ""
+    if prev is None:
+        return nxt, "before"
+    if nxt is None or (pos - prev) <= (nxt - pos):
+        return prev, "after"
+    return nxt, "before"
+
+
+def _place_inserts(changes: list[dict]) -> tuple[dict, dict, dict, list[str]]:
+    """Insertions (no original line) join the nearest changed original line."""
+    hosts: dict[int, dict] = {}
+    before_map: dict[int, list[str]] = {}
+    after_map: dict[int, list[str]] = {}
+    orphans: list[str] = []
+    indexed = [i for i, change in enumerate(changes) if change.get("index") is not None]
+    for pos, change in enumerate(changes):
+        index = change.get("index")
+        if index is not None:
+            hosts[index] = change
+            continue
+        text = change.get("after") or ""
+        if not text.strip():
+            continue
+        anchor, side = _nearest_anchor(pos, indexed)
+        if anchor is None:
+            orphans.append(text)
+            continue
+        host = changes[anchor]["index"]
+        (before_map if side == "before" else after_map).setdefault(host, []).append(text)
+    return hosts, before_map, after_map, orphans
+
+
+def _spans(indexes: list[int], n_lines: int) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for i in indexes:
+        if n_lines <= 0:
+            break
+        start = max(0, i - EXCERPT_CONTEXT)
+        end = min(n_lines - 1, i + EXCERPT_CONTEXT)
+        if spans and start <= spans[-1][1] + 1:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], end))
+        else:
+            spans.append((start, end))
+    return spans
+
+
+def _changed_in_span(start: int, end: int, hosts: dict, before_map: dict, after_map: dict) -> int:
+    total = 0
+    for i in range(start, end + 1):
+        if i in hosts:
+            total += 1
+        total += len(before_map.get(i, ()))
+        total += len(after_map.get(i, ()))
+    return total
+
+
+def excerpt_windows(before: str, after: str, *, aligned: list[dict] | None = None) -> dict:
+    """Clusters of changes with two lines of the original note around each.
+
+    ``aligned`` is the one alignment for this refresh (:func:`_align_changes`);
+    pass it to avoid aligning the chart again. Returns ``{"windows", "omitted"}``.
+    Each window has ``gap_before`` (0 on the first) and ``lines``. A line has
+    ``kind`` (``context`` or ``change``), ``index`` (original line, or None for
+    an insertion) and ``segments`` of ``("plain"|"del"|"ins", text)``. At most
+    12 windows are drawn; ``omitted`` counts changed lines in the rest.
+    """
+    changes = aligned if aligned is not None else _align_changes(before, after)
+    original = before.splitlines()
+    hosts, ins_before, ins_after, orphans = _place_inserts(changes)
+    if not hosts:
+        if not orphans:
+            return {"windows": [], "omitted": 0}
+        return {"windows": [{"gap_before": 0, "lines": [_inserted(text) for text in orphans]}],
+                "omitted": 0}
+    spans = _spans(sorted(hosts), len(original))
+    omitted = sum(_changed_in_span(start, end, hosts, ins_before, ins_after)
+                  for start, end in spans[EXCERPT_MAX_WINDOWS:])
+    windows = []
+    prev_end = None
+    for start, end in spans[:EXCERPT_MAX_WINDOWS]:
+        gap = 0 if prev_end is None else start - prev_end - 1
+        prev_end = end
+        lines = []
+        for i in range(start, end + 1):
+            for text in ins_before.get(i, ()):
+                lines.append(_inserted(text))
+            if i in hosts:
+                lines.append({"kind": "change", "index": i,
+                              "segments": _segments(hosts[i]["before"], hosts[i]["after"])})
+            else:
+                lines.append({"kind": "context", "index": i,
+                              "segments": [("plain", original[i])]})
+            for text in ins_after.get(i, ()):
+                lines.append(_inserted(text))
+        windows.append({"gap_before": gap, "lines": lines})
+    return {"windows": windows, "omitted": omitted}
+
+
+def clip_segments(segments: list[tuple[str, str]],
+                  limit: int = EXCERPT_VISIBLE_CHARS) -> tuple[list[tuple[str, str]], bool]:
+    """The start of ``segments`` totaling at most ``limit`` characters, and whether it was cut."""
+    shown: list[tuple[str, str]] = []
+    left = limit
+    for i, (kind, text) in enumerate(segments):
+        if left <= 0:
+            return shown, any(part for _kind, part in segments[i:])
+        if len(text) <= left:
+            if text:
+                shown.append((kind, text))
+            left -= len(text)
+        else:
+            shown.append((kind, text[:left]))
+            return shown, True
+    return shown, False
+
+
+def visible_line(segments: list[tuple[str, str]], limit: int = EXCERPT_VISIBLE_CHARS) -> str:
+    """One rendered line: at most ``limit`` characters, then an ellipsis when cut."""
+    shown, clipped = clip_segments(segments, limit)
+    return "".join(text for _kind, text in shown) + (ELLIPSIS if clipped else "")
 
 
 def preview(cfg: dict, sid: str, entry, texts: list[str], *,

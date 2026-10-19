@@ -116,6 +116,24 @@ async def test_builder_warns_before_deleting_clinical_values(user: User, page):
     await user.should_see("Would delete clinical values from this chart")
 
 
+async def test_builder_excerpt_shows_the_change_and_leaves_the_chart(user: User, page):
+    text = "above line\nBP 120/80 & <reviewed>\nbelow line\n"
+    await _open(user, "/ux-builder-excerpt", text)
+    _select(user, text, "reviewed")
+    user.find(marker="sel-build").click()
+    await user.should_see(marker="rule-builder")
+    kind = next(iter(user.find(marker="builder-kind").elements))
+    with user.client:
+        kind.set_value("line")
+    await user.should_see(marker="builder-excerpt", content="above line")
+    await user.should_see(marker="builder-excerpt", content="reviewed")
+    await user.should_see("Would delete clinical values from this chart")
+    html = next(iter(user.find(marker="builder-excerpt").elements)).content
+    assert "&amp;" in html and "&lt;" in html
+    assert "<reviewed>" not in html
+    assert _chart(user).value == text
+
+
 async def test_builder_scope_and_note_are_saved(user: User, page):
     text = "Medications:\nper pharmacy\n\nAssessment and Plan:\nper pharmacy\n"
     await _open(user, "/ux-builder-scope", text)

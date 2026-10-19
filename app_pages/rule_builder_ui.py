@@ -18,6 +18,7 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from chartcleaner import recent_charts, rule_builder, rule_shapes
+from chartcleaner.rule_preview import ELLIPSIS, clip_segments
 from chartcleaner.section_parser import SECTION_TAXONOMY
 
 KIND_LABELS = {"text": "This text", "line": "Whole lines containing it",
@@ -28,6 +29,38 @@ SCOPE_LABELS = {"all": "Everywhere", "only": "Only in these sections", "except":
 SECTION_LABELS = {key: key.replace("_", " ").capitalize() for key in SECTION_TAXONOMY}
 PLACEHOLDER_HELP = "Placeholders: " + ", ".join(
     f"{{{name}}} = {help_}" for name, (_rx, help_) in rule_shapes.PLACEHOLDERS.items())
+
+
+def _segments_html(segments) -> str:
+    """One visible line: chart text escaped, cut at 240 characters."""
+    shown, clipped = clip_segments(segments)
+    chunks = []
+    for kind, text in shown:
+        safe = esc(text)
+        if kind == "del":
+            chunks.append(f"<del class='cc-ghost-del'>{safe}</del>")
+        elif kind == "ins":
+            chunks.append(f"<span class='cc-ghost-ins'>{safe}</span>")
+        else:
+            chunks.append(safe)
+    if clipped:
+        chunks.append(ELLIPSIS)
+    return "".join(chunks)
+
+
+def _excerpt_html(excerpt: dict) -> str:
+    """Read-only excerpt. No buttons: clicking it does nothing."""
+    parts: list[str] = []
+    for window in excerpt.get("windows") or []:
+        gap = window.get("gap_before") or 0
+        if gap > 0:
+            parts.append(f"<div class='opacity-60'>{gap} lines unchanged.</div>")
+        for line in window.get("lines") or []:
+            parts.append("<div>" + _segments_html(line.get("segments") or []) + "</div>")
+    omitted = excerpt.get("omitted") or 0
+    if omitted:
+        parts.append(f"<div class='opacity-60'>{omitted} more matches not shown.</div>")
+    return "".join(parts)
 
 
 def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
@@ -91,6 +124,8 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
         ui.separator()
         headline = ui.label("").classes("text-sm font-medium").mark("builder-headline")
         warnings_box = ui.column().classes("w-full gap-1")
+        excerpt_view = ui.html("").classes("w-full text-xs cc-mono whitespace-pre-wrap break-words") \
+            .mark("builder-excerpt")
         samples_box = ui.column().classes("w-full gap-0")
 
         def shape_now() -> dict | None:
@@ -118,13 +153,20 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
                     with ui.row().classes("items-start gap-1 no-wrap"):
                         ui.icon("warning").classes("text-warning")
                         ui.label(warning).classes("text-sm").mark("builder-warning")
-            with samples_box:
-                samples = list(result.samples)
-                if result.impact:
-                    samples += [s for s in result.impact.get("samples", []) if s not in samples]
-                for s in samples[:8]:
-                    ui.label(f"− {s['before'][:160]}" + (f"   → {s['after'][:80]}" if s["after"] else "")) \
-                        .classes("text-xs cc-mono opacity-80")
+            # An excerpt replaces the one-line samples. Recent-chart hits stay in
+            # the headline and warnings; they do not get their own excerpt.
+            excerpt = result.excerpt
+            if excerpt is None:
+                excerpt_view.set_content("")
+                with samples_box:
+                    samples = list(result.samples)
+                    if result.impact:
+                        samples += [s for s in result.impact.get("samples", []) if s not in samples]
+                    for s in samples[:8]:
+                        ui.label(f"− {s['before'][:160]}" + (f"   → {s['after'][:80]}" if s["after"] else "")) \
+                            .classes("text-xs cc-mono opacity-80")
+            else:
+                excerpt_view.set_content(_excerpt_html(excerpt))
 
         def refresh() -> None:
             until_row.set_visibility(kind.value == "until")
@@ -136,12 +178,16 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
             if shape is None:
                 warnings_box.clear()
                 samples_box.clear()
+                excerpt_view.set_content("")
                 return
             try:
                 result = rule_builder.preview(load_config(common.CONFIG_PATH), shape, chart,
                                               scope=scope_now())
             except Exception as ex:  # an odd pattern must not break the dialog
                 headline.set_text(f"Could not preview: {ex}")
+                warnings_box.clear()
+                samples_box.clear()
+                excerpt_view.set_content("")
                 return
             state["recent"] = None
             show(result)

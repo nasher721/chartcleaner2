@@ -661,6 +661,8 @@ pre,code,kbd{font-family:var(--nd-mono);}
   word-break:break-word;}
 .cc-del{background:var(--cc-neg-soft);}
 .cc-ins{background:var(--cc-pos-soft);}
+.cc-ghost-del{text-decoration:line-through;}
+.cc-ghost-ins{color:var(--cc-pos);}
 .cc-rep{background:var(--cc-warn-soft);}
 .cc-flag{box-shadow:inset 2px 0 0 var(--nd-warning);}
 .cc-diff-left{border-right:1px solid var(--nd-border);}
