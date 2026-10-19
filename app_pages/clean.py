@@ -1495,10 +1495,15 @@ async def clean_page():
             grounding_badge(g.grounding_score, g.is_safe, g.total_entities)
             facts_badge(facts)
             context_badge(getattr(res, "context", None))
-            for item in g.ungrounded_entities:
-                ui.button(item, icon="content_copy",
-                          on_click=lambda _, it=item: copy_to_clipboard(it, "Copied ungrounded value")
-                          ).props("flat dense size=sm color=red")
+            # Defensive: a malformed grounding object must degrade to "no badges",
+            # not take the whole summary panel down.
+            ungrounded = getattr(g, "ungrounded_entities", None)
+            if isinstance(ungrounded, (list, tuple, set)):
+                for item in ungrounded:
+                    ui.button(str(item), icon="content_copy",
+                              on_click=lambda _, it=str(item): copy_to_clipboard(
+                                  it, "Copied ungrounded value")
+                              ).props("flat dense size=sm color=red")
 
     async def run_summarize() -> None:
         if summary_state["running"] or not CLEAN_STATE.get("result_text"):

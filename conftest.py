@@ -22,10 +22,16 @@ def _isolate_user_data(tmp_path, monkeypatch):
                        "EDIT_LOG_FILE": data / "edit_log.enc",
                        "RULE_HISTORY_FILE": data / "rule_history.enc",
                        "SIGNING_KEY_FILE": data / "signing_key.enc",
-                       "TRUSTED_KEYS_FILE": data / "trusted_keys.json"}.items():
+                       "TRUSTED_KEYS_FILE": data / "trusted_keys.json",
+                       "CUSTOM_TRUST_FILE": data / "custom_rule_trust.json",
+                       "LOG_FILE": data / "chartcleaner.log"}.items():
         monkeypatch.setattr(store, name, path)
     # Encryption keys go to a private file in tmp, never the real Keychain/DPAPI.
     from chartcleaner import secure_store
     monkeypatch.setenv(secure_store.BACKEND_ENV, "file")
     monkeypatch.setattr(secure_store, "key_dir", lambda: data)
     monkeypatch.setattr(rule_examples, "examples_path", lambda: tmp_path / "rule_examples.jsonl")
+    # Point the rotating log at tmp too: a page failure in a test must not append
+    # to the user's real data/chartcleaner.log.
+    from chartcleaner import logging_setup
+    logging_setup.setup_logging()

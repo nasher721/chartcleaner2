@@ -351,7 +351,7 @@ Build a self-contained app bundle once (on each platform), then share or copy it
 build_app.bat         # Windows → dist\ChartCleaner\ChartCleaner.exe
 ```
 
-The bundle includes Python, Presidio, and the spaCy model. On first launch it creates `config.json`, `custom_rules/`, and `data/` **next to the app**, so your rules and history stay there. Quit via Settings → "Quit app"; logs land in `data/app.log`.
+The bundle includes Python, Presidio, and the spaCy model. On first launch it creates `config.json`, `custom_rules/`, and `data/` **next to the app**, so your rules and history stay there. Quit via Settings → "Quit app"; logs land in `data/chartcleaner.log` (rotating: 2 MB × 3, identifiers redacted).
 
 ## Requirements
 
@@ -377,7 +377,7 @@ Clipboard mode uses [`pyperclip`](https://pypi.org/project/pyperclip/). The app 
 | Regex errors on save | The Pipeline page validates before saving; fix the highlighted pattern. |
 | Windows "cannot run scripts" | Use `Run Chart Cleaner.bat` / `install.bat` (no PowerShell policy needed). |
 | No admin rights | Everything installs under this folder with per-user Python — no elevation needed. |
-| A screen shows "This screen couldn't load" | An unexpected error hit that page. Nothing was cleaned or saved; the traceback is in the panel and in `data/app.log`. Use Reload, or reach the rest of the app from the nav. |
+| A screen shows "This screen couldn't load" | An unexpected error hit that page. Nothing was cleaned or saved; the traceback is in the panel and in `data/chartcleaner.log`. Use Reload, or reach the rest of the app from the nav. |
 
 `python app.py --help` for all launch options.
 

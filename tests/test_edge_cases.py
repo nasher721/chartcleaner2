@@ -7,6 +7,8 @@ phone-region optimization (presets/performance.json).
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
 
 from pathlib import Path
@@ -57,8 +59,16 @@ def test_very_large_input_stays_bounded():
     t0 = time.perf_counter()
     res = clean_text(big, _default(), wrap=False)
     dt = time.perf_counter() - t0
-    # 5000 lines of realistic prose must clean in well under a few seconds
-    assert dt < 8.0, f"clean took {dt:.1f}s on 5000 lines"
+    # 5000 lines of realistic prose must clean in well under a few seconds.
+    # This is a blowup guard, not a benchmark. Shared CI runners measure 4-10x
+    # slower than a developer machine (observed 10.9 s on macOS and 13.0 s on
+    # Ubuntu 3.10), so a tight bound there reports the runner, not the pipeline.
+    # The real performance protection is tests/test_performance.py.
+    if os.environ.get("CI"):
+        limit = 30.0
+    else:
+        limit = 20.0 if sys.platform == "win32" else 8.0
+    assert dt < limit, f"clean took {dt:.1f}s on 5000 lines (limit {limit:.0f}s)"
     assert res.chars_after > 0
 
 
@@ -125,7 +135,19 @@ def test_default_config_redacts_planted_phi():
 
 
 def test_phone_regions_preset_still_redacts_us_phone():
-    preset = json.loads((ROOT / "presets" / "performance.json").read_text(encoding="utf-8"))
+    """The US-phone preset must still redact a valid US number.
+
+    ``presets/`` is gitignored (it holds local tuning), so CI has no
+    ``performance.json``. Use the local file when it exists — that is the real
+    artifact — and fall back to the config it contains, so the behaviour stays
+    covered on a clean checkout.
+    """
+    preset_path = ROOT / "presets" / "performance.json"
+    if preset_path.exists():
+        preset = json.loads(preset_path.read_text(encoding="utf-8"))
+    else:
+        preset = _default()
+        preset.setdefault("nlp_redaction", {})["phone_regions"] = ["US"]
     res = clean_text("Call the patient at (617) 555-0199 today.", preset, wrap=False)
     assert "(617) 555-0199" not in res.text
 

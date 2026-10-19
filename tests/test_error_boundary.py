@@ -46,7 +46,7 @@ def test_every_route_is_guarded():
                                   "/stats", "/scripts", "/settings", "/doctor"}
 
 
-async def test_raising_page_shows_a_recovery_screen(user: User, monkeypatch, tmp_path):
+async def test_raising_page_shows_a_recovery_screen(user: User, monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
 
     def boom_page():
@@ -60,10 +60,14 @@ async def test_raising_page_shows_a_recovery_screen(user: User, monkeypatch, tmp
     # The recovery screen offers a way out.
     await user.should_see("Reload the app")
     await user.should_see("Go to Doctor")
+    # The failure is logged at ERROR on purpose — that is what support greps for.
+    # NiceGUI's user fixture fails any test that emits an ERROR, so discard it
+    # here: this test *intends* to break a page.
+    caplog.clear()
 
 
-async def test_raising_page_logs_the_traceback(user: User, monkeypatch, tmp_path):
-    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+async def test_raising_page_logs_the_traceback(user: User, monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(store, "LOG_FILE", tmp_path / "chartcleaner.log")
 
     def boom_page():
         raise ValueError("logged failure marker")
@@ -71,7 +75,8 @@ async def test_raising_page_logs_the_traceback(user: User, monkeypatch, tmp_path
     ui.page("/boom-log")(common.guarded(boom_page))
 
     await user.open("/boom-log")
-    log = (tmp_path / "app.log").read_text(encoding="utf-8")
+    log = (tmp_path / "chartcleaner.log").read_text(encoding="utf-8")
     assert "logged failure marker" in log
     assert "ValueError" in log
     assert "Page failed" in log
+    caplog.clear()  # the ERROR record is the point of this test; see above

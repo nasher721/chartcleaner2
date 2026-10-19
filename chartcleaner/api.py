@@ -3,6 +3,7 @@
 Routes (JSON in, JSON out), all backed by :mod:`chartcleaner.service`:
 
 * ``GET  /api/v1/health`` — ``{"ok": true, "version": ...}`` (no chart data, no token)
+* ``GET  /api/v1/ready`` — subsystem readiness; 200 when a clean can complete, 503 otherwise
 * ``POST /api/v1/clean`` — ``{"text", "preset"?, "format"?, "delta"?, "trends"?, "wrap"?}``
 * ``POST /api/v1/abbreviate`` / ``/api/v1/expand`` — ``{"text", "preset"?}``
 * ``POST /api/v1/prompt`` — ``{"text", "template", "preset"?}``
@@ -34,7 +35,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, service, store
+from . import __version__, readiness, service, store
 
 __all__ = ["MAX_BODY_BYTES", "token_path", "get_token", "rotate_token", "register"]
 
@@ -119,6 +120,12 @@ def register(app) -> None:
     @app.get("/api/v1/health")
     async def api_health() -> dict:
         return {"ok": True, "version": __version__}
+
+    @app.get("/api/v1/ready")
+    async def api_ready():
+        # Booleans and counts only — no paths, no chart data, no token needed.
+        report = await run_in_threadpool(readiness.check)
+        return JSONResponse(report, status_code=200 if report["ready"] else 503)
 
     async def run(request: Request, required: tuple[str, ...], call):
         data, denied = await _payload(request, required)

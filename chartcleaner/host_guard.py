@@ -55,9 +55,14 @@ class LoopbackHostGuard:
                     await send({"type": "websocket.close", "code": 1008})
                     return
                 body = b"Chart Cleaner only answers on this computer (127.0.0.1 / localhost)."
+                # This rejection is generated outside the SecurityHeaders middleware
+                # (this guard is the outermost layer), so carry the essentials here.
                 await send({"type": "http.response.start", "status": 403,
                             "headers": [(b"content-type", b"text/plain; charset=utf-8"),
-                                        (b"content-length", str(len(body)).encode())]})
+                                        (b"content-length", str(len(body)).encode()),
+                                        (b"x-content-type-options", b"nosniff"),
+                                        (b"x-frame-options", b"DENY"),
+                                        (b"referrer-policy", b"no-referrer")]})
                 await send({"type": "http.response.body", "body": body})
                 return
         await self.app(scope, receive, send)

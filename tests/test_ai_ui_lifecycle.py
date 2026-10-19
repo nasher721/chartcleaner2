@@ -30,7 +30,7 @@ def _result(text: str):
 def _summary(text: str) -> SummaryResult:
     return SummaryResult(
         text=text,
-        grounding=GroundingResult(100.0, True, [], 0),
+        grounding=GroundingResult(100.0, True, ungrounded_entities=[], total_entities=0),
         model="fake",
         preset="clinical",
         duration_ms=1,
@@ -41,7 +41,7 @@ def _answer(question: str, text: str) -> QaResult:
     return QaResult(
         question=question,
         answer=text,
-        grounding=GroundingResult(100.0, True, [], 0),
+        grounding=GroundingResult(100.0, True, ungrounded_entities=[], total_entities=0),
         model="fake",
         duration_ms=1,
     )
