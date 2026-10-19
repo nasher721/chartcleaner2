@@ -26,9 +26,9 @@ def settings_page():
         jump_row = ui.row().classes("w-full gap-1 flex-wrap")
 
         with ui.card().classes("w-full gap-2"):
-            ui.label("Updates").classes("font-semibold")
+            ui.label("Updates").classes("cc-section")
             ui.label(f"Current version: v{__version__}").classes("text-sm")
-            update_status = ui.label(str(common.PREFS.get("update_status", "Not checked"))).classes("text-sm opacity-70")
+            update_status = ui.label(str(common.PREFS.get("update_status", "Not checked"))).classes("cc-muted")
             last_checked = common.PREFS.get("update_last_checked")
             ui.label("Last check: " + (time.strftime("%Y-%m-%d %H:%M", time.localtime(last_checked))
                                        if last_checked else "never")).classes("text-xs opacity-60")
@@ -56,7 +56,7 @@ def settings_page():
             check_btn = ui.button("Check for updates", icon="refresh", on_click=manual_check).props("outline")
 
         with ui.card().classes("w-full gap-3"):
-            ui.label("Output").classes("font-semibold")
+            ui.label("Output").classes("cc-section")
             ui.switch("Wrap cleaned text in <patient_chart> tags",
                       value=bool(draft.get("wrap_output", True)),
                       on_change=lambda e: draft.update(wrap_output=e.value))
@@ -77,7 +77,7 @@ def settings_page():
                      "Editing the result or cleaning again resets that acknowledgement.").classes("text-sm")
 
         with ui.card().classes("w-full gap-2"):
-            ui.label("NLP redaction status").classes("font-semibold")
+            ui.label("NLP redaction status").classes("cc-section")
             try:
                 import presidio_analyzer  # noqa: F401
                 nlp_ok = find_spec("en_core_web_sm") is not None
@@ -92,7 +92,7 @@ def settings_page():
 
         # ---- converters & optional engines ------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("File converters & optional engines").classes("font-semibold")
+            ui.label("File converters & optional engines").classes("cc-section")
             ui.label("Core parts are always available. Optional engines are picked up "
                      "automatically when installed (pip install …) — the app works fine without them.") \
                 .classes("text-xs opacity-60 -mt-1")
@@ -121,7 +121,7 @@ def settings_page():
 
         # ---- folder watcher -----------------------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Folder watcher — auto-clean as you drop files").classes("font-semibold")
+            ui.label("Folder watcher — auto-clean as you drop files").classes("cc-section")
             ui.label("Any .txt/.md/.docx/.pdf dropped into the watched folder is ingested, cleaned "
                      "with your current rules, and written to the output folder as "
                      "<name>_cleaned.txt. Runs continue to appear in Statistics.") \
@@ -148,7 +148,7 @@ def settings_page():
                         base += f" · {len(s.errors)} note(s)"
                     return base
 
-                status_lbl = ui.label(watcher_status_text()).classes("text-xs opacity-70")
+                status_lbl = ui.label(watcher_status_text()).classes("text-xs cc-muted")
 
                 def start_watcher() -> None:
                     watch_dir = Path(wd_in.value or "").expanduser()
@@ -193,11 +193,11 @@ def settings_page():
                 ui.timer(2.0, lambda: status_lbl.set_text(watcher_status_text()))
 
         with ui.card().classes("w-full gap-2"):
-            ui.label("Data on this computer").classes("font-semibold")
-            ui.label(f"Config: {common.CONFIG_PATH}").classes("text-xs font-mono opacity-70")
-            ui.label(f"History: {store.STATS_FILE}").classes("text-xs font-mono opacity-70")
-            ui.label(f"Custom scripts: {common.CUSTOM_DIR}").classes("text-xs font-mono opacity-70")
-            ui.label(f"Presets: {store.PRESETS_DIR}").classes("text-xs font-mono opacity-70")
+            ui.label("Data on this computer").classes("cc-section")
+            ui.label(f"Config: {common.CONFIG_PATH}").classes("text-xs font-mono cc-muted")
+            ui.label(f"History: {store.STATS_FILE}").classes("text-xs font-mono cc-muted")
+            ui.label(f"Custom scripts: {common.CUSTOM_DIR}").classes("text-xs font-mono cc-muted")
+            ui.label(f"Presets: {store.PRESETS_DIR}").classes("text-xs font-mono cc-muted")
             with ui.row().classes("gap-2 flex-wrap"):
                 ui.button("Open data folder", icon="folder",
                           on_click=lambda: open_folder(store.DATA_DIR)).props("flat")
@@ -215,7 +215,7 @@ def settings_page():
                       on_click=quit_app).props("flat color=negative")
 
         with ui.card().classes("w-full gap-2"):
-            ui.label("Config backups").classes("font-semibold")
+            ui.label("Config backups").classes("cc-section")
             ui.label("Every rules save keeps a timestamped copy in data/backups (newest 5). "
                      "Corrupt backups are refused.") \
                 .classes("text-xs opacity-60 -mt-1")
@@ -231,7 +231,7 @@ def settings_page():
                     ui.icon("history").classes("opacity-60")
                     ui.label(b["ts"]).classes("text-sm w-40")
                     rules_txt = f"{b['rules']} rule entries" if b["rules"] >= 0 else "unreadable"
-                    ui.label(rules_txt).classes("text-xs opacity-70 w-40")
+                    ui.label(rules_txt).classes("text-xs cc-muted w-40")
 
                     def restore(path=b["file"]) -> None:
                         confirm_dialog(
@@ -248,7 +248,7 @@ def settings_page():
 
         # ---- local API ------------------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Local API").classes("font-semibold")
+            ui.label("Local API").classes("cc-section")
             ui.label("Lets scripts, launchers (Raycast, Alfred, Keyboard Maestro, AutoHotkey) and the "
                      "browser extension clean text through this app. It only answers this computer, "
                      "needs this token, and never logs chart text.").classes("text-xs opacity-60 -mt-1")
@@ -277,7 +277,7 @@ def settings_page():
 
         # ---- clipboard watcher --------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Clipboard watcher").classes("font-semibold")
+            ui.label("Clipboard watcher").classes("cc-section")
             ui.label("While on, Epic text you copy anywhere is cleaned with your current rules and "
                      "the clipboard is replaced with the result, so you can paste it straight "
                      "away. Only text that looks like a chart is touched. Runs only while Chart "
@@ -330,7 +330,7 @@ def settings_page():
 
         # ---- notes folder (Obsidian or any Markdown folder) ---------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Notes folder").classes("font-semibold")
+            ui.label("Notes folder").classes("cc-section")
             ui.label("Set a folder (for example your Obsidian vault) to get “Save to notes folder” "
                      "on the Clean page. Each save is a new Markdown note with the date and note "
                      "type; existing notes are never overwritten.").classes("text-xs opacity-60 -mt-1")
@@ -341,7 +341,7 @@ def settings_page():
 
         # ---- local AI (Ollama) ----------------------------------------------------------
         with ui.card().classes("w-full gap-2").mark("local-ai-card"):
-            ui.label("Local AI (Ollama)").classes("font-semibold")
+            ui.label("Local AI (Ollama)").classes("cc-section")
             ui.label("Summaries and “Ask this chart” run on this computer through Ollama. Chart "
                      "text only ever goes to a loopback address.").classes("text-xs opacity-60 -mt-1")
             ai_status = ui.label("Not checked yet.").classes("text-sm").mark("local-ai-status")
@@ -463,7 +463,7 @@ def settings_page():
                     ui.label(f"Preset “{PRESET_LABELS.get(res.preset, res.preset)}” on "
                              f"{len(res.charts)} chart(s): {', '.join(res.charts)}") \
                         .classes("text-xs opacity-60")
-                    with ui.row().classes("w-full gap-2 no-wrap text-xs font-semibold opacity-70"):
+                    with ui.row().classes("w-full gap-2 no-wrap text-xs font-semibold cc-muted"):
                         for title, width in (("Model", "w-48"), ("Not in chart / summary", "w-36"),
                                              ("Grounding", "w-20"), ("Cited lines", "w-20"),
                                              ("Seconds", "w-16")):
@@ -524,7 +524,7 @@ def settings_page():
 
         # ---- prompt templates ---------------------------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Prompt templates").classes("font-semibold")
+            ui.label("Prompt templates").classes("cc-section")
             ui.label("Used by “Copy as prompt” on the Clean page (and --prompt on the command line). "
                      "Placeholders: {chart} the cleaned chart, {delta} what changed since the last "
                      "note, {date} today. A template with a built-in's name replaces it.") \
@@ -569,7 +569,7 @@ def settings_page():
 
         # ---- note templates -----------------------------------------------------------
         with ui.card().classes("w-full gap-2").mark("note-templates"):
-            ui.label("Note templates").classes("font-semibold")
+            ui.label("Note templates").classes("cc-section")
             ui.label("Used by “Copy as → note template” on the Clean page (and --template on the "
                      "command line): the note itself, filled with the chart's own lines. "
                      "Placeholders: {{chart}}, {{date}}, {{systems}} ([N] [CV] [R] [R/GU] [GI] [E] "
@@ -615,7 +615,7 @@ def settings_page():
 
         # ---- note types → presets ---------------------------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Note types").classes("font-semibold")
+            ui.label("Note types").classes("cc-section")
             ui.label("The Clean page recognizes the kind of note (discharge summary, H&P, progress, "
                      "consult, nursing, operative, radiology). Pick a preset for a type and turn on "
                      "auto-apply to clean that type with it. Only that clean uses the preset; your "
@@ -642,7 +642,7 @@ def settings_page():
 
         # ---- learned-rule examples (regression check) -----------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Check my learned rules").classes("font-semibold")
+            ui.label("Check my learned rules").classes("cc-section")
             ui.label("Every rule you teach by highlighting remembers what it was taught to do. "
                      "This replays those examples through your current rules and lists any whose "
                      "result changed, for example because a later rule undoes an earlier one.") \
@@ -680,7 +680,7 @@ def settings_page():
         with ui.card().classes("w-full gap-2"):
             ui.button("Share removal, replacement & abbreviation rules", icon="share",
                       on_click=lambda: ui.navigate.to("/rules")).props("unelevated")
-            ui.label("Export & import settings").classes("font-semibold")
+            ui.label("Export & import settings").classes("cc-section")
             ui.label("Bundles everything you customized — all rules (including rules learned by "
                      "highlighting text), output options, presets, custom scripts, folder watcher "
                      "and suggestion dismissals — into one .zip to import on a fresh install. "
@@ -733,7 +733,7 @@ def settings_page():
                 .classes("text-xs opacity-60")
 
         with ui.card().classes("w-full gap-1"):
-            ui.label("About").classes("font-semibold")
+            ui.label("About").classes("cc-section")
             ui.markdown(
                 f"**Chart Cleaner v{__version__}** — cleans Epic-style EMR exports for safer LLM sharing.\n\n"
                 "- Clinical data stays on this computer; update checks are the only built-in outbound request.\n"
@@ -744,7 +744,7 @@ def settings_page():
             ).classes("text-sm")
 
         with ui.card().classes("w-full gap-1"):
-            ui.label("Ideas still on the roadmap").classes("font-semibold")
+            ui.label("Ideas still on the roadmap").classes("cc-section")
             ui.markdown(
                 "- **Code signing / notarization** of the macOS .app bundle.\n"
                 "- **Weekly summary** — scheduled stats report.\n"
@@ -753,7 +753,7 @@ def settings_page():
 
         # ---- privacy: stored chart data ------------------------------------------
         with ui.card().classes("w-full gap-2").mark("privacy-card"):
-            ui.label("Stored chart data").classes("font-semibold")
+            ui.label("Stored chart data").classes("cc-section")
             ui.label(f"Token maps and recent charts are encrypted; the key is kept in "
                      f"{secure_store.describe()}. Recent charts, "
                      "downloads, batch output and folder-watcher output in the data folder are "
@@ -787,7 +787,7 @@ def settings_page():
 
         # ---- privacy: recent charts for rule suggestions ---------------------------
         with ui.card().classes("w-full gap-2").mark("recent-charts-card"):
-            ui.label("Recent charts (for rule suggestions)").classes("font-semibold")
+            ui.label("Recent charts (for rule suggestions)").classes("cc-section")
             ui.label("The Clean page keeps encrypted copies of your last few charts so it can "
                      "suggest rules (“this line appeared in 9 of your last 10 charts”) and show "
                      "what a new rule would also change. They are deleted after the period above "
@@ -815,7 +815,7 @@ def settings_page():
 
         # ---- known-good charts (personal regression set) ----------------------------
         with ui.card().classes("w-full gap-2").mark("known-good-card"):
-            ui.label("Known-good charts").classes("font-semibold")
+            ui.label("Known-good charts").classes("cc-section")
             ui.label("Charts you marked “known good” on the Clean page, with the output you "
                      "approved (encrypted). Check them after changing rules — Save on the Pipeline "
                      "page does this for you.").classes("text-xs opacity-60 -mt-1")
@@ -849,7 +849,7 @@ def settings_page():
 
             def kg_show(res) -> None:
                 with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
-                    ui.label(res.label).classes("text-lg font-semibold")
+                    ui.label(res.label).classes("cc-section")
                     if res.error:
                         ui.label(res.error).classes("text-sm text-red-600")
                     ui.html("<pre style='white-space:pre-wrap;font-size:11px'>"
@@ -882,7 +882,7 @@ def settings_page():
 
         # ---- token maps (reversible tokenization) -------------------------------
         with ui.card().classes("w-full gap-2"):
-            ui.label("Token maps (reversible tokenization)").classes("font-semibold")
+            ui.label("Token maps (reversible tokenization)").classes("cc-section")
             ui.label("When the 'Reversible tokenization' stage is on, each run's value→token map "
                      "is saved here (newest 10). Restore text with the button below, or "
                      "clean-chart --untoken. Treat maps as PHI — they undo the cleaning.") \
@@ -913,7 +913,7 @@ def settings_page():
                     ui.icon("vpn_key").classes("opacity-60")
                     ui.label(m["ts"]).classes("text-xs w-40")
                     count = f"{m['count']} value(s)" if m["count"] >= 0 else "unreadable"
-                    ui.label(count).classes("text-xs opacity-70 w-28")
+                    ui.label(count).classes("text-xs cc-muted w-28")
 
                     def restore(f=m["file"]) -> None:
                         confirm_dialog("Restore the current cleaned output using this map? "

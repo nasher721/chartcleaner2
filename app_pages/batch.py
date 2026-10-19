@@ -318,11 +318,11 @@ def batch_page():
                           icon="groups").classes("w-full").mark("patient-list"):
             ui.label("Patients are split at bed labels (G20-1, Bed 4), Patient:/Name: lines, "
                      "numbered entries or separator lines; each one is cleaned on its own.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             list_input = ui.textarea("Patient list", on_change=lambda _: preview_split()) \
                 .props("outlined input-style='min-height: 180px'").classes("w-full cc-mono") \
                 .mark("patient-list-input")
-            split_label = ui.label("Paste a list first.").classes("text-xs opacity-70") \
+            split_label = ui.label("Paste a list first.").classes("text-xs cc-muted") \
                 .mark("patient-split")
             with ui.row().classes("items-center gap-2"):
                 ui.button("Split & clean", icon="call_split", on_click=run_list) \

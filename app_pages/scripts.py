@@ -39,7 +39,7 @@ def scripts_page():
 
         ui.label(f"{sel['name']}.py").classes("font-mono font-semibold")
         if meta.get("description"):
-            ui.label(meta["description"]).classes("text-xs opacity-70 -mt-2")
+            ui.label(meta["description"]).classes("text-xs cc-muted -mt-2")
         if meta.get("error"):
             with ui.row().classes("items-center gap-2"):
                 ui.element("span").classes("cc-dot cc-dot--neg")
@@ -48,7 +48,7 @@ def scripts_page():
             with ui.row().classes("items-center gap-2"):
                 ui.element("span").classes("cc-dot cc-dot--info")
                 ui.label("Placeholder script — skipped by the pipeline until you set "
-                         "PLACEHOLDER = False.").classes("text-xs opacity-70")
+                         "PLACEHOLDER = False.").classes("text-xs cc-muted")
 
         editor = ui.textarea(value=content["text"], on_change=lambda e: content.update(text=e.value))
         editor.props("outlined input-style='min-height: 400px'").classes("w-full cc-mono")
@@ -178,7 +178,7 @@ def scripts_page():
                      "(that is what makes them limitless). Only add scripts you wrote or reviewed.") \
                 .classes("text-sm")
 
-        with ui.row().classes("w-full gap-6 items-stretch no-wrap"):
+        with ui.row().classes("w-full gap-4 items-stretch no-wrap"):
             with ui.column().classes("w-64 shrink-0 gap-2 p-4 border rounded"):
                 ui.label("Rule files").classes("cc-eyebrow")
                 list_holder["box"] = ui.column().classes("w-full gap-1")

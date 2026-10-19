@@ -21,7 +21,7 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
     with ui.card().classes("w-full gap-2").mark("rule-health"):
         with ui.row().classes("w-full items-center gap-2"):
             ui.icon("health_and_safety").classes("text-2xl text-primary")
-            ui.label("Rule health").classes("text-lg font-semibold")
+            ui.label("Rule health").classes("cc-section")
         tiles = ui.row().classes("gap-3 flex-wrap")
         stat_chip(tiles, "rules that never fire", str(never), "grey" if not never else "orange")
         stat_chip(tiles, "very broad rules", str(broad), "green" if not broad else "orange")
@@ -45,7 +45,7 @@ def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
                  "that touch over 30% of a chart's lines may be removing real content; slow "
                  "rules cost time on every clean; a flagged pattern shape can backtrack "
                  "for minutes on a long line.") \
-            .classes("text-xs opacity-70")
+            .classes("text-xs cc-muted")
         holder = ui.column().classes("w-full gap-1")
 
         def remove(row: dict) -> None:
@@ -186,7 +186,7 @@ def stats_page():
                 ],
             })
 
-        with ui.row().classes("w-full gap-6 flex-wrap items-stretch"):
+        with ui.row().classes("w-full gap-4 flex-wrap items-stretch"):
             if s["top_stages"]:
                 labels = [k for k, _ in s["top_stages"]]
                 vals = [v for _, v in s["top_stages"]]
@@ -247,7 +247,7 @@ def stats_page():
         with ui.expansion("Evaluation — recall report card", icon="verified").classes("w-full"):
             ui.label("Generates synthetic charts with known PHI, runs your current rules on them, "
                      "and reports how many PHI items were actually removed. A real exam, not a vibe.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             eval_holder = ui.column().classes("w-full gap-2")
             with eval_holder:
                 last = load_last_evaluation()

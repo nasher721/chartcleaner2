@@ -259,7 +259,7 @@ async def clean_page():
                                 with ui.row().classes("w-full items-center gap-2"):
                                     ui.element("span").classes("cc-dot").style(f"color:{color}")
                                     ui.label(name.upper()).classes("cc-mono text-xs opacity-80")
-                                ui.label(desc).classes("text-xs opacity-70")
+                                ui.label(desc).classes("text-xs cc-muted")
                                 if name == "Output":
                                     with ui.row().classes("cc-minibar"):
                                         for i in range(12):
@@ -286,7 +286,7 @@ async def clean_page():
             phi = result.phi_counts()
             with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
                 ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
-                ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("opacity-70")
+                ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("cc-muted")
                 ui.label(f"{abs(result.reduction):.1f}% {'reduction' if result.reduction >= 0 else 'increase'}").classes("font-semibold")
                 if result_mode == "abbreviations":
                     ui.label(f"{sum(s.matches for s in result.stages)} abbreviations applied")
@@ -298,10 +298,10 @@ async def clean_page():
                 render_note_chip(result_mode)
             if result_mode == "abbreviations":
                 ui.label("Abbreviations only — other text and formatting preserved. "
-                         "PHI has not been removed.").classes("text-xs opacity-70")
+                         "PHI has not been removed.").classes("text-xs cc-muted")
             elif result_mode == "expand":
                 ui.label("Abbreviations expanded — other text and formatting preserved. "
-                         "PHI has not been removed.").classes("text-xs opacity-70")
+                         "PHI has not been removed.").classes("text-xs cc-muted")
 
             groups = change_groups(result)
             refs["groups"] = groups
@@ -371,10 +371,10 @@ async def clean_page():
             nearby = get_close_matches(source, lines, n=1, cutoff=0.35)
             output = nearby[0] if nearby else ""
         with ui.dialog() as dlg, ui.card().classes("w-[900px] max-w-full gap-3").mark("finding-location"):
-            ui.label(finding["title"]).classes("text-lg font-semibold")
+            ui.label(finding["title"]).classes("cc-section")
             ui.label("Source context and corresponding output (nearest line when reformatted).")
             for label, text in (("Source", source), ("Output", output)):
-                ui.label(label).classes("font-semibold")
+                ui.label(label).classes("cc-section")
                 ui.html("<mark>" + esc(text) + "</mark>" if text else
                         "<p>No corresponding span remains.</p>").classes("whitespace-pre-wrap break-all")
             def jump():
@@ -416,10 +416,10 @@ async def clean_page():
         presets = store.list_presets()
         mapping = dict(common.PREFS.get("note_presets") or {})
         with ui.dialog() as dlg, ui.card().classes("w-[440px] gap-2"):
-            ui.label("Choose note type").classes("text-lg font-semibold")
+            ui.label("Choose note type").classes("cc-section")
             kind_sel = ui.select(NOTE_TYPE_LABELS, value=kind, label="Note type").classes("w-full") \
                 .mark("note-type-picker")
-            ui.label("Pick the rule preset to clean this kind of note with.").classes("text-sm opacity-70")
+            ui.label("Pick the rule preset to clean this kind of note with.").classes("cc-muted")
             sel = ui.select({"": "(current rules)", **{p: p for p in presets}},
                             value=mapping.get(kind, ""), label="Preset").classes("w-full")
             auto = ui.checkbox("Apply note-type presets automatically",
@@ -513,7 +513,7 @@ async def clean_page():
         with results_col.client, ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full gap-2").mark("copy-guard"):
             with ui.row().classes("items-center gap-2 no-wrap"):
                 ui.icon("report", color="red").classes("text-2xl")
-                ui.label("Check before copying").classes("text-lg font-semibold")
+                ui.label("Check before copying").classes("cc-section")
             ui.label(report.headline()).classes("text-sm text-red-600")
             for x in [x for x in report.losses if x.category == "unexpected"][:6]:
                 ui.label(f"Lost: {x.display} — {x.stage_label}: {x.lines[0][:160] if x.lines else ''}") \
@@ -521,7 +521,7 @@ async def clean_page():
             for m in [m for m in report.meaning if m.category == "unexpected"][:4]:
                 ui.label(f"{m.message}: {m.before[:160]}").classes("text-xs cc-mono break-all")
             ui.label("The cleaned text may be missing or changing a clinical value. Review it, "
-                     "or copy anyway if you've checked.").classes("text-xs opacity-70")
+                     "or copy anyway if you've checked.").classes("text-xs cc-muted")
 
             def review() -> None:
                 dlg.close()
@@ -605,7 +605,7 @@ async def clean_page():
 
     def open_copy_default_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
-            ui.label("The Copy button copies…").classes("text-lg font-semibold")
+            ui.label("The Copy button copies…").classes("cc-section")
             radio = ui.radio({k: v[0] for k, v in COPY_FORMATS.items()},
                              value=common.PREFS.get("copy_default") or "text")
 
@@ -713,7 +713,7 @@ async def clean_page():
         snapshot = CLEAN_STATE.get("result_text") or ""
         original = candidate["original"]
         with ui.dialog() as dlg, ui.card().classes("w-[600px] max-w-full gap-3").mark("redaction-inspector"):
-            ui.label("Inspect redaction").classes("text-lg font-semibold")
+            ui.label("Inspect redaction").classes("cc-section")
             ui.label(candidate["token"]).classes("cc-mono")
             if original is not None:
                 ui.label("Source text (may identify the patient)")
@@ -759,16 +759,16 @@ async def clean_page():
             if st.details.get("token_map"):
                 mapping = dict(st.details["token_map"])
         with ui.dialog() as dlg, ui.card().classes("w-[680px] gap-2"):
-            ui.label("Restore names in an AI reply").classes("text-lg font-semibold")
+            ui.label("Restore names in an AI reply").classes("cc-section")
             ui.label("Paste what the AI wrote about the tokenized chart. Every [[T1]]-style token is "
                      "replaced with the real value — " + (
                          "using this chart's token map." if mapping else
-                         "using the newest saved token map.")).classes("text-sm opacity-70")
+                         "using the newest saved token map.")).classes("cc-muted")
             reply = ui.textarea("AI reply").props("outlined autofocus input-style='min-height: 140px'") \
                 .classes("w-full cc-mono")
             restored = ui.textarea("With real values").props(
                 "outlined readonly input-style='min-height: 140px'").classes("w-full cc-mono")
-            note = ui.label("").classes("text-xs opacity-70")
+            note = ui.label("").classes("text-xs cc-muted")
 
             def restore() -> None:
                 out = service_mod.restore(reply.value or "", mapping)
@@ -785,10 +785,10 @@ async def clean_page():
 
     def open_known_good_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[460px] gap-2"):
-            ui.label("Mark as known good").classes("text-lg font-semibold")
+            ui.label("Mark as known good").classes("cc-section")
             ui.label("Keeps this chart and this exact output (encrypted). Settings → Known-good "
                      "charts re-cleans it after you change rules and shows anything that "
-                     "came out differently.").classes("text-sm opacity-70")
+                     "came out differently.").classes("cc-muted")
             label = ui.textarea("Label", value=(CLEAN_STATE.get("note") or {}).get("label", "")) \
                 .props("outlined autogrow").classes("w-full")
 
@@ -818,7 +818,7 @@ async def clean_page():
         if audit is not None and not audit.skipped:
             render_audit(audit)
         ui.label("Click struck-through or highlighted text to see which rule changed it — and "
-                 "keep it, change it or switch the rule off.").classes("text-xs opacity-70")
+                 "keep it, change it or switch the rule off.").classes("text-xs cc-muted")
         with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
             cached = CLEAN_STATE.get("review_html")
             if (cached and cached[0] is result and cached[1] == CLEAN_STATE["input"]
@@ -891,14 +891,14 @@ async def clean_page():
             return
         if g["kind"] == "abbr":
             with ui.dialog() as dlg, ui.card().classes("w-[460px] gap-2"):
-                ui.label("Abbreviation").classes("text-lg font-semibold")
+                ui.label("Abbreviation").classes("cc-section")
                 with ui.row().classes("items-center gap-2"):
                     ui.label(g["term"]).classes("font-medium")
                     ui.label("→")
                     ui.label(g["after"]).classes("font-medium")
                     ui.badge(f"×{g['count']}").props("outline")
                 ui.label("From your dictionary" if g["source"] != "custom" else "One of your own rules") \
-                    .classes("text-xs opacity-70")
+                    .classes("text-xs cc-muted")
                 with ui.row():
                     ui.button("Change", icon="edit",
                               on_click=lambda: (dlg.close(), change_abbreviation(g))).props("flat")
@@ -910,7 +910,7 @@ async def clean_page():
             return
         verb = "Removed" if g["kind"] == "removal" else "Changed"
         with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("change-dialog"):
-            ui.label(f"{verb} by {g['stage']}").classes("text-lg font-semibold")
+            ui.label(f"{verb} by {g['stage']}").classes("cc-section")
             learned = None
             if g["sid"] == "learned_rules":
                 cfg_now = load_config(common.CONFIG_PATH)
@@ -926,9 +926,9 @@ async def clean_page():
                 if info.get("note"):
                     bits.append(f"note: {info['note']}")
                 if any(bits):
-                    ui.label(" · ".join(b for b in bits if b)).classes("text-xs opacity-70")
-            ui.label(f"Rule: {g['rule'][:300]}").classes("text-xs cc-mono opacity-70 break-all")
-            ui.label(f"{g['count']} change(s) in this chart").classes("text-xs opacity-70")
+                    ui.label(" · ".join(b for b in bits if b)).classes("text-xs cc-muted")
+            ui.label(f"Rule: {g['rule'][:300]}").classes("text-xs cc-mono cc-muted break-all")
+            ui.label(f"{g['count']} change(s) in this chart").classes("text-xs cc-muted")
             for before, after in list(zip(g["befores"], g["afters"]))[:6]:
                 with ui.row().classes("w-full items-start gap-2 no-wrap"):
                     ui.label(before.strip()[:240]).classes("text-xs cc-mono cc-gone flex-grow break-all")
@@ -1095,7 +1095,7 @@ async def clean_page():
                 ui.badge(item.status, color=colors[item.status]).props("outline").classes("w-28")
                 ui.label(item.name).classes("text-xs font-semibold w-48")
                 detail = "; ".join(item.details) if item.details else item.line
-                ui.label(detail).classes("text-xs cc-mono opacity-70 truncate flex-grow").tooltip(detail)
+                ui.label(detail).classes("text-xs cc-mono cc-muted truncate flex-grow").tooltip(detail)
 
     def render_safety_strip() -> None:
         """Allergies and code status at a glance, above the result."""
@@ -1186,7 +1186,7 @@ async def clean_page():
                           else "in place (no date)")
                 ui.label(status + (" — still needed?" if d.needs_review else "")) \
                     .classes("text-xs font-semibold w-40")
-                ui.label(d.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                ui.label(d.last_line).classes("text-xs cc-mono cc-muted truncate flex-grow") \
                     .tooltip(d.last_line)
 
     def render_micro(report) -> None:
@@ -1195,7 +1195,7 @@ async def clean_page():
                 ui.badge(a.name, color="grey" if a.stopped else "teal").props("outline")
                 status = ("stopped" if a.stopped else f"day {a.day}" if a.day is not None else "")
                 ui.label(status).classes("text-xs font-semibold w-20")
-                ui.label(a.last_line).classes("text-xs cc-mono opacity-70 truncate flex-grow") \
+                ui.label(a.last_line).classes("text-xs cc-mono cc-muted truncate flex-grow") \
                     .tooltip(a.last_line)
         if report.cultures:
             ui.label("Cultures").classes("text-xs font-semibold mt-1")
@@ -1292,7 +1292,7 @@ async def clean_page():
     def render_delta(delta) -> None:
         ui.label(f"{delta.notes_found} daily notes · {delta.compression_ratio}% copied-forward text "
                  "removed. The first note is kept in full; later notes show only sentences that are "
-                 "new or changed.").classes("text-sm opacity-70")
+                 "new or changed.").classes("cc-muted")
         box = ui.textarea("", value=delta.compact_text)
         box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
 
@@ -1358,11 +1358,11 @@ async def clean_page():
         result = CLEAN_STATE.get("result")
         with ai_col:
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("Local AI").classes("text-lg font-semibold")
+                ui.label("Local AI").classes("cc-section")
                 ui.button(icon="close", on_click=lambda: toggle_ai(False)).props("flat round dense aria-label='Close Local AI panel'")
             if not result or CLEAN_STATE.get("result_mode") in ("abbreviations", "expand"):
                 ui.label("Do a full clean, then summarize the chart or ask questions about it — "
-                         "on this computer, through Ollama.").classes("text-sm opacity-70")
+                         "on this computer, through Ollama.").classes("cc-muted")
                 return
             try:
                 opts = merge_llm_config(load_config(common.CONFIG_PATH))
@@ -2049,7 +2049,7 @@ async def clean_page():
         cfg = load_config(common.CONFIG_PATH)
         highlight["pending"] = True
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
-            ui.label("Abbreviate highlighted text").classes("text-lg font-semibold")
+            ui.label("Abbreviate highlighted text").classes("cc-section")
             ui.label(term).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto font-medium")
             abbr_input = ui.input("Abbreviation", value=suggest_abbreviation(term, cfg)) \
                 .props("outlined autofocus").classes("w-full")
@@ -2131,7 +2131,7 @@ async def clean_page():
                 dlg.close()
 
             ui.label("Updates this selection now and adds the term to your abbreviation dictionary "
-                     "(used by Full clean and Abbreviations only).").classes("text-sm opacity-70")
+                     "(used by Full clean and Abbreviations only).").classes("cc-muted")
             with ui.row():
                 ui.button("Abbreviate & remember", on_click=save).props("unelevated")
                 ui.button("Just here", on_click=just_here).props("flat").mark("abbr-just-here") \
@@ -2145,11 +2145,11 @@ async def clean_page():
     def open_replace_dialog(selection: dict) -> None:
         highlight["pending"] = True
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-3"):
-            ui.label("Replace highlighted text").classes("text-lg font-semibold")
+            ui.label("Replace highlighted text").classes("cc-section")
             ui.label(selection["text"]).classes("whitespace-pre-wrap break-all max-h-40 overflow-auto")
             replacement = ui.textarea("Replace with").props("outlined autofocus").classes("w-full")
             ui.label("Updates this selection now and saves a rule for future full cleans. "
-                     "An empty replacement removes the selection.").classes("text-sm opacity-70")
+                     "An empty replacement removes the selection.").classes("cc-muted")
 
             def save_replacement() -> None:
                 if apply_highlight(selection, replacement.value or ""):
@@ -2207,17 +2207,17 @@ async def clean_page():
     def open_undo_history() -> None:
         """The edits Undo can step back through, newest first, plus the full journal link."""
         with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("undo-history"):
-            ui.label("Undo history").classes("text-lg font-semibold")
+            ui.label("Undo history").classes("cc-section")
             stack = highlight["stack"]
             if not stack:
-                ui.label("Nothing to undo on this page yet.").classes("text-sm opacity-70")
+                ui.label("Nothing to undo on this page yet.").classes("cc-muted")
             for depth, item in enumerate(reversed(stack), 1):
                 with ui.row().classes("w-full items-center gap-2 no-wrap"):
                     ui.badge(str(depth)).props("outline")
                     ui.label(item["label"][:160]).classes("text-sm flex-grow")
             ui.label("Undo steps back one edit at a time. Every rule change (from any page) is in "
                      "My text rules → Recent changes, where any one can be undone.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             with ui.row():
                 ui.button("Undo newest", icon="undo",
                           on_click=lambda: (undo_highlight(), dlg.close())).props("flat") \
@@ -2229,7 +2229,7 @@ async def clean_page():
 
     def open_learn_dialog(selected: str) -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2"):
-            ui.label("Learn a rule from highlighted text").classes("font-semibold text-blue-600")
+            ui.label("Learn a rule from highlighted text").classes("cc-section")
             ui.label("The rule joins your other rules (Pipeline & Rules → Learned rules) and is "
                      "applied on every future Clean. It is saved in config.json, so it also "
                      "travels with a settings export.").classes("text-xs opacity-60 -mt-2")
@@ -2354,7 +2354,7 @@ async def clean_page():
     def render_removed(groups: list[dict]) -> None:
         ui.label("Everything the line, block and learned-rule stages deleted. If something "
                  "clinical was removed, “Never remove this” keeps it on every future clean.") \
-            .classes("text-sm opacity-70")
+            .classes("cc-muted")
         for g in groups:
             with ui.expansion(f"{g['stage']} — {len(g['items'])} removed",
                               caption=g["rule"][:120]).classes("w-full"):
@@ -2388,7 +2388,7 @@ async def clean_page():
                 .classes(f"w-full text-{color}"):
             ui.label("Numbers with units, lab and vital values, medications and safety words "
                      "(allergies, code status) are counted before and after every stage.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             for cat in ("unexpected", "rule", "by_design"):
                 items = [x for x in report.losses if x.category == cat]
                 if not items:
@@ -2483,11 +2483,11 @@ async def clean_page():
         # same bed first (newest first within each group: load() is newest-first)
         records.sort(key=lambda r: not (tag and (r.get("tag") or "").casefold() == tag.casefold()))
         with ui.dialog() as dlg, ui.card().classes("w-[760px] max-w-full gap-2").mark("daily-note-dialog"):
-            ui.label("Daily note").classes("text-lg font-semibold")
+            ui.label("Daily note").classes("cc-section")
             if not records:
                 ui.label("No previous charts stored yet — recent charts are kept (encrypted) after "
                          "each clean. Clean yesterday's chart with the same bed tag first.") \
-                    .classes("text-sm opacity-70")
+                    .classes("cc-muted")
                 ui.button("Close", on_click=dlg.close).props("flat")
                 dlg.open()
                 return
@@ -2543,7 +2543,7 @@ async def clean_page():
                                         "source": c.get("source", "bundled"), "count": 0})
             g["count"] += 1
         ui.label("Each abbreviation applied to this result. Disable or change one and the chart "
-                 "is cleaned again.").classes("text-sm opacity-70")
+                 "is cleaned again.").classes("cc-muted")
         for g in sorted(groups.values(), key=lambda g: (-g["count"], g["rule"])):
             entry = custom.get(g["rule"])
             source = (f"pack: {entry['pack']}" if entry and entry.get("pack")
@@ -2553,7 +2553,7 @@ async def clean_page():
                 ui.label("→")
                 ui.label(g["after"]).classes("min-w-[80px]")
                 ui.badge(f"×{g['count']}").props("outline")
-                ui.label(source).classes("text-xs opacity-70 flex-grow")
+                ui.label(source).classes("text-xs cc-muted flex-grow")
                 ui.button("Change", icon="edit",
                           on_click=lambda gg=g: change_abbreviation(gg)).props("flat dense")
                 ui.button("Disable", icon="block",
@@ -2575,7 +2575,7 @@ async def clean_page():
 
     def change_abbreviation(group: dict) -> None:
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-md gap-2"):
-            ui.label(f"Abbreviate “{group['term']}” as…").classes("text-lg font-semibold")
+            ui.label(f"Abbreviate “{group['term']}” as…").classes("cc-section")
             new = ui.input("Abbreviation", value=group["after"]).props("outlined autofocus").classes("w-full")
 
             def save() -> None:
@@ -2605,9 +2605,9 @@ async def clean_page():
         cfg = load_config(common.CONFIG_PATH)
         current = normalize_abbreviation_settings(cfg.get("abbreviations")).get("expand_prefer", {})
         with ui.dialog() as dlg, ui.card().classes("w-full max-w-xl gap-2"):
-            ui.label("Choose what each abbreviation means").classes("text-lg font-semibold")
+            ui.label("Choose what each abbreviation means").classes("cc-section")
             ui.label("Saved to your abbreviation settings and used every time you expand.") \
-                .classes("text-sm opacity-70")
+                .classes("cc-muted")
             picks = {}
             for abbr in sorted(ambiguous):
                 options = abbreviation_meanings(abbr) + [keep]
@@ -2652,10 +2652,10 @@ async def clean_page():
 
     def open_inbox() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2").mark("inbox-dialog"):
-            ui.label("Rule suggestions").classes("text-lg font-semibold")
+            ui.label("Rule suggestions").classes("cc-section")
             ui.label("From your recent charts (kept encrypted on this computer — see Settings → "
                      "Stored chart data). Lines with clinical values are never suggested for removal.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             body = ui.column().classes("w-full gap-2")
 
             def draw() -> None:
@@ -2671,7 +2671,7 @@ async def clean_page():
                             ui.label(item.title).classes("text-sm font-semibold break-all")
                             ui.label(item.detail).classes("text-sm")
                             for smp in item.samples[:3]:
-                                ui.label(smp[:200]).classes("text-xs cc-mono opacity-70 break-all")
+                                ui.label(smp[:200]).classes("text-xs cc-mono cc-muted break-all")
                             short = None
                             impact = ui.label("").classes("text-xs opacity-80")
                             with ui.row().classes("items-center gap-2"):
@@ -2820,13 +2820,13 @@ async def clean_page():
         errs, _warns = validate_config(load_config(common.CONFIG_PATH))
         if errs:
             with ui.card().classes("w-full cc-tint cc-tint--danger gap-2").mark("config-errors"):
-                ui.label("Current config has problems — fix them on the Pipeline page").classes("font-semibold")
+                ui.label("Current config has problems — fix them on the Pipeline page").classes("cc-section")
                 for e in errs[:5]:
                     ui.label(f"• {e}").classes("text-xs")
 
         with ui.card().classes("w-full gap-2 cc-tint cc-tint--accent cc-reveal").mark("onboarding") as onboarding:
-            ui.label("New here? Four steps").classes("font-semibold")
-            with ui.row().classes("w-full gap-6 flex-wrap text-sm cc-mono"):
+            ui.label("New here? Four steps").classes("cc-section")
+            with ui.row().classes("w-full gap-4 flex-wrap text-sm cc-mono"):
                 ui.label("01 · Paste or drop a chart on the left")
                 ui.label(f"02 · Clean ({MOD}+Enter)")
                 ui.label("03 · Review — click any struck-out text to see the rule")
@@ -2849,9 +2849,9 @@ async def clean_page():
                 value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
                 label="Rule preset",
             ).props("dense outlined").classes("w-60")
-        mode_note = ui.label("").classes("text-sm opacity-70")
+        mode_note = ui.label("").classes("cc-muted")
 
-        layout = ui.element("div").classes("grid grid-cols-1 gap-6 w-full items-start")
+        layout = ui.element("div").classes("grid grid-cols-1 gap-4 w-full items-start")
         with layout:
             # ---- left: the chart ----
             with ui.column().classes("w-full gap-2 min-w-0"):
@@ -2862,7 +2862,7 @@ async def clean_page():
                     spinner = ui.row().classes("items-center gap-2").mark("spinner")
                     with spinner:
                         ui.element("div").classes("cc-spinner")
-                        ui.label("Cleaning").classes("cc-mono text-xs opacity-70 cc-pulse")
+                        ui.label("Cleaning").classes("cc-mono text-xs cc-muted cc-pulse")
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
                     ui.button("Sample", icon="science", on_click=load_sample).props("flat no-caps") \
@@ -2921,7 +2921,7 @@ async def clean_page():
                         .tooltip("What selecting chart text does: ask first, remove it at once, "
                                  "or abbreviate it")
                     highlight_status = ui.label(SELECTION_MODE_HELP[selection_mode]) \
-                        .classes("text-xs opacity-70 flex-grow").props("role=status aria-live=polite")
+                        .classes("text-xs cc-muted flex-grow").props("role=status aria-live=polite")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
                         .props("flat dense no-caps")

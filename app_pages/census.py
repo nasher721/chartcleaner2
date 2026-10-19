@@ -80,7 +80,7 @@ def census_page():
         with cards:
             if report.empty:
                 with ui.card().classes("w-full cc-panel").mark("census-empty"):
-                    ui.label("No bed-tagged charts yet.").classes("font-semibold")
+                    ui.label("No bed-tagged charts yet.").classes("cc-section")
                     if not recent_charts.settings(common.PREFS)["enabled"]:
                         ui.label("Keeping recent charts is switched off (Settings → Recent charts); "
                                  "the census is built from them.").classes("text-sm")
@@ -94,7 +94,7 @@ def census_page():
     def bed_card(bed) -> None:
         with ui.card().classes("w-full gap-1").mark(f"census-bed-{bed.tag}"):
             with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.label(bed.tag).classes("text-lg font-semibold whitespace-nowrap")
+                ui.label(bed.tag).classes("cc-section whitespace-nowrap")
                 if bed.updated:
                     ui.label(f"cleaned {bed.updated}").classes("text-xs opacity-60 whitespace-nowrap")
                 ui.space()

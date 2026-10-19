@@ -51,10 +51,10 @@ def open_rule_builder(selected: str, *, chart: str, on_save, recent: int = 20,
 
     with ui.dialog() as dlg, ui.card().classes("w-[820px] max-w-full gap-2").mark("rule-builder"):
         ui.label("Edit rule" if initial is not None else "Build a rule from this selection") \
-            .classes("text-lg font-semibold")
+            .classes("cc-section")
         ui.label("Pick how much it should catch, check the preview, then save. The rule runs on "
                  "every future clean and can be paused, edited or undone later.") \
-            .classes("text-sm opacity-70 -mt-1")
+            .classes("cc-muted -mt-1")
 
         options = {i: f"{c.label} — {scores[i]['hits']} here" for i, c in enumerate(candidates)}
         choice = ui.radio(options, value=0).props("dense").mark("builder-choice")

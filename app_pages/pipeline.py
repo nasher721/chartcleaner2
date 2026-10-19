@@ -187,7 +187,7 @@ def pipeline_page():
         with pending_holder:
             with ui.card().classes("w-full border-amber-400 gap-2"):
                 ui.label("Draft rule from an audit finding — review, then add it to a stage") \
-                    .classes("font-semibold text-amber-600")
+                    .classes("cc-section text-amber-600")
                 pat_in = ui.input("Regex pattern", value=PENDING_RULE.get("pattern", "")) \
                     .props("outlined dense").classes("w-full cc-mono")
                 repl_in = None
@@ -247,14 +247,14 @@ def pipeline_page():
         if not suggestions:
             return
         with suggestions_holder:
-            ui.label("Suggestions from your recent runs").classes("font-semibold")
+            ui.label("Suggestions from your recent runs").classes("cc-section")
             ui.label("Findings that keep surviving run after run. Adopting opens a draft rule "
                      "below — nothing is saved until you confirm.").classes("text-xs opacity-60 -mt-2")
             for s in suggestions[:6]:
                 payload = suggestion_for_signature(s["signature"])
                 with ui.card().classes("w-full gap-1"):
                     ui.label(f"{payload['title']} — survived {s['runs']} recent run(s)").classes("font-medium")
-                    ui.label(payload["detail"]).classes("text-xs opacity-70 -mt-2")
+                    ui.label(payload["detail"]).classes("text-xs cc-muted -mt-2")
                     if payload["regex"]:
                         ui.label(payload["regex"]).classes("text-xs cc-mono opacity-80")
                     with ui.row().classes("gap-2"):
@@ -306,7 +306,7 @@ def pipeline_page():
             def chrome_row(pos: int, pattern: str) -> None:
                 with ui.row().classes("w-full items-center gap-2"):
                     p_in = ui.input(value=pattern).props("outlined dense").classes("flex-grow cc-mono")
-                    count_lbl = ui.label("").classes("text-xs opacity-70 w-24")
+                    count_lbl = ui.label("").classes("text-xs cc-muted w-24")
 
                     def sync() -> None:
                         try:
@@ -426,7 +426,7 @@ def pipeline_page():
             return
         label = STAGE_LABELS.get(sid) or sid
         with ui.dialog() as dlg, ui.card().classes("w-[1000px] max-w-[95vw] gap-2"):
-            ui.label(f"What “{label}” does to the test text").classes("text-lg font-semibold")
+            ui.label(f"What “{label}” does to the test text").classes("cc-section")
             if st.skipped:
                 ui.label("This stage is switched off, so it changes nothing.").classes("text-sm")
             elif st.error:
@@ -436,7 +436,7 @@ def pipeline_page():
             else:
                 ui.label(f"{st.matches} change(s) · {len(before) - len(after):+,} characters removed. "
                          "Left: the text this stage receives (after every earlier stage); "
-                         "right: what it hands on.").classes("text-xs opacity-70")
+                         "right: what it hands on.").classes("text-xs cc-muted")
                 with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
                     ui.html(diff_html(before, after))
             ui.button("Close", on_click=dlg.close).props("flat")
@@ -510,7 +510,7 @@ def pipeline_page():
                 case_sw = ui.switch("Aa", value=bool(((draft.get("stage_options") or {})
                                                       .get(sid, {}) or {}).get("case_sensitive", False))) \
                     .tooltip("Case sensitive matching for this stage")
-            count_lbl = ui.label("").classes("text-xs opacity-70 w-24")
+            count_lbl = ui.label("").classes("text-xs cc-muted w-24")
 
             def current_flags() -> int:
                 if sid and case_sw is not None and case_sw.value:
@@ -590,7 +590,7 @@ def pipeline_page():
 
         allow = draft.setdefault("nlp_allow_list", [])
         ui.label("Allow-list (words NLP must never redact, e.g. drug names that look like people)") \
-            .classes("text-xs opacity-70")
+            .classes("text-xs cc-muted")
         with ui.row().classes("flex-wrap gap-1 items-center"):
             for w in list(allow):
                 ui.badge(w).props("outline")
@@ -650,7 +650,7 @@ def pipeline_page():
         if kind == "abbreviations":
             ui.label("Your abbreviation dictionary is also used by Abbreviations only on the Clean page. "
                      "Add, edit or disable terms in My text rules.") \
-                .classes("text-sm opacity-70")
+                .classes("cc-muted")
             ui.button("Edit abbreviations", icon="edit",
                       on_click=lambda: ui.navigate.to("/rules")).props("flat")
 
@@ -714,7 +714,7 @@ def pipeline_page():
                      "plus identity-label values) for reversible [[T1]]-style codes. Same value "
                      "⇒ same token, so repeated names stay consistent. Value→token maps are saved "
                      "under data/tokens and can restore the text later (Settings → Token maps, or "
-                     "clean-chart --untoken).").classes("text-xs opacity-70")
+                     "clean-chart --untoken).").classes("text-xs cc-muted")
             ui.input("Token prefix", value=str(t.get("prefix") or "T"),
                      on_change=lambda e: t.update(prefix=(e.value or "T").strip())) \
                 .props("outlined dense").classes("w-40")
@@ -767,7 +767,7 @@ def pipeline_page():
             o = draft.setdefault("whitespace", {})
             ui.label("Trailing-space trim, blank-line collapse and final trim are on by default "
                      "(the long-standing behavior); everything else is opt-in.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             with ui.grid().classes("grid-cols-2 gap-2 w-full"):
                 for opt, desc in (("crlf_to_lf", "Convert CRLF / CR line endings to LF"),
                                   ("trim_trailing", "Trim trailing spaces/tabs per line"),
@@ -800,7 +800,7 @@ def pipeline_page():
             o = draft.setdefault("unicode_normalize", {})
             ui.label("All off by default — flip on what your charts need. Runs before the "
                      "regex stages, so patterns can assume plain characters.") \
-                .classes("text-xs opacity-70")
+                .classes("text-xs cc-muted")
             with ui.grid().classes("grid-cols-2 gap-2 w-full"):
                 for opt, desc in (("quotes", "Curly quotes → straight (\u201c \u201d \u2019 …)"),
                                   ("dashes", "En/em dashes & minus → hyphen (– — −)"),
@@ -826,7 +826,7 @@ def pipeline_page():
                           value=bool(o.get("remove_clock_times")),
                           on_change=lambda e: o.update(remove_clock_times=e.value))
             ui.label("Extra patterns (one regex per row, run after the built-ins):") \
-                .classes("text-xs opacity-70 mt-1")
+                .classes("text-xs cc-muted mt-1")
             pats = o.setdefault("extra_patterns", [])
 
             for i, p in enumerate(list(pats)):
@@ -852,7 +852,7 @@ def pipeline_page():
                       value=str(o.get("mode") or "off"), label="Mode",
                       on_change=lambda e: o.update(mode=e.value)).classes("w-64")
             ui.label("Section header names, one per row:") \
-                .classes("text-xs opacity-70 mt-1")
+                .classes("text-xs cc-muted mt-1")
             names = o.setdefault("sections", [])
             for i, h in enumerate(list(names)):
                 with ui.row().classes("w-full items-center gap-2"):
@@ -871,7 +871,7 @@ def pipeline_page():
             ui.label("Section boundaries: text between one boundary header and the next is one "
                      "section. Leave empty to reuse the Header stage's header list. 'Keep text "
                      "before the first section' preserves the preamble.") \
-                .classes("text-xs opacity-70 mt-2")
+                .classes("text-xs cc-muted mt-2")
             ui.switch("Keep text before the first section", value=bool(o.get("keep_preamble", True)),
                       on_change=lambda e: o.update(keep_preamble=e.value))
             bounds = o.setdefault("boundary_headers", [])
@@ -952,7 +952,7 @@ def pipeline_page():
             ui.label(
                 "Detects verified clinical identifiers using algorithmic checksums (Luhn-24 for NPI, "
                 "checksum digit for DEA) and FDA UDI device barcode specifications."
-            ).classes("text-xs opacity-70 mb-2")
+            ).classes("text-xs cc-muted mb-2")
             with ui.row().classes("gap-4 items-center"):
                 ui.switch("Redact NPI numbers", value=bool(ci.get("redact_npi", True)),
                           on_change=lambda e: ci.update(redact_npi=e.value))
@@ -1007,7 +1007,7 @@ def pipeline_page():
             return
         with ui.dialog() as dlg, ui.card().classes("w-[760px] gap-2").mark("regression-dialog"):
             ui.label(f"{len(changed)} of your {len(results)} known-good chart(s) would come out "
-                     "differently").classes("text-lg font-semibold text-orange-700")
+                     "differently").classes("cc-section text-orange-700")
             for r in changed[:6]:
                 with ui.expansion(r.label, icon="difference").classes("w-full"):
                     if r.error:
@@ -1132,7 +1132,7 @@ def pipeline_page():
             for p in packs:
                 with ui.card().classes("w-full gap-1"):
                     ui.label(f"{p['name']} — {p['rules']} rule entries").classes("font-medium")
-                    ui.label(p["description"]).classes("text-xs opacity-70 -mt-2")
+                    ui.label(p["description"]).classes("text-xs cc-muted -mt-2")
                     if p["source"]:
                         ui.label(f"Source: {p['source']}").classes("text-xs opacity-50 -mt-1")
 

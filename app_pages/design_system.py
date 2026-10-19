@@ -12,8 +12,8 @@ tokens, so changing a token here reaches all nine screens at once.
 
 Type roles (the whole system in four lines)
 -------------------------------------------
-``--nd-display``  Doto        — hero numbers and page titles (36px+ only)
-``--nd-font``     Space Grotesk — headings and body
+``--nd-display``  Doto        — metric numerals only
+``--nd-font``     Space Grotesk — page titles, section headings, and body
 ``--nd-mono``     Space Mono  — labels, ALL CAPS micro-type, data, buttons, nav
 Status colour is applied to the *value*, never to a label or a row background.
 
@@ -189,7 +189,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   overflow-x:auto;scrollbar-width:none;}
 .cc-navbar::-webkit-scrollbar{display:none;}
 .cc-navlink{display:flex;align-items:center;height:40px;padding:0 var(--nd-space-md);
-  font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.1em;
+  font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.06em;
   text-transform:uppercase;color:var(--nd-text-secondary);cursor:pointer;
   white-space:nowrap;text-decoration:none;background:none;border:0;
   transition:color var(--nd-dur-fast) var(--nd-ease);}
@@ -226,8 +226,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .nicegui-header{flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:0;padding:0;}
 .nicegui-content{padding:0;gap:0;align-items:stretch;}
 .nicegui-drawer{padding:0;gap:0;align-items:stretch;}
-/* Cards get Nothing's 24px interior — unless the page asked for its own. */
-.nicegui-card:not([class*=" p-"]):not([class*="px-"]):not([class*="py-"]){padding:var(--nd-space-lg);}
+/* Cards get a 16px interior — unless the page asked for its own. */
+.nicegui-card:not([class*=" p-"]):not([class*="px-"]):not([class*="py-"]){padding:var(--nd-space-md);}
 .nicegui-expansion-content{padding:0 var(--nd-space-md) var(--nd-space-md);gap:var(--nd-space-md);}
 .nicegui-tab-panel{padding:0;gap:var(--nd-space-md);}
 
@@ -243,8 +243,12 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-pagehead{display:flex;flex-direction:column;gap:var(--nd-space-sm);}
 .cc-eyebrow{font-family:var(--nd-mono);font-size:var(--label);font-weight:400;
   letter-spacing:.12em;text-transform:uppercase;color:var(--nd-text-secondary);}
-.cc-page-title{margin:0;font-family:var(--nd-font);font-size:clamp(24px,2.6vw,30px);
+.cc-page-title{margin:0;font-family:var(--nd-font);font-size:28px;
   font-weight:600;letter-spacing:-.02em;line-height:1.02;color:var(--nd-text-display);}
+.cc-section{margin:0;font-family:var(--nd-font);font-size:16px;font-weight:500;
+  letter-spacing:-.005em;line-height:1.35;color:var(--nd-text-display);}
+.cc-muted{font-family:var(--nd-font);font-size:13px;line-height:1.5;
+  color:var(--nd-text-secondary);}
 .cc-page-sub{font-family:var(--nd-font);font-size:var(--body-sm);
   color:var(--nd-text-secondary);max-width:78ch;}
 .cc-rule{height:1px;background:var(--nd-border);}
@@ -273,10 +277,10 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-tint--accent{background:var(--nd-tint);border-color:var(--nd-border-visible);}
 .cc-tint--warn{background:var(--cc-warn-soft);border-color:var(--nd-warning);}
 /* Clean page selection modes: the chart box shows which tool is armed. */
-.cc-mode-remove .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-error);}
-.cc-mode-remove textarea::selection{background:rgba(198,40,40,.35);}
-.cc-mode-abbreviate .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-accent);}
-.cc-mode-abbreviate textarea::selection{background:rgba(21,101,192,.3);}
+.cc-mode-remove .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-accent);}
+.cc-mode-remove textarea::selection{background:color-mix(in srgb, var(--nd-accent) 35%, transparent);}
+.cc-mode-abbreviate .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-interactive);}
+.cc-mode-abbreviate textarea::selection{background:color-mix(in srgb, var(--nd-interactive) 30%, transparent);}
 .cc-tint--danger{background:var(--cc-neg-soft);border-color:var(--nd-accent);}
 .cc-panel{background:var(--nd-surface-raised);}
 
@@ -284,7 +288,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
    7. BUTTONS — pill or technical, mono ALL CAPS
    ===================================================================== */
 .q-btn{border-radius:var(--nd-r-pill);font-family:var(--nd-mono);font-size:12.5px;
-  font-weight:400;letter-spacing:.06em;text-transform:uppercase;min-height:44px;
+  font-weight:400;letter-spacing:.06em;text-transform:uppercase;min-height:40px;
   padding:0 var(--nd-space-lg);box-shadow:none !important;
   transition:background var(--nd-dur-fast) var(--nd-ease),
              border-color var(--nd-dur-fast) var(--nd-ease),
@@ -395,7 +399,7 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   text-transform:uppercase;}
 .q-chip .q-icon{font-size:15px;}
 
-.cc-pill{display:inline-flex;align-items:center;gap:var(--nd-space-sm);height:26px;
+.cc-pill{display:inline-flex;align-items:center;gap:var(--nd-space-sm);height:24px;
   padding:0 10px;border-radius:var(--nd-r-tech);border:1px solid var(--nd-border-visible);
   background:transparent;font-family:var(--nd-mono);font-size:var(--label);
   font-weight:400;letter-spacing:0;text-transform:none;
@@ -622,9 +626,10 @@ pre,code,kbd{font-family:var(--nd-mono);}
 .font-mono{font-family:var(--nd-mono) !important;}
 .opacity-60,.opacity-70{opacity:1 !important;color:var(--nd-text-secondary) !important;}
 .opacity-80{opacity:1 !important;color:var(--nd-text-primary) !important;}
-.gap-3{gap:var(--nd-space-md) !important;}
+.gap-3,.gap-4{gap:var(--nd-space-md) !important;}
 .border{border-color:var(--nd-border) !important;}
 .rounded{border-radius:var(--nd-r-tech) !important;}
+.rounded-lg{border-radius:var(--nd-r-compact) !important;}
 .shadow,.shadow-sm,.shadow-md,.shadow-lg,.shadow-xl,.shadow-2xl{box-shadow:none !important;}
 
 /* =====================================================================
@@ -670,7 +675,7 @@ pre,code,kbd{font-family:var(--nd-mono);}
 }
 @media (max-width:599px){
   .cc-brand{display:none;}
-  .cc-page-title{font-size:30px;}
+  .cc-page-title{font-size:24px;}
   /* Touch targets: every control earns at least 44px on a phone. */
   .q-btn{min-height:44px;}
   .cc-headbtn{min-height:44px;}

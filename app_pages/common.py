@@ -226,7 +226,7 @@ def report_error(title: str, exc: Exception) -> None:
     except OSError:
         pass
     with ui.dialog() as dlg, ui.card().classes("w-[560px]"):
-        ui.label(title).classes("font-semibold text-red-600")
+        ui.label(title).classes("cc-section text-red-600")
         with ui.scroll_area().classes("w-full max-h-64 border rounded cc-panel p-2"):
             ui.html(f"<pre style='white-space:pre-wrap;font-size:11px'>{esc(tb)}</pre>")
         with ui.row():
@@ -546,7 +546,7 @@ def apply_preset(name: str) -> bool:
 
 def open_shortcuts_dialog(shortcuts: list[tuple[str, str]]) -> None:
     with ui.dialog() as dlg, ui.card().classes("w-[440px] gap-1"):
-        ui.label("Keyboard shortcuts").classes("text-lg font-semibold")
+        ui.label("Keyboard shortcuts").classes("cc-section")
         for combo, desc in list(GLOBAL_SHORTCUTS) + list(shortcuts):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label(desc).classes("text-sm")

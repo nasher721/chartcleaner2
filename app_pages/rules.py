@@ -20,7 +20,7 @@ def render_history(load_current, holder) -> None:
     with holder:
         ui.label("Every change to your rules, newest first — from any page, the command line or "
                  "an import. Undo reverses just that change and keeps everything since.") \
-            .classes("text-sm opacity-70")
+            .classes("cc-muted")
         items = rule_history.entries(100)
         if not items:
             ui.label("No rule changes recorded yet.").classes("cc-page-sub")
@@ -85,13 +85,13 @@ def render_quick_add(load_current, save_current) -> None:
 
     ui.label("No regex needed: type or paste one rule per line, check the preview, save. "
              "Rules apply to every future clean (and the Clean page's Remove text / "
-             "Abbreviate selection modes save the same rules).").classes("text-sm opacity-70")
+             "Abbreviate selection modes save the same rules).").classes("cc-muted")
     with ui.element("div").classes("grid grid-cols-1 lg:grid-cols-2 gap-4 w-full items-start"):
         # ---- Remove text ----
         with ui.card().classes("w-full gap-2").mark("quick-remove"):
             with ui.row().classes("items-center gap-2"):
                 ui.icon("backspace").classes("text-red-700")
-                ui.label("Remove text").classes("text-lg font-semibold")
+                ui.label("Remove text").classes("cc-section")
             remove_box = ui.textarea(
                 "Text to remove — one phrase per line",
                 placeholder="Electronically signed by\nThis note was created using voice recognition\n"
@@ -113,7 +113,7 @@ def render_quick_add(load_current, save_current) -> None:
                                                         case_sensitive=bool(case.value))
                     total = sum(r["hits"] for r in rows)
                     ui.label(f"{len(phrases)} phrase(s) · {total} match(es) in the current chart") \
-                        .classes("text-xs opacity-70")
+                        .classes("text-xs cc-muted")
                     for r in rows[:30]:
                         with ui.row().classes("items-center gap-2 no-wrap w-full"):
                             ui.label(str(r["hits"])).classes(
@@ -144,7 +144,7 @@ def render_quick_add(load_current, save_current) -> None:
         with ui.card().classes("w-full gap-2").mark("quick-abbreviate"):
             with ui.row().classes("items-center gap-2"):
                 ui.icon("short_text").classes("text-blue-700")
-                ui.label("Add abbreviations").classes("text-lg font-semibold")
+                ui.label("Add abbreviations").classes("cc-section")
             abbr_box = ui.textarea(
                 "One per line: full term = abbreviation",
                 placeholder="subarachnoid hemorrhage = SAH\nexternal ventricular drain = EVD\n"
@@ -195,10 +195,10 @@ def render_quick_add(load_current, save_current) -> None:
 
     # ---- plain-text export / import ----
     with ui.card().classes("w-full gap-2").mark("quick-text-io"):
-        ui.label("Your rules as plain text").classes("text-lg font-semibold")
+        ui.label("Your rules as plain text").classes("cc-section")
         ui.label("Readable lists of what you remove, replace and abbreviate — edit them in any text "
                  "editor, email them, and import them back here. (Advanced regex rules travel in the "
-                 "JSON export on the Share & import tab.)").classes("text-sm opacity-70")
+                 "JSON export on the Share & import tab.)").classes("cc-muted")
         with ui.row().classes("gap-2 flex-wrap items-center"):
             def download_text() -> None:
                 ui.download.content(quick_rules.export_text(load_current()).encode("utf-8"),
@@ -268,7 +268,7 @@ def text_rules_page():
                     "'very broad' = deletes a large share of lines (verify it isn't "
                     "removing real content); 'slow' = took long to run. Remove a rule "
                     "here, or scope it on the Pipeline page."
-                ).classes("text-sm opacity-70")
+                ).classes("cc-muted")
                 cols = [
                     {"name": "status", "label": "Status", "field": "status", "align": "left"},
                     {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
