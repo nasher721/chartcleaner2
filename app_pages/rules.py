@@ -333,7 +333,8 @@ def text_rules_page():
             abbreviations = ui.tab("Abbreviations", icon="short_text")
             sharing = ui.tab("Share & import", icon="import_export")
             history = ui.tab("Recent changes", icon="history")
-        with ui.tab_panels(tabs, value=quick).classes("w-full"):
+        with ui.tab_panels(tabs, value=quick).classes("w-full") \
+                .props("transition-prev=fade transition-next=fade"):
             with ui.tab_panel(quick):
                 quick_holder = ui.column().classes("w-full")
             with ui.tab_panel(learned):

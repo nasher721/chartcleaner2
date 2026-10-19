@@ -2859,7 +2859,7 @@ async def clean_page():
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
                     clean_btn.props("unelevated color=primary no-caps").tooltip(f"{MOD}+Enter")
-                    spinner = ui.row().classes("items-center gap-2").mark("spinner")
+                    spinner = ui.row().classes("items-center gap-2 cc-arrive").mark("spinner")
                     with spinner:
                         ui.element("div").classes("cc-spinner")
                         ui.label("Cleaning").classes("cc-mono text-xs cc-muted cc-pulse")
@@ -2874,7 +2874,7 @@ async def clean_page():
                         .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
-                                      "cc-panel").mark("selection-bar") as sel_bar:
+                                      "cc-panel cc-arrive").mark("selection-bar") as sel_bar:
                     ui.icon("highlight").classes("text-primary")
                     sel_text = ui.label("").classes("text-xs cc-mono max-w-[220px] truncate")
                     ui.button("Remove", icon="backspace", on_click=sel_remove) \
@@ -2909,7 +2909,7 @@ async def clean_page():
                         .props("flat dense round aria-label='Dismiss selection actions'")
                 sel_bar.set_visibility(False)
                 tray = ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
-                                        "cc-panel").mark("collect-tray")
+                                        "cc-panel cc-arrive").mark("collect-tray")
                 tray.set_visibility(False)
                 with ui.expansion("Selection settings", icon="tune").classes("w-full"):
                     selection_mode = common.PREFS.get("selection_mode")

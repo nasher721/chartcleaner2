@@ -100,9 +100,9 @@ CSS = r"""
   /* --- shape -------------------------------------------------------- */
   --nd-r-pill:999px; --nd-r-card:16px; --nd-r-compact:8px; --nd-r-tech:4px;
 
-  /* --- motion: subtle ease-out only, never spring ------------------- */
-  --nd-ease:cubic-bezier(.25,.1,.25,1);
-  --nd-dur-fast:150ms; --nd-dur:250ms;
+  /* --- motion: ease-out only, never spring or overshoot ------------- */
+  --nd-ease:cubic-bezier(.22,.61,.36,1);
+  --nd-dur-fast:140ms; --nd-dur:220ms; --nd-dur-slow:320ms;
 
   /* --- status colours: identical in both modes ---------------------- */
   --nd-accent:#D71921; --nd-accent-subtle:rgba(215,25,33,.15);
@@ -166,10 +166,13 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   color:var(--nd-text-primary);-webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;}
 ::selection{background:var(--nd-text-display);color:var(--nd-black);}
-:focus-visible{outline:2px solid var(--nd-text-display);outline-offset:2px;}
+:focus-visible{outline:2px solid var(--nd-text-display);outline-offset:3px;
+  animation:cc-focus var(--nd-dur-fast) var(--nd-ease);}
 ::-webkit-scrollbar{width:10px;height:10px;}
 ::-webkit-scrollbar-thumb{background:var(--nd-border-visible);border:3px solid var(--nd-black);
-  background-clip:padding-box;border-radius:0;}
+  background-clip:padding-box;border-radius:0;
+  transition:background var(--nd-dur-fast) var(--nd-ease);}
+::-webkit-scrollbar-thumb:hover{background:var(--nd-text-secondary);}
 ::-webkit-scrollbar-track{background:transparent;}
 
 /* =====================================================================
@@ -206,7 +209,10 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-nav-item{display:flex;justify-content:flex-start;min-height:46px;margin:0;
   padding:0 var(--nd-space-md);border-radius:0;border-left:2px solid transparent;
   font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.08em;
-  text-transform:uppercase;color:var(--nd-text-secondary);}
+  text-transform:uppercase;color:var(--nd-text-secondary);
+  transition:color var(--nd-dur-fast) var(--nd-ease),
+             background var(--nd-dur-fast) var(--nd-ease),
+             border-color var(--nd-dur) var(--nd-ease);}
 .cc-nav-item:hover{color:var(--nd-text-display);background:var(--nd-hover);}
 .cc-nav-active,.cc-nav-active:hover{color:var(--nd-text-display);background:transparent;
   border-left-color:var(--nd-text-display);font-weight:400;}
@@ -240,7 +246,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
    The cap lands on the children, so the page keeps the shared 1440 grid and
    its left edge stays flush with the nav — only the right edge pulls in. */
 .cc-page--measure > *{max-width:1040px;}
-.cc-pagehead{display:flex;flex-direction:column;gap:var(--nd-space-sm);}
+.cc-pagehead{display:flex;flex-direction:column;gap:var(--nd-space-sm);
+  animation:cc-arrive var(--nd-dur) var(--nd-ease);}
 .cc-eyebrow{font-family:var(--nd-mono);font-size:var(--label);font-weight:400;
   letter-spacing:.12em;text-transform:uppercase;color:var(--nd-text-secondary);}
 .cc-page-title{margin:0;font-family:var(--nd-font);font-size:28px;
@@ -252,7 +259,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-page-sub{font-family:var(--nd-font);font-size:var(--body-sm);
   color:var(--nd-text-secondary);max-width:78ch;}
 .cc-rule{height:1px;background:var(--nd-border);}
-.cc-headbtn{min-height:36px;min-width:36px;color:var(--nd-text-secondary);}
+.cc-headbtn{min-height:36px;min-width:36px;color:var(--nd-text-secondary);
+  transition:color var(--nd-dur-fast) var(--nd-ease),
+             background var(--nd-dur-fast) var(--nd-ease);}
 .cc-headbtn:hover{color:var(--nd-text-display);background:var(--nd-hover);}
 .cc-brand{font-family:var(--nd-mono);font-size:13px;font-weight:700;letter-spacing:.16em;
   text-transform:uppercase;color:var(--nd-text-display);}
@@ -277,6 +286,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-tint--accent{background:var(--nd-tint);border-color:var(--nd-border-visible);}
 .cc-tint--warn{background:var(--cc-warn-soft);border-color:var(--nd-warning);}
 /* Clean page selection modes: the chart box shows which tool is armed. */
+.cc-mode-remove .q-field__control,.cc-mode-abbreviate .q-field__control{
+  transition:box-shadow var(--nd-dur) var(--nd-ease);}
 .cc-mode-remove .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-accent);}
 .cc-mode-remove textarea::selection{background:color-mix(in srgb, var(--nd-accent) 35%, transparent);}
 .cc-mode-abbreviate .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-interactive);}
@@ -292,7 +303,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   padding:0 var(--nd-space-lg);box-shadow:none !important;
   transition:background var(--nd-dur-fast) var(--nd-ease),
              border-color var(--nd-dur-fast) var(--nd-ease),
-             color var(--nd-dur-fast) var(--nd-ease);}
+             color var(--nd-dur-fast) var(--nd-ease),
+             transform var(--nd-dur-fast) var(--nd-ease);}
+.q-btn.q-btn--actionable:active{transform:translateY(1px);}
 .q-btn--dense{min-height:36px;padding:0 var(--nd-space-md);font-size:12px;}
 .q-btn--round,.q-btn--fab{border-radius:var(--nd-r-pill);padding:0;}
 .q-btn .q-icon{font-size:18px;}
@@ -319,9 +332,15 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
    ===================================================================== */
 .q-field--outlined .q-field__control,.q-field--filled .q-field__control,
 .q-textarea .q-field__control{border-radius:var(--nd-r-compact);}
-.q-field--outlined .q-field__control:before{border:1px solid var(--nd-border-visible);}
+.q-field--outlined .q-field__control:before{border:1px solid var(--nd-border-visible);
+  transition:border-color var(--nd-dur-fast) var(--nd-ease);}
+.q-field--outlined .q-field__control:hover:before{border-color:var(--nd-text-secondary);}
 .q-field--outlined.q-field--focused .q-field__control:after{
-  border:1px solid var(--nd-text-display);}
+  border:1px solid var(--nd-text-display);
+  transition:border-color var(--nd-dur-fast) var(--nd-ease);}
+.q-field__label,.q-field--float .q-field__label{
+  transition-duration:var(--nd-dur);
+  transition-timing-function:var(--nd-ease);}
 .q-field--filled .q-field__control{background:var(--nd-surface-raised);}
 .q-field__native,.q-field__input,.q-field__prefix,.q-field__suffix{
   color:var(--nd-text-primary);font-family:var(--nd-mono);font-size:13px;}
@@ -353,7 +372,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   letter-spacing:.08em;text-transform:uppercase;color:var(--nd-text-secondary);
   border-bottom:1px solid var(--nd-border-visible) !important;}
 .q-table td{font-family:var(--nd-mono);font-size:12.5px;
-  border-color:var(--nd-border) !important;background:transparent !important;}
+  border-color:var(--nd-border) !important;background:transparent !important;
+  transition:background var(--nd-dur-fast) var(--nd-ease);}
 .q-table tbody tr:hover td{background:var(--nd-hover) !important;}
 .q-table__bottom{font-family:var(--nd-mono);font-size:var(--label);
   color:var(--nd-text-secondary);border-top:1px solid var(--nd-border);}
@@ -369,7 +389,9 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .q-tabs::-webkit-scrollbar{display:none;}
 .q-tab{font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.06em;
   text-transform:none;color:var(--nd-text-secondary);opacity:1;min-height:38px;
-  border-radius:var(--nd-r-pill);padding:0 var(--nd-space-md);white-space:nowrap;}
+  border-radius:var(--nd-r-pill);padding:0 var(--nd-space-md);white-space:nowrap;
+  transition:background var(--nd-dur) var(--nd-ease),
+             color var(--nd-dur) var(--nd-ease);}
 .q-tab--active{color:var(--nd-black);background:var(--nd-text-display);}
 .q-tab--active .q-icon{color:var(--nd-black);}
 .q-tab .q-icon{font-size:17px;}
@@ -396,7 +418,11 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .q-chip{background:transparent;border:1px solid var(--nd-border-visible);
   border-radius:var(--nd-r-pill);color:var(--nd-text-secondary);
   font-family:var(--nd-mono);font-size:var(--label);letter-spacing:.06em;
-  text-transform:uppercase;}
+  text-transform:uppercase;
+  transition:border-color var(--nd-dur-fast) var(--nd-ease),
+             color var(--nd-dur-fast) var(--nd-ease),
+             background var(--nd-dur-fast) var(--nd-ease);}
+.q-chip:hover{border-color:var(--nd-text-display);color:var(--nd-text-primary);}
 .q-chip .q-icon{font-size:15px;}
 
 .cc-pill{display:inline-flex;align-items:center;gap:var(--nd-space-sm);height:24px;
@@ -439,7 +465,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-segbar-readout{font-family:var(--nd-mono);font-size:var(--caption);
   color:var(--nd-text-primary);font-variant-numeric:tabular-nums;}
 .cc-segbar{display:flex;gap:2px;width:100%;height:10px;}
-.cc-segbar > span{flex:1 1 0;min-width:2px;background:var(--nd-border);}
+.cc-segbar > span{flex:1 1 0;min-width:2px;background:var(--nd-border);
+  transition:background var(--nd-dur) var(--nd-ease);}
 .cc-segbar > span.on{background:var(--nd-text-display);}
 .cc-segbar--success > span.on{background:var(--nd-success);}
 .cc-segbar--warning > span.on{background:var(--nd-warning);}
@@ -454,35 +481,115 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   background-size:12px 12px;}
 
 /* =====================================================================
-   13.5 MOTION — quiet, instrument-grade; subtle ease-out only
+   13.5 MOTION — quiet, instrument-grade; ease-out only, never spring
    ---------------------------------------------------------------------
-   The system forbids spring easing and decorative motion. These are the
-   *only* motions the app makes: a once-only entrance on a freshly drawn
-   result, a fade between tabs, and a square "scanning" spinner. Every one
-   uses --nd-ease and --nd-dur, and the global reduced-motion rule below
-   collapses them to instant.
+   State changes ease. Entrances settle a few pixels. Overlays rise instead
+   of scaling out of a point. Nothing bounces, blurs, or overshoots.
+   prefers-reduced-motion collapses every one of these to instant.
+   Quasar removes `.q-body--layout-animate` after 155ms, which used to cut
+   drawers off mid-slide; the same timing is therefore also set on the
+   elements themselves so the slide finishes after that class drops.
+   `html.cc-ready` (one frame after load) keeps the first paint from animating.
    ===================================================================== */
 @keyframes cc-fade-up{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
 @keyframes cc-fade{from{opacity:0;}to{opacity:1;}}
+@keyframes cc-arrive{from{transform:translateY(6px);}to{transform:none;}}
+@keyframes cc-focus{from{outline-offset:0;}to{outline-offset:3px;}}
 @keyframes cc-spin{to{transform:rotate(360deg);}}
-@keyframes cc-pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+@keyframes cc-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 /* A freshly drawn result entering: single fade-up, retriggers each render. */
 .cc-reveal{animation:cc-fade-up var(--nd-dur) var(--nd-ease) both;}
 .cc-reveal--soft{animation:cc-fade var(--nd-dur) var(--nd-ease) both;}
+/* Panels that toggle visibility (selection bar, spinner): slide, stay opaque
+   so a click in the first frame still lands. */
+.cc-arrive{animation:cc-arrive var(--nd-dur-fast) var(--nd-ease);}
 /* Composed entrance: each direct child steps in behind the last, so the
    trust strip, the metric row and the tabs arrive as a sequence rather
    than a wall — no competing motion, just rhythm. */
 .cc-stagger > *{animation:cc-fade-up var(--nd-dur) var(--nd-ease) both;}
-.cc-stagger > *:nth-child(2){animation-delay:50ms;}
-.cc-stagger > *:nth-child(3){animation-delay:100ms;}
-.cc-stagger > *:nth-child(4){animation-delay:150ms;}
-.cc-stagger > *:nth-child(5){animation-delay:200ms;}
-.cc-stagger > *:nth-child(6){animation-delay:250ms;}
+.cc-stagger > *:nth-child(2){animation-delay:40ms;}
+.cc-stagger > *:nth-child(3){animation-delay:80ms;}
+.cc-stagger > *:nth-child(4){animation-delay:120ms;}
+.cc-stagger > *:nth-child(5){animation-delay:160ms;}
+.cc-stagger > *:nth-child(6){animation-delay:200ms;}
 /* Square spinner — a Teenage-Engineering instrument scanning, not a blob. */
 .cc-spinner{width:20px;height:20px;flex:0 0 20px;border:2px solid var(--nd-border-visible);
   border-top-color:var(--nd-text-display);border-radius:0;transform-origin:center;
   animation:cc-spin 700ms linear infinite;}
 .cc-pulse{animation:cc-pulse 1.2s var(--nd-ease) infinite;}
+
+/* Press, hover and focus share one clock. The Material ripple is a second
+   animation on top of the press, so it goes. */
+.q-ripple{display:none !important;}
+body.desktop .q-focus-helper,
+body.desktop .q-focus-helper:before,
+body.desktop .q-focus-helper:after{
+  transition-duration:var(--nd-dur-fast);
+  transition-timing-function:var(--nd-ease);}
+.q-item{transition:background var(--nd-dur-fast) var(--nd-ease),
+  color var(--nd-dur-fast) var(--nd-ease);}
+.q-expansion-item{transition:border-color var(--nd-dur-fast) var(--nd-ease);}
+.q-expansion-item__toggle-icon{transition:transform var(--nd-dur) var(--nd-ease);}
+.q-expansion-item:hover{border-color:var(--nd-border-visible);}
+[dir="ltr"] .q-toggle__thumb,[dir="rtl"] .q-toggle__thumb{
+  transition-duration:var(--nd-dur);
+  transition-timing-function:var(--nd-ease);}
+.q-checkbox__inner{transition:transform var(--nd-dur-fast) var(--nd-ease);}
+.q-checkbox__inner:active{transform:scale(.94);}
+.q-checkbox__inner--truthy path,.q-checkbox__inner--indet .q-checkbox__indet{
+  transition-timing-function:var(--nd-ease);}
+.q-card{transition:border-color var(--nd-dur-fast) var(--nd-ease);}
+.q-uploader{transition:border-color var(--nd-dur-fast) var(--nd-ease),
+  background var(--nd-dur-fast) var(--nd-ease);}
+.q-uploader:hover{border-color:var(--nd-text-display);background:var(--nd-hover);}
+.q-uploader__dnd{outline-color:var(--nd-text-display);
+  background:var(--nd-hover);transition:background var(--nd-dur-fast) var(--nd-ease);}
+
+/* Quasar overlays: one duration, and dialogs rise instead of scaling from 0. */
+.q-transition--fade-enter-active,.q-transition--fade-leave-active,
+.q-transition--scale-enter-active,.q-transition--scale-leave-active,
+.q-transition--jump-up-enter-active,.q-transition--jump-up-leave-active,
+.q-transition--jump-down-enter-active,.q-transition--jump-down-leave-active,
+.q-transition--jump-left-enter-active,.q-transition--jump-left-leave-active,
+.q-transition--jump-right-enter-active,.q-transition--jump-right-leave-active,
+.q-transition--slide-up-enter-active,.q-transition--slide-up-leave-active,
+.q-transition--slide-down-enter-active,.q-transition--slide-down-leave-active,
+.q-transition--slide-left-enter-active,.q-transition--slide-left-leave-active,
+.q-transition--slide-right-enter-active,.q-transition--slide-right-leave-active{
+  --q-transition-duration:var(--nd-dur);
+  --q-transition-easing:var(--nd-ease);}
+.q-transition--fade-enter-active,.q-transition--fade-leave-active{
+  transition:opacity var(--nd-dur) var(--nd-ease);}
+.q-transition--scale-enter-from,.q-transition--scale-leave-to{
+  opacity:0;transform:translate3d(0,8px,0);}
+.q-tooltip{animation:cc-fade var(--nd-dur-fast) var(--nd-ease);}
+
+/* Drawers and the page beside them. Specificity beats Quasar's 0.12s
+   !important rule; the unscoped copy keeps running after the animate class
+   is removed so a 220ms slide is not clipped at 155ms. */
+html.cc-ready .q-drawer,
+html.cc-ready body.q-body--layout-animate .q-drawer{
+  transition:transform var(--nd-dur) var(--nd-ease),
+             width var(--nd-dur) var(--nd-ease),
+             top var(--nd-dur) var(--nd-ease),
+             bottom var(--nd-dur) var(--nd-ease) !important;}
+html.cc-ready .q-drawer__backdrop,
+html.cc-ready body.q-body--layout-animate .q-drawer__backdrop{
+  transition:background-color var(--nd-dur) var(--nd-ease),
+             opacity var(--nd-dur) var(--nd-ease) !important;}
+html.cc-ready .q-page-container,
+[dir="ltr"] html.cc-ready body.q-body--layout-animate .q-page-container,
+[dir="rtl"] html.cc-ready body.q-body--layout-animate .q-page-container{
+  transition:padding-top var(--nd-dur) var(--nd-ease),
+             padding-right var(--nd-dur) var(--nd-ease),
+             padding-bottom var(--nd-dur) var(--nd-ease),
+             padding-left var(--nd-dur) var(--nd-ease) !important;}
+html.cc-ready .q-layout__section--marginal,
+[dir="ltr"] html.cc-ready body.q-body--layout-animate .q-layout__section--marginal,
+[dir="rtl"] html.cc-ready body.q-body--layout-animate .q-layout__section--marginal{
+  transition:transform var(--nd-dur) var(--nd-ease),
+             left var(--nd-dur) var(--nd-ease),
+             right var(--nd-dur) var(--nd-ease) !important;}
 
 /* =====================================================================
    13.6 EMPTY STATES — educational, on-brand previews
@@ -557,8 +664,9 @@ pre,code,kbd{font-family:var(--nd-mono);}
 .cc-rep{background:var(--cc-warn-soft);}
 .cc-flag{box-shadow:inset 2px 0 0 var(--nd-warning);}
 .cc-diff-left{border-right:1px solid var(--nd-border);}
-.cc-click{cursor:pointer;}
-.cc-click:hover{outline:1px solid var(--nd-warning);}
+.cc-click{cursor:pointer;
+  transition:box-shadow var(--nd-dur-fast) var(--nd-ease);}
+.cc-click:hover{box-shadow:inset 0 0 0 1px var(--nd-warning);}
 .cc-gone{text-decoration:line-through;text-decoration-color:var(--nd-accent);
   background:var(--cc-neg-soft);}
 .cc-abbr{background:var(--nd-tint);border-bottom:1px dotted var(--nd-border-visible);}
@@ -686,9 +794,22 @@ pre,code,kbd{font-family:var(--nd-mono);}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;}
+  html.cc-ready .q-drawer,
+  html.cc-ready body.q-body--layout-animate .q-drawer,
+  html.cc-ready .q-drawer__backdrop,
+  html.cc-ready body.q-body--layout-animate .q-drawer__backdrop,
+  html.cc-ready .q-page-container,
+  [dir="ltr"] html.cc-ready body.q-body--layout-animate .q-page-container,
+  [dir="rtl"] html.cc-ready body.q-body--layout-animate .q-page-container,
+  html.cc-ready .q-layout__section--marginal,
+  [dir="ltr"] html.cc-ready body.q-body--layout-animate .q-layout__section--marginal,
+  [dir="rtl"] html.cc-ready body.q-body--layout-animate .q-layout__section--marginal{
     transition-duration:.01ms !important;}
 }
 </style>
+<script>requestAnimationFrame(function(){document.documentElement.classList.add("cc-ready");});</script>
 """
 
 
@@ -880,7 +1001,12 @@ def _chart_options(options: dict) -> dict:
 
     opt = copy.deepcopy(options)
     opt["backgroundColor"] = "transparent"
-    opt["animation"] = bool(opt.get("animation", False))
+    # Bars still step (no smoothed lines). They grow in once, on the same clock
+    # as the rest of the interface.
+    opt["animation"] = bool(opt.get("animation", True))
+    opt["animationDuration"] = int(opt.get("animationDuration", 320))
+    opt["animationDurationUpdate"] = int(opt.get("animationDurationUpdate", 280))
+    opt["animationEasing"] = opt.get("animationEasing", "cubicOut")
     opt["textStyle"] = {**opt.get("textStyle", {}),
                         "fontFamily": "Space Mono, monospace", "color": tone("secondary")}
     opt.setdefault("grid", {}).setdefault("containLabel", True)

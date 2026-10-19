@@ -87,7 +87,8 @@ def census_page():
                     ui.label("On the Clean page, type a bed tag (e.g. G20-1) next to the chart before "
                              "cleaning. The newest chart for each tag shows up here.").classes("text-sm")
                 return
-            with ui.element("div").classes("w-full grid gap-3 md:grid-cols-2 2xl:grid-cols-3"):
+            with ui.element("div").classes(
+                    "w-full grid gap-3 md:grid-cols-2 2xl:grid-cols-3 cc-stagger"):
                 for bed in report.beds:
                     bed_card(bed)
 
