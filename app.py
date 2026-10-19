@@ -37,6 +37,7 @@ from app_pages.scripts import scripts_page
 from app_pages.settings import settings_page
 from app_pages.stats import stats_page
 from app_pages.updates import _check_for_updates, _is_chart_cleaner, _update_startup  # noqa: F401
+from chartcleaner.security_headers import SecurityHeaders
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,9 @@ app.add_static_files("/exports", str(store.EXPORTS_DIR))
 # offline-first, so the stylesheet references these instead of a font CDN.
 app.add_static_files("/static", str(common.STATIC_DIR))
 local_api.register(app)  # /api/v1/* — loopback + token only (see chartcleaner/api.py)
+# Browser-side containment: no framing, no remote script/img/font, and no
+# outbound fetch to anywhere but this origin (see chartcleaner/security_headers.py).
+app.add_middleware(SecurityHeaders)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +218,12 @@ def main():
     from chartcleaner.host_guard import LoopbackHostGuard, is_loopback_host
     if is_loopback_host(args.host):
         app.add_middleware(LoopbackHostGuard)
+    import logging
+
+    logging.getLogger("chartcleaner.app").info(
+        "starting %s on %s:%s (loopback=%s, log=%s)",
+        common.__version__, args.host, port, is_loopback_host(args.host), common.LOG_FILE,
+    )
     ui.run(
         host=args.host,
         port=port,

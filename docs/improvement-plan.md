@@ -35,7 +35,8 @@ to cleaning output (`tests/golden` byte-identical).
 - **What:** an *unexpected* error in a page used to surface NiceGUI's bare 500.
   `guarded()` wraps each route so the failure renders a calm recovery screen
   (what happened, nothing was sent anywhere, Reload / Go to Clean / Go to Doctor,
-  a downloadable traceback) and appends the traceback to `data/app.log`. It only
+  a downloadable traceback) and appends the traceback to the rotating log
+  (`data/chartcleaner.log`, see `chartcleaner/logging_setup.py`). It only
   catches the last-resort case — pages keep handling their own expected failures —
   and re-raises the original error if even the recovery screen cannot render.
 - **Tests:** `tests/test_error_boundary.py` (5).

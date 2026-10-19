@@ -24,6 +24,8 @@ def scripts_page():
                 ui.badge("load error", color="negative").classes("ml-4")
             if m.get("placeholder"):
                 ui.badge("placeholder", color="blue-grey").props("outline").classes("ml-4")
+            if not m.get("trusted") and not m.get("error") and not m.get("placeholder"):
+                ui.badge("untrusted", color="orange").props("outline").classes("ml-4")
 
     def build_editor() -> None:
         if not sel["name"]:
@@ -50,6 +52,26 @@ def scripts_page():
                 ui.label("Placeholder script — skipped by the pipeline until you set "
                          "PLACEHOLDER = False.").classes("text-xs cc-muted")
 
+        if not meta.get("trusted") and not meta.get("placeholder"):
+            def trust_this() -> None:
+                try:
+                    trust_rule(path)
+                except Exception as ex:  # noqa: BLE001 — surface, never crash the page
+                    ui.notify(f"Could not trust the script: {ex}", type="negative")
+                    return
+                ui.notify(f"{sel['name']}.py trusted — it will now run in the pipeline.",
+                          type="positive")
+                select_file(sel["name"])
+
+            with ui.card().classes("w-full cc-tint cc-tint--warn gap-2"):
+                status_tag("untrusted", "warn")
+                ui.label("This file was not created or saved through this app, so it has "
+                         "not been approved to run. Read it above, then trust it — the "
+                         "approval is tied to these exact contents and is revoked if the "
+                         "file changes.").classes("text-xs")
+                ui.button("Trust this script", icon="verified_user", on_click=trust_this) \
+                    .props("unelevated color=primary")
+
         editor = ui.textarea(value=content["text"], on_change=lambda e: content.update(text=e.value))
         editor.props("outlined input-style='min-height: 400px'").classes("w-full cc-mono")
         status = ui.label("").classes("text-xs")
@@ -63,6 +85,11 @@ def scripts_page():
                     .classes("text-red-500 text-xs", remove="text-green-600 text-orange-600")
                 return
             path.write_text(code, encoding="utf-8")
+            try:
+                # Saving here is an explicit act of authorship: approve these bytes.
+                trust_rule(path)
+            except Exception:  # noqa: BLE001 — trust is best-effort, the save stands
+                pass
             m2 = {mm["name"]: mm for mm in list_custom_rules(common.CUSTOM_DIR)}.get(sel["name"], {})
             if m2.get("error"):
                 status.set_text(f"Saved, but the script has problems: {m2['error']}") \
@@ -157,6 +184,10 @@ def scripts_page():
                     err.set_text("A file with that name already exists.")
                     return
                 target.write_text(CUSTOM_RULE_TEMPLATE, encoding="utf-8")
+                try:
+                    trust_rule(target)  # created by the app, so it starts approved
+                except Exception:  # noqa: BLE001
+                    pass
                 dlg.close()
                 ui.notify(f"Created {name}.py — a placeholder until you set PLACEHOLDER = False.",
                           type="positive")

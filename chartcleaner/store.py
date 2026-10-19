@@ -161,6 +161,10 @@ EDIT_LOG_FILE = DATA_DIR / "edit_log.enc"    # encrypted lines you deleted from 
 RULE_HISTORY_FILE = DATA_DIR / "rule_history.enc"  # encrypted journal of rule changes (rule_history.py)
 SIGNING_KEY_FILE = DATA_DIR / "signing_key.enc"     # encrypted Ed25519 key for rule files
 TRUSTED_KEYS_FILE = DATA_DIR / "trusted_keys.json"  # colleagues' public keys (no chart text)
+# Digests of custom Python rules the user has approved to run (custom_rules.py).
+CUSTOM_TRUST_FILE = DATA_DIR / "custom_rule_trust.json"
+# Rotating application log (logging_setup.py); no chart text is written here.
+LOG_FILE = DATA_DIR / "chartcleaner.log"
 TOKENS_DIR = DATA_DIR / "tokens"
 WATCH_CONFIG_FILE = DATA_DIR / "watch.json"
 WATCHED_OUT_DIR = DATA_DIR / "watched_out"

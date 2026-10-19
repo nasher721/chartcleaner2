@@ -22,8 +22,11 @@ from .custom_rules import (
     CUSTOM_RULE_TEMPLATE,
     CustomRuleError,
     apply_custom_rule,
+    is_trusted,
     list_custom_rules,
     load_custom_module,
+    trust_rule,
+    untrust_rule,
 )
 from . import fact_check as fact_check_mod
 from .compactors import hospital_day as hospital_day_compactor
@@ -73,6 +76,9 @@ __all__ = [
     "load_default_config",
     "validate_config",
     "list_custom_rules",
+    "is_trusted",
+    "trust_rule",
+    "untrust_rule",
     "CUSTOM_RULE_TEMPLATE",
     "BUILTIN_STAGE_IDS",
     "STAGE_LABELS",

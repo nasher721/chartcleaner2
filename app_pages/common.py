@@ -12,6 +12,7 @@ import asyncio
 import difflib
 import html as html_mod
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,7 +34,7 @@ from nicegui import app, run, ui
 from app_pages import a11y
 
 from chartcleaner import __version__
-from chartcleaner import secure_store, store
+from chartcleaner import logging_setup, secure_store, store
 from chartcleaner.audit import (
     CHECK_DESCRIPTIONS,
     CHECK_LABELS,
@@ -51,10 +52,13 @@ from chartcleaner.engine import (
     Pipeline,
     CleanContext,
     _load_custom_module,
+    is_trusted,
     list_custom_rules,
     load_config,
     load_default_config,
     save_config,
+    trust_rule,
+    untrust_rule,
     validate_config,
 )
 from chartcleaner.ingest import IngestError, converters_status, load_file, supported_extensions
@@ -107,13 +111,20 @@ from chartcleaner.release_identity import MANIFEST_URL, MACOS_PUBLISHER, WINDOWS
 
 store.ensure_dirs()
 store.seed_frozen_assets()
+# One-time: approve the example rules shipped with the app so an upgrade does not
+# silently stop them. Only runs when no trust file exists yet.
+from chartcleaner.custom_rules import seed_trust_if_missing as _seed_trust
+
+_seed_trust(store.CUSTOM_RULES_DIR)
+
+LOG_FILE = logging_setup.setup_logging(store.DATA_DIR)
 
 if getattr(sys, "frozen", False):
-    # Windowed bundles have no console; capture output into data/app.log
-    store.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _log = open(store.DATA_DIR / "app.log", "a", buffering=1, encoding="utf-8")
-    sys.stdout = _log
-    sys.stderr = _log
+    # Windowed bundles have no console. Instead of appending to a file that never
+    # rotates, route stray prints and uvicorn output through the same rotating,
+    # redacting logger as everything else.
+    sys.stdout = logging_setup.capture_console(logging.INFO)
+    sys.stderr = logging_setup.capture_console(logging.INFO)
 
 BASE_DIR = store.BASE_DIR
 CONFIG_PATH = store.CONFIG_PATH
@@ -217,14 +228,9 @@ def save_config_with_backup(cfg: dict, source: str = "app") -> dict | None:
 
 
 def report_error(title: str, exc: Exception) -> None:
-    """Show a traceback dialog and append the same text to data/app.log."""
+    """Show a traceback dialog and record the same text in the rotating log."""
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    try:
-        store.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with (store.DATA_DIR / "app.log").open("a", encoding="utf-8") as f:
-            f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] {title}\n{tb}\n")
-    except OSError:
-        pass
+    logging_setup.write_traceback(title, tb)
     with ui.dialog() as dlg, ui.card().classes("w-[560px]"):
         ui.label(title).classes("cc-section text-red-600")
         with ui.scroll_area().classes("w-full max-h-64 border rounded cc-panel p-2"):
@@ -822,14 +828,9 @@ document.body.appendChild(a); a.click(); a.remove();
 
 
 def _log_page_error(title: str, exc: BaseException) -> str:
-    """Append a page failure to data/app.log and return the traceback text."""
+    """Record a page failure in the rotating log and return the traceback text."""
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    try:
-        store.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with (store.DATA_DIR / "app.log").open("a", encoding="utf-8") as f:
-            f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Page failed: {title}\n{tb}\n")
-    except OSError:
-        pass  # logging must never mask the original error
+    logging_setup.write_traceback(f"Page failed: {title}", tb)
     return tb
 
 

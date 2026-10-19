@@ -154,7 +154,7 @@ async def test_ai_summary_marks_unsupported_values_and_cites(user: User, page, m
     text = "Nimodipine 60 mg q4h.\nNimodipine 90 mg q4h."
 
     def fake(chart, cfg, **kw):
-        return SummaryResult(text=text, grounding=GroundingResult(50.0, False, [], 0), model="fake",
+        return SummaryResult(text=text, grounding=GroundingResult(50.0, False, ungrounded_entities=[], total_entities=0), model="fake",
                              preset="clinical", duration_ms=1, facts=verify_output(chart, text),
                              citations=cite(text, chart))
 
