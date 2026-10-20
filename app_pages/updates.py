@@ -1,9 +1,17 @@
-"""Update checks and hand-off to the updater (Settings page + startup)."""
+"""Update checks and hand-off to the updater (Settings page + startup).
+
+Two channels:
+  * installed (frozen) builds — signed release archive via ``chartcleaner.updater``;
+  * source checkouts — fast-forward to the newest upstream commit via
+    ``chartcleaner.git_update`` (no release artifact, no extra host: the remote
+    already configured in .git is the one that gets asked).
+"""
 
 from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403
+from chartcleaner import git_update
 
 # Set by app.main() once the port is known.
 SERVER_PORT: int | None = None
@@ -21,8 +29,10 @@ async def _check_for_updates(*, automatic: bool, force: bool = False, status_lab
     """Run metadata-only update checking off the NiceGUI event loop."""
     if not getattr(sys, "frozen", False):
         status = {"state": "source", "code": "source_mode"}
-        common.PREFS.update(update_status="Source checkout — updates are available in installed builds",
-                     update_status_code=status["code"])
+        common.PREFS.update(
+            update_status="Source checkout — use “Source updates” below to pull the "
+                          "newest commit from GitHub",
+            update_status_code=status["code"])
         save_prefs()
         if status_label:
             status_label.set_text(common.PREFS["update_status"])
@@ -55,9 +65,74 @@ async def _check_for_updates(*, automatic: bool, force: bool = False, status_lab
     return manifest, status
 
 
+# ---------------------------------------------------------------------------
+# source channel: fast-forward a git checkout to the newest upstream commit
+# ---------------------------------------------------------------------------
+
+# Nothing went wrong with the update itself — it just needs the user (or a
+# terminal) before it can run.
+_GIT_SIDE_CODES = {"dirty_tree", "diverged", "ahead", "git_missing", "not_a_repo"}
+
+async def _source_update_check(*, automatic: bool = False, force: bool = False,
+                               status_label=None):
+    """Compare this checkout with upstream. Read-only apart from ``git fetch``."""
+    if getattr(sys, "frozen", False):
+        return None
+    if automatic and not force:
+        # Opt-in, and at most once a day: a checkout is the user's own tree.
+        if not common.PREFS.get("update_source_auto", False):
+            return None
+        last = common.PREFS.get("update_source_last_checked")
+        if last and time.time() - float(last) < git_update.CHECK_INTERVAL:
+            return None
+    status = await run.io_bound(lambda: git_update.check_for_update())
+    common.PREFS.update(update_status=status.detail,
+                        update_status_code=status.code,
+                        update_source_status=status.detail,
+                        update_source_code=status.code,
+                        update_source_last_checked=time.time())
+    save_prefs()
+    if status_label is not None:
+        status_label.set_text(status.detail)
+    return status
+
+
+async def _apply_source_update(notify) -> None:
+    """Fast-forward to the newest commit, then offer to restart into it."""
+    if getattr(sys, "frozen", False):
+        notify("Installed builds update through the release channel.", type="warning")
+        return
+    result = await run.io_bound(lambda: git_update.apply_update())
+    common.PREFS.update(update_source_status=result.detail,
+                        update_source_code=result.code,
+                        update_source_last_checked=time.time())
+    save_prefs()
+    if not result.ok:
+        notify(result.detail, type="warning" if result.code in _GIT_SIDE_CODES else "negative")
+        return
+    notify(result.detail, type="info" if not result.applied else "positive")
+    if not result.applied:
+        return
+    confirm_dialog("Restart Chart Cleaner to load the update?",
+                   _restart_app, confirm_label="Restart now")
+
+
+def _restart_app() -> None:
+    """Reload in place so the freshly pulled code is what runs."""
+    try:
+        git_update.restart_app()
+    except Exception:
+        ui.notify("Could not restart automatically — close and reopen Chart Cleaner.",
+                  type="warning")
+
+
 async def _automatic_update_check() -> None:
-    if common.PREFS.get("update_auto_check", True):
+    if not common.PREFS.get("update_auto_check", True):
+        return
+    if getattr(sys, "frozen", False):
         await _check_for_updates(automatic=True)
+    else:
+        await _source_update_check(automatic=True)
 
 
 async def _after_server_ready() -> None:

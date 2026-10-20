@@ -186,6 +186,12 @@ DEFAULT_PREFS = {
     "update_last_checked": None,
     "update_status": "Not checked",
     "update_status_code": None,
+    # Source-checkout channel (git_update.py): opt-in, so nothing reaches the
+    # network at startup unless you ask for it.
+    "update_source_auto": False,
+    "update_source_last_checked": None,
+    "update_source_status": "Not checked",
+    "update_source_code": None,
     # Kept here so load_prefs doesn't drop them (it keeps known keys only).
     "notes_folder": "",
     "clipboard_watcher": {"enabled": False, "action": "auto"},

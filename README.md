@@ -23,7 +23,8 @@ Clean **Epic-style EMR exports** for safer sharing with LLMs or documentation �
 - **Custom Scripts** — write your own cleaning stage in Python (`clean(text, ctx)`) in the built-in editor; anything is possible: block removal, redactions, restructuring, counters for the stats tracker.
 - **Statistics dashboard** — every run is recorded locally: total characters removed, average reduction, PHI redactions by type, a per-day chart, and **which stages clean the most**.
 - **Config backups** — every rules save keeps a timestamped copy (`data/backups/`, newest 5) with a restore list in Settings.
-- **Clinical data stays local** — the app binds to `127.0.0.1` only. Source checkouts keep data in the project folder; installed builds use the platform user-data directory. Update checks and downloads contact GitHub without sending chart content or configuration. See [desktop release and signing requirements](docs/releases.md).
+- **One-click updates** — *Settings → Source updates (GitHub)* shows how far behind this checkout is and fast-forwards it to the newest commit with one button (then restarts the app so the new code runs). Installed builds instead take the signed release archive from *Settings → Updates*.
+- **Clinical data stays local** — the app binds to `127.0.0.1` only. Source checkouts keep data in the project folder; installed builds use the platform user-data directory. Update checks and downloads contact GitHub (release metadata, or the git remote you cloned from) without sending chart content or configuration. See [desktop release and signing requirements](docs/releases.md).
 
 **Not** a guarantee of de-identification under HIPAA or other rules — review output before sharing.
 
@@ -49,6 +50,17 @@ cd /path/to/chart-cleaner
 (Alternatively run `install.bat` once, then `Run Chart Cleaner.bat`.)
 
 The app picks the first free port from 8765 and prints the URL; close the terminal window (or Ctrl+C) to quit.
+
+### Updating
+
+Two channels, both from **Settings**:
+
+| You run | Channel | What it does |
+|---|---|---|
+| A git checkout (`run-app.command`, `python app.py`) | **Source updates (GitHub)** | Shows the newest commit on your branch and how many you're behind; **Update to latest commit** fast-forwards with `git fetch` + `git merge --ff-only`, then offers to restart so the new code runs. |
+| An installed build (`.app` / `.exe`) | **Updates** | Downloads the signed release archive, verifies it, and hands off to the updater. |
+
+The source channel **only fast-forwards**: it never rebases, resets, or cleans. Your `config.json` is backed up in memory and restored afterwards (new keys the update adds are filled in with their defaults; your own values always win), and if you have local edits to code files the update refuses until you commit or stash them. Turn on *Check GitHub for new commits when the app starts* if you want the count without opening Settings.
 
 ### CLI (still available)
 
