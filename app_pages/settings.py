@@ -5,7 +5,7 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages import updates
-from chartcleaner import model_compare, recent_charts, regression_set
+from chartcleaner import git_update, model_compare, recent_charts, regression_set
 from chartcleaner.summarizer import PRESET_LABELS
 
 
@@ -25,6 +25,19 @@ def settings_page():
             search.props('prepend-icon="search"')
         jump_row = ui.row().classes("w-full gap-1 flex-wrap")
 
+        # Filled in by the source-updates card below (a checkout only); the
+        # release-channel button uses it too when this app runs from source.
+        incoming_box: list = []
+
+        def render_incoming(status) -> None:
+            box = incoming_box[0] if incoming_box else None
+            if box is None:
+                return
+            box.clear()
+            with box:
+                for commit in (status.incoming or ())[:8]:
+                    ui.label("· " + commit.label()).classes("text-xs opacity-80")
+
         with ui.card().classes("w-full gap-2"):
             ui.label("Updates").classes("cc-section")
             ui.label(f"Current version: v{__version__}").classes("text-sm")
@@ -43,17 +56,71 @@ def settings_page():
             async def manual_check() -> None:
                 check_btn.set_enabled(False)
                 try:
-                    manifest, status = await updates._check_for_updates(
-                        automatic=False, force=True, status_label=update_status)
-                    if manifest is not None and status.state == "update_available":
-                        confirm_dialog(
-                            f"Download and install Chart Cleaner v{manifest.version}?",
-                            lambda: asyncio.create_task(updates._stage_and_handoff(
-                                manifest, status, ui.notify)))
+                    if getattr(sys, "frozen", False):
+                        manifest, status = await updates._check_for_updates(
+                            automatic=False, force=True, status_label=update_status)
+                        if manifest is not None and status.state == "update_available":
+                            confirm_dialog(
+                                f"Download and install Chart Cleaner v{manifest.version}?",
+                                lambda: asyncio.create_task(updates._stage_and_handoff(
+                                    manifest, status, ui.notify)))
+                    else:
+                        # Source checkout: the newest upstream commit is the update.
+                        src = await updates._source_update_check(
+                            automatic=False, force=True, status_label=update_status)
+                        if src is not None:
+                            render_incoming(src)
                 finally:
                     check_btn.set_enabled(True)
 
             check_btn = ui.button("Check for updates", icon="refresh", on_click=manual_check).props("outline")
+
+        # Source checkouts update by fast-forwarding to the newest commit on the
+        # configured remote (normally GitHub). Only shown when this really is a
+        # checkout — installed builds use the signed release archive above.
+        if not getattr(sys, "frozen", False) and git_update.repo_root() is not None:
+            with ui.card().classes("w-full gap-2").mark("source-updates-card"):
+                ui.label("Source updates (GitHub)").classes("cc-section")
+                ui.label("Fast-forward this checkout to the newest commit. Only fast-forwards: "
+                         "your config.json is kept, and local edits to code files stop it.") \
+                    .classes("cc-muted")
+                source_status = ui.label(str(common.PREFS.get("update_source_status")
+                                             or "Not checked")).classes("cc-muted")
+                incoming_box.append(ui.column().classes("w-full gap-0"))
+
+                def toggle_source_auto(e) -> None:
+                    common.PREFS["update_source_auto"] = bool(e.value)
+                    save_prefs()
+
+                async def check_source() -> None:
+                    src_btn.set_enabled(False)
+                    try:
+                        status = await updates._source_update_check(
+                            automatic=False, force=True, status_label=source_status)
+                        if status is not None:
+                            render_incoming(status)
+                            update_btn.set_enabled(bool(status.updateable))
+                    finally:
+                        src_btn.set_enabled(True)
+
+                async def apply_source() -> None:
+                    update_btn.set_enabled(False)
+                    try:
+                        await updates._apply_source_update(ui.notify)
+                        await check_source()
+                    finally:
+                        update_btn.set_enabled(True)
+
+                with ui.row().classes("gap-2 flex-wrap"):
+                    src_btn = ui.button("Check GitHub for new commits", icon="refresh",
+                                        on_click=check_source).props("outline")
+                    update_btn = ui.button("Update to latest commit", icon="upgrade",
+                                           on_click=apply_source)
+                    ui.button("Restart app", icon="restart_alt",
+                              on_click=updates._restart_app).props("flat")
+                ui.switch("Check GitHub for new commits when the app starts",
+                          value=bool(common.PREFS.get("update_source_auto", False)),
+                          on_change=toggle_source_auto)
 
         with ui.card().classes("w-full gap-3"):
             ui.label("Output").classes("cc-section")
@@ -736,7 +803,8 @@ def settings_page():
             ui.label("About").classes("cc-section")
             ui.markdown(
                 f"**Chart Cleaner v{__version__}** — cleans Epic-style EMR exports for safer LLM sharing.\n\n"
-                "- Clinical data stays on this computer; update checks are the only built-in outbound request.\n"
+                "- Clinical data stays on this computer; update checks are the only built-in outbound "
+                "request (GitHub for release metadata, or the git remote you cloned from).\n"
                 "- Inputs: .txt / .md / .docx / .pdf (Word via built-in reader or markitdown; PDFs via "
                 "PyMuPDF, OCR when ocrmypdf is installed).\n"
                 "- This tool **reduces** obvious PHI and noise; it is **not** a HIPAA de-identification guarantee.\n"
