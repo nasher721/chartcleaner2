@@ -260,12 +260,13 @@ class EditLedger:
     # -- opaque stages ----------------------------------------------------------
 
     def reconcile(self, stage_id: str, after: str, *, rule_key: str | None = None,
-                  decision: str = "accept") -> EditProposal | None:
+                  decision: str | None = "accept") -> EditProposal | None:
         """Fold a stage's whole-text result into one coarse proposal.
 
         The differing window (after the common prefix and suffix) becomes the
         proposal; alignment inside it is unknown, so the mapping is ``coarse``.
-        Returns ``None`` when nothing changed.
+        ``decision=None`` leaves the proposal pending for the caller to judge
+        and resolve. Returns ``None`` when nothing changed.
         """
         current = self.current
         if after == current:
@@ -280,7 +281,8 @@ class EditLedger:
         start, end = a, len(current) - b
         proposal = self.propose(stage_id, rule_key, start, end, after[a:len(after) - b],
                                 mapping="coarse")
-        self.resolve(proposal, decision)
+        if decision is not None:
+            self.resolve(proposal, decision)
         return proposal
 
     # -- reporting ------------------------------------------------------------

@@ -120,6 +120,31 @@ class ReviewSchemaMixin:
         if he is not None and he not in ("regex", "medspacy"):
             self.errors.append("headers_engine: must be 'regex' or 'medspacy'")
 
+    def _validate_cleaning_validation(self) -> None:
+        """``cleaning_validation``: mode, schema version, optional work budget."""
+        group = self.cfg.get("cleaning_validation")
+        if group is None:
+            return
+        if not isinstance(group, dict):
+            self.errors.append("cleaning_validation: must be an object")
+            return
+        from .validation import MODES, SCHEMA_VERSION
+        mode = group.get("mode", "shadow")
+        if mode not in MODES:
+            self.errors.append("cleaning_validation.mode: must be one of " + ", ".join(f'"{m}"' for m in MODES))
+        version = group.get("schema_version", 1)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            self.errors.append("cleaning_validation.schema_version: must be a positive integer")
+        elif version > SCHEMA_VERSION:
+            self.errors.append(f"cleaning_validation.schema_version: {version} is newer than this "
+                               f"build supports ({SCHEMA_VERSION}); update Chart Cleaner")
+        budget = group.get("max_proposals")
+        if budget is not None and (not isinstance(budget, int) or isinstance(budget, bool) or budget < 1):
+            self.errors.append("cleaning_validation.max_proposals: must be a positive integer")
+        for key in group:
+            if key not in ("mode", "schema_version", "max_proposals"):
+                self.warnings.append(f"cleaning_validation.{key}: unknown option (kept as-is, ignored)")
+
     def _validate_ingest(self) -> None:
         ing = self.cfg.get("ingest")
         if ing is None:

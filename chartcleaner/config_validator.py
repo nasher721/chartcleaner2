@@ -57,5 +57,6 @@ class ConfigValidator(
         self._validate_wrapper_and_order()
         self._validate_custom_rules()
         self._validate_local_llm()
+        self._validate_cleaning_validation()
         self._check_unknown_keys()
         return self.errors, self.warnings

@@ -66,6 +66,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "clinical_identifiers",
         "local_llm",
         "fact_check",
+        "cleaning_validation",
     }
 )
 

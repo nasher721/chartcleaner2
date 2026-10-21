@@ -29,18 +29,21 @@ from typing import Any, Callable, Iterable
 
 from . import fact_check as fc
 from .edit_provenance import DECISIONS, EditLedger, EditProposal, SourceSpan, merge_spans, union_length
-from .rule_contracts import RuleContract
+from .rule_contracts import RuleContract, default_contract
 
 __all__ = [
     "COVERAGE_STATUSES", "DECISIONS", "SEVERITIES", "VALIDATOR_VERSION", "Coverage",
-    "ValidationContext", "ValidationIssue", "ValidationReport", "decide_report",
-    "validate_candidate", "validate_proposal",
+    "ValidationContext", "ValidationIssue", "ValidationReport", "ValidationSession",
+    "decide_report", "off_report", "validate_candidate", "validate_proposal",
 ]
 
 COVERAGE_STATUSES = ("complete", "partial", "unavailable", "failed")
 SEVERITIES = ("info", "warning", "error", "critical")
 MODES = ("off", "shadow", "enforce")
 VALIDATOR_VERSION = 1
+# The ``cleaning_validation`` config group's schema; a newer number in a user
+# config means a newer build wrote it, which the validator reports as an error.
+SCHEMA_VERSION = 1
 
 # Version of each check: bumping one invalidates cached verdicts and review
 # acknowledgements that were made under the older behaviour.
@@ -253,13 +256,21 @@ def _loss_allowed(key: str, contract: RuleContract) -> bool:
 def _check_facts(proposal: EditProposal, contract: RuleContract, context: ValidationContext,
                  lines: _Lines) -> _Check:
     out = _Check()
+    if lines.before.split() == lines.after.split():
+        return out  # whitespace-only: nothing to lose
     before = fc.fact_counts(lines.before)
     after = fc.fact_counts(lines.after)
-    out.recognized = sum(fc.fact_counts(lines.fragment_before).values())
+    out.recognized = sum(before.values())
     out.checked = out.recognized
     lost = {k: v - after.get(k, 0) for k, v in before.items() if v > after.get(k, 0)}
     if contract.operation == "abbreviate":
         lost = {k: v for k, v in lost.items() if k.startswith("n:")}  # words become short forms
+    if lost and proposal.stage_id in fc.DEDUP_STAGES and proposal.epoch == context.ledger.epoch:
+        # A folded duplicate keeps its value elsewhere in the output; only a
+        # value that vanishes from the whole text counts.
+        cur = context.ledger.current
+        whole = fc.fact_counts(cur[:proposal.start] + proposal.after + cur[proposal.end:])
+        lost = {k: v for k, v in lost.items() if not whole.get(k)}
     intentional = {k: v for k, v in lost.items() if _loss_allowed(k, contract)}
     unexpected = {k: v for k, v in lost.items() if k not in intentional}
     if intentional:
@@ -274,6 +285,12 @@ def _check_facts(proposal: EditProposal, contract: RuleContract, context: Valida
 def _check_meaning(proposal: EditProposal, contract: RuleContract, context: ValidationContext,
                    lines: _Lines) -> _Check:
     out = _Check()
+    if proposal.stage_id in fc.BY_DESIGN_STAGES or proposal.stage_id in fc.DEDUP_STAGES:
+        # Summaries and folded duplicates rewrite freely; the facts check (with
+        # its by-design policy) is what applies to them — same as today's guard.
+        return out
+    if lines.before.split() == lines.after.split():
+        return out  # whitespace-only: no word moved, no meaning changed
     for change in fc.meaning_changes(lines.before, lines.after, proposal.stage_id):
         code = "negation_lost" if change.kind == "negation" else "laterality_changed"
         out.issues.append(_issue(code, "critical", proposal, change.message))
@@ -431,3 +448,85 @@ def validate_candidate(source: str, candidate: str, cfg: dict, *, mode: str = "s
     proposal = ledger.propose(stage_id, None, a, len(source) - b, candidate[a:len(candidate) - b],
                               mapping="coarse")
     return validate_proposal(proposal, RuleContract(key="candidate", operation="reduce"), context)
+
+
+def off_report(input_chars: int) -> ValidationReport:
+    """The report for ``mode = off``: nothing checked, said plainly."""
+    return ValidationReport((), Coverage.from_spans(input_chars, [], reasons=("validation_off",)),
+                            "accept")
+
+
+def _worst(decisions: Iterable[str]) -> str:
+    seen = set(decisions)
+    for d in ("withhold_release", "retain_original"):
+        if d in seen:
+            return d
+    return "accept"
+
+
+class ValidationSession:
+    """Run-local judge: validates every proposal and aggregates the run report.
+
+    In ``shadow`` mode :meth:`judge` always answers ``accept`` (legacy output
+    ships) while recording what enforcement would have decided; in
+    ``enforce`` it returns the report's decision. ``max_proposals`` bounds the
+    work: proposals past the budget are recorded by the ledger but left
+    unchecked, and the run report says so (``budget_exhausted``, partial
+    coverage) instead of looking complete.
+    """
+
+    def __init__(self, context: ValidationContext, *, contracts: dict[str, RuleContract] | None = None,
+                 max_proposals: int | None = None):
+        self.context = context
+        self.contracts = contracts or {}
+        self.max_proposals = max_proposals
+        self.reports: list[tuple[EditProposal, ValidationReport]] = []
+        self.unvalidated: list[EditProposal] = []
+
+    def contract_for(self, proposal: EditProposal) -> RuleContract:
+        found = self.contracts.get(proposal.rule_key) if proposal.rule_key else None
+        return found or default_contract(proposal.stage_id, proposal.rule_key)
+
+    def judge(self, proposal: EditProposal) -> str:
+        if self.max_proposals is not None and len(self.reports) >= self.max_proposals:
+            self.unvalidated.append(proposal)
+            # Missing evidence: shadow ships the text anyway; enforcement keeps the passage.
+            return "retain_original" if self.context.mode == "enforce" else "accept"
+        report = validate_proposal(proposal, self.contract_for(proposal), self.context)
+        self.reports.append((proposal, report))
+        return report.decision if self.context.mode == "enforce" else "accept"
+
+    def report(self) -> ValidationReport:
+        source_len = len(self.context.source)
+        skipped = merge_spans(tuple(p.enclosing) for p in self.unvalidated)
+        processed: list[tuple[int, int]] = []
+        pos = 0
+        for span in skipped:
+            if span.start > pos:
+                processed.append((pos, span.start))
+            pos = max(pos, span.end)
+        if pos < source_len:
+            processed.append((pos, source_len))
+        issues: list[ValidationIssue] = []
+        unresolved: list[tuple[int, int]] = []
+        reasons: list[str] = []
+        recognized = checked = 0
+        failed = False
+        for _p, rep in self.reports:
+            issues.extend(rep.issues)
+            unresolved.extend(tuple(s) for s in rep.coverage.unresolved_spans)
+            reasons.extend(rep.coverage.reasons)
+            recognized += rep.coverage.recognized_statements
+            checked += rep.coverage.checked_statements
+            failed = failed or rep.coverage.status == "failed"
+        if self.unvalidated:
+            reasons.append("budget_exhausted")
+        coverage = Coverage.from_spans(source_len, processed, unresolved=unresolved,
+                                       recognized=recognized, checked=checked, reasons=reasons,
+                                       failed=failed)
+        decision = _worst(rep.decision for _p, rep in self.reports)
+        if self.unvalidated and decision == "accept":
+            decision = "retain_original"  # unchecked edits are not accepted edits
+        if coverage.status == "failed" and decision == "accept":
+            decision = "retain_original"
+        return ValidationReport(tuple(issues), coverage, decision)

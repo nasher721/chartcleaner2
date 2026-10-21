@@ -363,6 +363,8 @@ class RunResult:
     fact_check: Any = None
     # EditLedger from edit_provenance (in memory only; never in history)
     ledger: Any = None
+    # validation.ValidationReport for the run (history keeps summary() only)
+    validation: Any = None
 
     @property
     def chars_after(self) -> int:
@@ -429,6 +431,7 @@ class RunResult:
             ],
             "warnings": self.warnings,
             **({"fact_check": self.fact_check.summary()} if self.fact_check else {}),
+            **({"validation": self.validation.summary()} if self.validation else {}),
         }
 
 
@@ -436,7 +439,7 @@ class CleanContext:
     """Handed to custom script rules: lets them report counts and messages."""
 
     def __init__(self, config: dict, *, track_changes: bool = False, ledger: Any = None,
-                 judge: Any = None):
+                 judge: Any = None, validation_context: Any = None):
         self._config = config
         # When True, built-in stages record each change in details["changes"].
         self.track_changes = track_changes
@@ -444,8 +447,14 @@ class CleanContext:
         # the hook that decides each proposal; both None when provenance is off.
         self.ledger = ledger
         self.judge = judge
+        # validation.ValidationContext (mode, digests, statement index) or None.
+        self.validation_context = validation_context
         self.counters: dict[str, int] = {}
         self.logs: list[str] = []
+
+    @property
+    def enforcing(self) -> bool:
+        return getattr(self.validation_context, "mode", "off") == "enforce"
 
     def count(self, key: str, n: int = 1) -> None:
         """Increment a named counter (shown in the run's stage statistics)."""
@@ -581,7 +590,8 @@ class Pipeline:
 
     def run(self, text: str, wrap: bool | None = None, *,
             track_changes: bool = False, fact_check: bool | None = None,
-            cache: Any = None, provenance: bool = False) -> RunResult:
+            cache: Any = None, provenance: bool = False,
+            validation: str | None = None) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
@@ -593,13 +603,24 @@ class Pipeline:
         builtin stage's output when its input text and own settings are unchanged.
         ``provenance`` keeps an :class:`~chartcleaner.edit_provenance.EditLedger`
         of every proposed edit with its original source spans in ``result.ledger``.
+        ``validation`` (default: config ``cleaning_validation.mode``, ``shadow``)
+        is ``off``, ``shadow`` or ``enforce``; the run's
+        :class:`~chartcleaner.validation.ValidationReport` is ``result.validation``.
+        Shadow validates every edit but returns the legacy text; off reports
+        unavailable coverage; enforce lets the validator decide each edit.
         """
         started = time.perf_counter()
-        ledger = None
-        if provenance:
+        mode = validation or self.validation_mode()
+        ledger = session = context = None
+        if mode != "off" or provenance:
             from .edit_provenance import EditLedger
             ledger = EditLedger(text)
-        ctx = CleanContext(self.config, track_changes=track_changes, ledger=ledger)
+        if mode != "off":
+            from .validation import ValidationContext, ValidationSession
+            context = ValidationContext.for_source(text, config=self.config, ledger=ledger, mode=mode)
+            session = ValidationSession(context, max_proposals=self._validation_budget())
+        ctx = CleanContext(self.config, track_changes=track_changes, ledger=ledger,
+                           judge=session.judge if session else None, validation_context=context)
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
@@ -623,13 +644,18 @@ class Pipeline:
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
             if ledger is not None:
-                ledger.reconcile("wrapper", text)
+                self._reconcile(ledger, ctx, "wrapper", text)
         report = None
         if tracker is not None:
             try:
                 report = tracker.report(text)
             except Exception as e:  # the check must never break a clean
                 warnings.append(f"Clinical-facts check failed: {type(e).__name__}: {e}")
+        if session is not None:
+            validation_report = session.report()
+        else:
+            from .validation import off_report
+            validation_report = off_report(chars_before)
 
         return RunResult(
             text=text,
@@ -643,7 +669,29 @@ class Pipeline:
             tokens_before=tokens_before,
             fact_check=report,
             ledger=ledger,
+            validation=validation_report,
         )
+
+    def validation_mode(self) -> str:
+        """``cleaning_validation.mode`` from the config (``shadow`` when absent or invalid)."""
+        group = self.config.get("cleaning_validation")
+        mode = group.get("mode", "shadow") if isinstance(group, dict) else "shadow"
+        return mode if mode in ("off", "shadow", "enforce") else "shadow"
+
+    def _validation_budget(self) -> int | None:
+        group = self.config.get("cleaning_validation")
+        value = group.get("max_proposals") if isinstance(group, dict) else None
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+    @staticmethod
+    def _reconcile(ledger: Any, ctx: CleanContext, stage_id: str, text: str) -> str:
+        """Fold an opaque stage's output into the ledger; returns the accepted text."""
+        proposal = ledger.reconcile(stage_id, text, decision=None)
+        if proposal is None:
+            return text
+        decision = ctx.judge(proposal) if ctx.judge is not None else "accept"
+        ledger.resolve(proposal, decision)
+        return ledger.current
 
     def stage_io(self, text: str, sid: str, *, cache: Any = None) -> tuple[str, str, StageStat]:
         """Run stages up to and including ``sid``: ``(text_before, text_after, stat)``.
@@ -659,13 +707,19 @@ class Pipeline:
                 return before, text, st
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def _iter_stages(self, text: str, ctx: CleanContext, cache: Any = None):
-        """Run the stages lazily: yield ``(spec, text_before, text_after, stat, warning)``."""
+    def _iter_stages(self, text: str, ctx: CleanContext, cache: Any = None, adjust: Any = None):
+        """Run the stages lazily: yield ``(spec, text_before, text_after, stat, warning)``.
+
+        ``adjust(spec, text, stat)`` may return different text for the next stage
+        to read (enforcement handing a rejected stage's input through).
+        """
         for spec in self.stages:
             st = StageStat(id=spec.id, label=spec.label, kind=spec.kind, enabled=spec.enabled)
             st.chars_before = len(text)
             before = text
             text, warning = self._execute_single_stage(spec, text, ctx, st, cache)
+            if adjust is not None:
+                text = adjust(spec, text, st)
             st.chars_after = len(text)
             yield spec, before, text, st, warning
 
@@ -675,16 +729,26 @@ class Pipeline:
         stats: list[StageStat] = []
         warnings: list[str] = []
         ledger = ctx.ledger
-        for spec, before, text, st, warning in self._iter_stages(text, ctx, cache):
+
+        def adjust(spec: StageSpec, text: str, st: StageStat) -> str:
+            if ledger is None or ledger.current == text:
+                return text
+            # An opaque stage (compactor, custom script, cache hit…) moved the
+            # text without proposing edits: one coarse proposal covers the gap
+            # and is judged like any other. Under enforcement a rejected stage
+            # hands its input through unchanged.
+            accepted = self._reconcile(ledger, ctx, spec.id, text)
+            if accepted != text:
+                st.details["validation"] = "retained_original"
+                st.matches = 0
+            return accepted
+
+        for spec, before, text, st, warning in self._iter_stages(text, ctx, cache, adjust):
             if warning:
                 warnings.append(warning)
             stats.append(st)
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
-            if ledger is not None and ledger.current != text:
-                # An opaque stage (compactor, custom script, cache hit…) moved the
-                # text without proposing edits: one coarse proposal covers the gap.
-                ledger.reconcile(spec.id, text)
         return text, stats, warnings
 
     def _execute_single_stage(

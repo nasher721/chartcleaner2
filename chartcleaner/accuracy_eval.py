@@ -415,12 +415,13 @@ def _pipeline_candidate(case: AccuracyCase, cfg: dict, mode: str) -> tuple[str, 
     merged = {**cfg, **(case.config or {})}
     if "stage_options" in cfg and "stage_options" in (case.config or {}):
         merged["stage_options"] = {**cfg["stage_options"], **case.config["stage_options"]}
-    if mode != "off":
-        merged["cleaning_validation"] = {**(merged.get("cleaning_validation") or {}),
-                                         "mode": mode, "schema_version": 1}
+    # The benchmark's mode is the pipeline's mode — including "off", so the
+    # engine's shadow default never leaks into an off-mode baseline.
+    merged["cleaning_validation"] = {**(merged.get("cleaning_validation") or {}),
+                                     "mode": mode, "schema_version": 1}
     result = Pipeline(merged).run(case.source, wrap=False, fact_check=False)
     report = getattr(result, "validation", None)
-    if report is None:
+    if report is None or mode == "off":
         return result.text, Decision("accept", None, "unavailable")
     # The pipeline already applied (or shadowed) the decision; the output is final.
     return result.text, Decision("accept", str(report.decision), str(report.coverage.status))

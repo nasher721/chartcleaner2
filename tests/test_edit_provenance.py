@@ -172,8 +172,8 @@ def test_ledger_summary_is_text_free():
 
 def test_pipeline_without_provenance_has_no_ledger_and_same_output():
     cfg = base(literal_replacements=[["foo", "bar"]])
-    plain = Pipeline(cfg).run("foo x foo")
-    traced = Pipeline(cfg).run("foo x foo", provenance=True)
+    plain = Pipeline(cfg).run("foo x foo", validation="off")
+    traced = Pipeline(cfg).run("foo x foo", validation="off", provenance=True)
     assert plain.ledger is None and traced.ledger is not None
     assert plain.text == traced.text == "bar x bar"
     assert "ledger" not in traced.to_history_dict("test")

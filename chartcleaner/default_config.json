@@ -404,5 +404,9 @@
                 "patterns": []
             }
         }
+    },
+    "cleaning_validation": {
+        "mode": "shadow",
+        "schema_version": 1
     }
 }

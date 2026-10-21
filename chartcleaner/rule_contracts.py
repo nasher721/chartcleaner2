@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["CHECKS", "DEFAULT_CHECKS", "OPERATIONS", "ContractExample", "RuleContract"]
+__all__ = ["CHECKS", "DEFAULT_CHECKS", "OPERATIONS", "STAGE_OPERATIONS", "ContractExample",
+           "RuleContract", "default_contract"]
 
 OPERATIONS = ("format", "abbreviate", "remove_boilerplate", "redact", "reduce")
 
@@ -81,3 +82,55 @@ class RuleContract:
                 "examples": [{"text": e.text, "expected": e.expected, "kind": e.kind}
                              for e in self.examples],
                 "reviewed": self.reviewed}
+
+
+# The operation each builtin stage performs when no contract is declared for
+# its rules. Legacy stages validate under these defaults, visibly unreviewed.
+STAGE_OPERATIONS: dict[str, str] = {
+    "whitespace": "format", "bullets": "format", "headers": "format", "caps_normalize": "format",
+    "line_length": "format", "unicode_normalize": "format", "note_order": "format",
+    "medical_abbreviations": "abbreviate", "expand_abbreviations": "abbreviate",
+    "phi_patterns": "redact", "nlp_redaction": "redact", "tokenize_phi": "redact",
+    "clinical_identifiers": "redact",
+    "metadata_lines": "remove_boilerplate", "boilerplate": "remove_boilerplate",
+    "learned_rules": "remove_boilerplate", "literal_replacements": "remove_boilerplate",
+    "timestamps": "remove_boilerplate",
+    "sections": "reduce", "imaging_impression": "reduce", "lab_compaction": "reduce",
+    "med_normalize": "reduce", "vitals_summary": "reduce", "neuro_summary": "reduce",
+    "mar_summary": "reduce", "flowsheet_tables": "reduce", "vent_summary": "reduce",
+    "hospital_day": "reduce", "duplicate_notes": "reduce", "fuzzy_dedup": "reduce",
+    "fuzzy_line_dedup": "reduce", "wrapper": "reduce", "candidate": "reduce",
+}
+
+# Stages whose job is dropping content: their losses are intentional and are
+# disclosed as such (the facts check's ``by_design`` category), not alarms.
+_ALL_LOSSES = ("n:", "drug:", "kw:")
+_ALLOWED_LOSSES: dict[str, tuple[str, ...]] = {
+    "sections": _ALL_LOSSES, "imaging_impression": _ALL_LOSSES, "lab_compaction": _ALL_LOSSES,
+    "vitals_summary": _ALL_LOSSES, "neuro_summary": _ALL_LOSSES, "mar_summary": _ALL_LOSSES,
+    "flowsheet_tables": _ALL_LOSSES, "vent_summary": _ALL_LOSSES,
+    # a medication compactor may drop brand names, never doses
+    "med_normalize": ("drug:", "kw:"),
+    "duplicate_notes": _ALL_LOSSES, "fuzzy_dedup": _ALL_LOSSES, "fuzzy_line_dedup": _ALL_LOSSES,
+}
+# Stages that rewrite dates/labels or wrap the chart: numbers they add are
+# computed (hospital day), not clinical claims, so the introduced check is noise.
+_CHECK_OVERRIDES: dict[str, tuple[str, ...]] = {
+    "hospital_day": ("facts", "meaning"),
+    "wrapper": ("facts",),
+    "note_order": ("facts", "meaning"),
+}
+
+
+def default_contract(stage_id: str, rule_key: str | None = None) -> RuleContract:
+    """The implicit contract of a legacy rule: its stage's operation, unreviewed."""
+    operation = STAGE_OPERATIONS.get(stage_id)
+    if operation is None:
+        operation = "remove_boilerplate" if stage_id.startswith("custom:") else "reduce"
+    return RuleContract(
+        key=f"{stage_id}:{rule_key or '*'}", operation=operation,
+        required_checks=_CHECK_OVERRIDES.get(stage_id, ()),
+        allowed_losses=_ALLOWED_LOSSES.get(stage_id, ()),
+        allow_cross_section=operation in ("format", "reduce"),
+        reviewed=False,
+    )

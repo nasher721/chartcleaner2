@@ -59,9 +59,12 @@ OWNED_KEYS: dict[str, tuple[str, ...]] = {
     "medical_abbreviations": ("abbreviations",),
     "line_length": ("line_length",),
 }
-# Read by no stage runner (wrapper, LLM, prompts, audit, fact check, ordering).
+# Read by no stage runner (wrapper, LLM, prompts, audit, fact check, validation
+# mode, ordering). The validator never caches a verdict as reusable text: cached
+# candidates are judged again on every use, so the mode must not key the cache.
 IGNORED_KEYS = frozenset({"local_llm", "prompt_templates", "audit", "fact_check",
-                          "wrap_output", "wrap_tag", "stage_order", "custom_rules"})
+                          "cleaning_validation", "wrap_output", "wrap_tag", "stage_order",
+                          "custom_rules"})
 
 
 def _digest(value: Any) -> str:
