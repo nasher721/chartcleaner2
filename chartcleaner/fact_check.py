@@ -44,7 +44,7 @@ from .compactors.vitals import VITALS
 
 __all__ = ["DEFAULTS", "FactLoss", "FactReport", "FactTracker", "fact_counts",
            "extract_facts", "stage_category", "check", "MeaningChange", "meaning_changes",
-           "UnsupportedFact", "OutputCheck", "verify_output"]
+           "UnsupportedFact", "OutputCheck", "verify_output", "claims_report"]
 
 DEFAULTS: dict[str, Any] = {"enabled": True}
 # Above this the per-stage snapshots cost seconds; the check is skipped with a warning.
@@ -607,6 +607,22 @@ def verify_output(source: str, generated: str) -> OutputCheck:
         if not ok:
             unsupported.append(UnsupportedFact(key, display, start, end))
     return OutputCheck(total=len(spans), unsupported=unsupported)
+
+
+def claims_report(source: str, generated: str):
+    """The relationship-aware companion to :func:`verify_output`.
+
+    :func:`verify_output` accepts a value found anywhere in the source;
+    this returns :func:`chartcleaner.statement_compare.verify_claims` — each
+    recognized claim (drug + dose + route, value + date, finding + polarity…)
+    must link to a compatible source statement. ``None`` when the check itself
+    fails: a missing check is reported as missing, never as a pass.
+    """
+    from .statement_compare import verify_claims
+    try:
+        return verify_claims(source, generated)
+    except Exception:
+        return None
 
 
 class FactTracker:

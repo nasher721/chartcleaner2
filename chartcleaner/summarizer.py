@@ -111,6 +111,9 @@ class SummaryResult:
     duration_ms: int
     # clinical facts in the summary checked one by one (fact_check.OutputCheck)
     facts: Any = None
+    # relationship-aware claim check (validation.ValidationReport via
+    # fact_check.claims_report); None when the check could not run
+    claims: Any = None
     # where each summary line comes from in the chart (citations.Citation)
     citations: list = field(default_factory=list)
     # context-window packing metadata (context_router.PackedContext)
@@ -237,6 +240,7 @@ def summarize(
         preset=preset_str,
         duration_ms=duration_ms,
         facts=_check_facts(chart, text),
+        claims=_check_claims(chart, text),
         citations=_cite(text, chart),
         context=packed,
     )
@@ -269,3 +273,9 @@ def _check_facts(chart: str, text: str):
         return verify_output(chart, text)
     except Exception:
         return None  # a bonus check; never fail a summary over it
+
+
+def _check_claims(chart: str, text: str):
+    """Each recognized claim linked to a compatible source statement (or None)."""
+    from chartcleaner.fact_check import claims_report
+    return claims_report(chart, text)

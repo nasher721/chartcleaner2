@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable, Iterable
 
 from . import fact_check as fc
@@ -48,7 +49,8 @@ SCHEMA_VERSION = 1
 # Version of each check: bumping one invalidates cached verdicts and review
 # acknowledgements that were made under the older behaviour.
 CHECK_VERSIONS: dict[str, int] = {
-    "content_preserved": 1, "facts": 1, "meaning": 1, "introduced": 1, "scope": 1, "statements": 0,
+    "content_preserved": 1, "facts": 1, "meaning": 1, "introduced": 1, "scope": 1, "statements": 1,
+    "do_not_use": 1,
 }
 
 
@@ -178,7 +180,7 @@ class ValidationContext:
     config_digest: str
     ledger: EditLedger
     mode: str = "shadow"
-    statement_index: Any = None  # supplied by the clinical-statements task
+    _statement_index: Any = field(default=None, init=False, repr=False, compare=False)
     check_versions: dict[str, int] = field(default_factory=lambda: dict(CHECK_VERSIONS))
     stage_id: str = ""
     _sections_cache: Any = field(default=None, init=False, repr=False, compare=False)
@@ -187,6 +189,14 @@ class ValidationContext:
     def __post_init__(self) -> None:
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+
+    @property
+    def statement_index(self):
+        """The source's clinical statements, built once on first use."""
+        if self._statement_index is None:
+            from .clinical_statements import StatementIndex
+            self._statement_index = StatementIndex(self.source)
+        return self._statement_index
 
     @classmethod
     def for_source(cls, source: str, *, config: dict, ledger: EditLedger | None = None,
@@ -234,6 +244,7 @@ class _Check:
     reasons: list[str] = field(default_factory=list)
     recognized: int = 0
     checked: int = 0
+    resolved: bool = False  # the check recognized and judged what the edit touched
 
 
 @dataclass(frozen=True)
@@ -244,6 +255,7 @@ class _Lines:
     after: str
     fragment_before: str
     fragment_after: str
+    fragment_start: int = 0  # offset of the edited fragment inside ``before``
 
 
 def _affected_lines(proposal: EditProposal, ledger: EditLedger) -> _Lines:
@@ -253,11 +265,14 @@ def _affected_lines(proposal: EditProposal, ledger: EditLedger) -> _Lines:
         # fragments themselves — still honest, just less context.
         return _Lines(proposal.before, proposal.after, proposal.before, proposal.after)
     ls = text.rfind("\n", 0, proposal.start) + 1
-    le = text.find("\n", proposal.end)
+    end = proposal.end
+    if end > proposal.start and text[end - 1] == "\n":
+        end -= 1  # a removal that takes its own newline does not reach into the next line
+    le = text.find("\n", end)
     le = len(text) if le == -1 else le
     before = text[ls:le]
     after = text[ls:proposal.start] + proposal.after + text[proposal.end:le]
-    return _Lines(before, after, proposal.before, proposal.after)
+    return _Lines(before, after, proposal.before, proposal.after, proposal.start - ls)
 
 
 def _issue(code: str, severity: str, proposal: EditProposal, message: str) -> ValidationIssue:
@@ -292,9 +307,11 @@ def _check_facts(proposal: EditProposal, contract: RuleContract, context: Valida
     lost = {k: v - after.get(k, 0) for k, v in before.items() if v > after.get(k, 0)}
     if contract.operation == "abbreviate":
         lost = {k: v for k, v in lost.items() if k.startswith("n:")}  # words become short forms
-    if lost and proposal.stage_id in fc.DEDUP_STAGES and proposal.epoch == context.ledger.epoch:
+    if lost and (proposal.stage_id in fc.DEDUP_STAGES or proposal.mapping == "coarse") \
+            and proposal.epoch == context.ledger.epoch:
         # A folded duplicate keeps its value elsewhere in the output; only a
-        # value that vanishes from the whole text counts.
+        # value that vanishes from the whole text counts. (Per-match regex
+        # proposals stay local: two matches may each assume the other survives.)
         cur = context.ledger.current
         whole = fc.fact_counts(cur[:proposal.start] + proposal.after + cur[proposal.end:])
         lost = {k: v for k, v in lost.items() if not whole.get(k)}
@@ -320,24 +337,33 @@ def _check_meaning(proposal: EditProposal, contract: RuleContract, context: Vali
         return out  # whitespace-only: no word moved, no meaning changed
     for change in fc.meaning_changes(lines.before, lines.after, proposal.stage_id):
         code = "negation_lost" if change.kind == "negation" else "laterality_changed"
-        out.issues.append(_issue(code, "critical", proposal, change.message))
-    # Lines that vanished outright (not rewritten) are not paired by the guard
-    # above; a vanished negation or side is still a meaning loss.
-    a, b = lines.before.split("\n"), lines.after.split("\n")
-    olds, news = fc._surplus(a, b), fc._surplus(b, a)
-    removed: list[str] = []
-    if not news:
-        removed = olds
-    elif olds:
-        import difflib
-        sm = difflib.SequenceMatcher(a=olds, b=news, autojunk=False)
-        for tag, i1, i2, _j1, _j2 in sm.get_opcodes():
-            if tag == "delete":
-                removed.extend(olds[i1:i2])
-    if any(fc._negations(ln) or fc._sides(ln) for ln in removed):
-        out.issues.append(_issue("negated_statement_removed", "error", proposal,
-                                 "A line carrying a negation or side was removed"))
+        severity = "critical"
+        if change.kind == "negation" and _negation_in_clinically_empty_fragment(lines):
+            # The negation left with a fragment that names nothing clinical
+            # ("Dictated but not read"): unverified, not a definite flip.
+            code, severity = "negation_removed_unverified", "warning"
+            out.unresolved.append(tuple(proposal.enclosing))
+            out.reasons.append("negation_unverified")
+        out.issues.append(_issue(code, severity, proposal, change.message))
     return out
+
+
+def _negation_in_clinically_empty_fragment(lines: _Lines) -> bool:
+    """The removed fragment carried a negation but negated nothing clinical.
+
+    True only when the fragment names nothing clinical *and* every negated
+    finding of the line before the edit is still negated after it — removing
+    the word "No" from "No fever" fails the second test and stays critical.
+    """
+    frag = lines.fragment_before
+    if not frag.strip() or lines.fragment_after.strip() or not fc._negations(frag):
+        return False
+    from .clinical_statements import _is_clinical, extract_statements
+    if extract_statements(frag).statements or _is_clinical(frag, cued=True):
+        return False
+    negated_before = {s.subject for s in extract_statements(lines.before).statements if s.polarity == "negative"}
+    negated_after = {s.subject for s in extract_statements(lines.after).statements if s.polarity == "negative"}
+    return not (negated_before - negated_after)
 
 
 _ANY_NUMBER = re.compile(r"(?<![\w.])[<>]?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
@@ -407,10 +433,102 @@ def _check_scope(proposal: EditProposal, contract: RuleContract, context: Valida
 
 def _check_statements(proposal: EditProposal, contract: RuleContract,
                       context: ValidationContext, lines: _Lines) -> _Check:
+    """Relationship check on the affected lines (see :mod:`statement_compare`).
+
+    Statements recognized in the removed/rewritten text are compared with the
+    text after the edit; their loss or alteration is a definite finding and
+    the edit counts as *resolved*. Text with clinical signal that did not parse
+    stays unresolved.
+    """
     out = _Check()
-    if context.statement_index is None:
-        out.reasons.append("statements_unavailable")
+    if lines.before.split() == lines.after.split():
+        out.resolved = True
+        return out
+    from .clinical_statements import extract_statements
+    from .statement_compare import compare_statements
+    coarse = proposal.mapping == "coarse" and proposal.epoch == context.ledger.epoch
+    if coarse:
+        # One proposal covers the whole change (opaque stage, whole candidate):
+        # compare the whole texts, so table headers and duplicates elsewhere
+        # count, and judge "touched" by the changed region.
+        cur = context.ledger.current
+        before = context.statement_index.extraction if cur == context.source else extract_statements(cur)
+        after = extract_statements(cur[:proposal.start] + proposal.after + cur[proposal.end:])
+        frag = (proposal.start, max(proposal.end, proposal.start + 1))
+    else:
+        before = extract_statements(lines.before)
+        after = extract_statements(lines.after)
+        frag = (lines.fragment_start, lines.fragment_start + max(len(lines.fragment_before), 1))
+    touched = [s for s in before.statements
+               if any(sp.start < frag[1] and sp.end > frag[0] for sp in s.source_spans)]
+    out.recognized = len(touched)
+    if not before.statements and not after.statements:
+        if before.unresolved_spans:
+            out.unresolved.append(tuple(proposal.enclosing))
+            out.reasons.append("statements_unparsed")
+        return out
+    report = compare_statements(before, after, operation=contract.operation,
+                                allowed_losses=contract.allowed_losses, stage_id=proposal.stage_id,
+                                rule_key=proposal.rule_key, reference=context.statement_index)
+    for issue in report.issues:
+        if issue.code == "claim_unverified":
+            continue
+        out.issues.append(_issue(issue.code, issue.severity, proposal, issue.message))
+    out.checked = len(touched)
+    # Resolved only when the edit touched something the extractor recognized;
+    # a value on a neighbouring line does not vouch for the text removed.
+    out.resolved = bool(touched)
+    if coarse:
+        # Whole-text unresolved spans only matter where the edit happened.
+        unresolved_here = [sp for sp in before.unresolved_spans if sp.start < frag[1] and sp.end > frag[0]]
+        if unresolved_here:
+            out.unresolved.append(tuple(proposal.enclosing))
+            out.reasons.append("statements_unparsed")
+    elif before.unresolved_spans:
         out.unresolved.append(tuple(proposal.enclosing))
+        out.reasons.append("statements_unparsed")
+    return out
+
+
+@lru_cache(maxsize=1)
+def _do_not_use_entries() -> tuple[tuple[re.Pattern, re.Pattern | None, str], ...]:
+    """(abbreviation regex, meaning regex, preferred form) for block-level entries."""
+    try:
+        from .abbreviation_safety import LIST_PATH
+        data = json.loads(LIST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return ()
+    out = []
+    for entry in data.get("entries", []):
+        if entry.get("level") != "block":
+            continue
+        abbrs = [a for a in entry.get("abbr", []) if isinstance(a, str) and a]
+        if not abbrs:
+            continue
+        alternation = "|".join(re.escape(a) for a in sorted(abbrs, key=len, reverse=True))
+        meaning = re.compile(entry["meaning"], re.IGNORECASE) if entry.get("meaning") else None
+        out.append((re.compile(rf"(?<![A-Za-z0-9]){alternation}(?![A-Za-z0-9])"), meaning,
+                    str(entry.get("use", ""))))
+    return tuple(out)
+
+
+def _check_do_not_use(proposal: EditProposal, contract: RuleContract, context: ValidationContext,
+                      lines: _Lines) -> _Check:
+    """An edit must not write a Do Not Use abbreviation for a term the line spelled out.
+
+    Meaning-aware like :mod:`abbreviation_safety`: ``U`` only counts when the
+    text before the edit said *units*, ``QD`` when it said *daily*.
+    """
+    out = _Check()
+    if lines.before.split() == lines.after.split() or lines.after == "":
+        return out
+    for rx, meaning, use in _do_not_use_entries():
+        if not rx.search(lines.after) or rx.search(lines.before):
+            continue
+        if meaning is not None and not meaning.search(lines.before):
+            continue
+        out.issues.append(_issue("do_not_use_abbreviation", "error", proposal,
+                                 f"A Do Not Use abbreviation was written where the chart said '{use or 'the full term'}'"))
     return out
 
 
@@ -422,6 +540,7 @@ _CHECKS: dict[str, CheckFn] = {
     "introduced": _check_introduced,
     "scope": _check_scope,
     "statements": _check_statements,
+    "do_not_use": _check_do_not_use,
 }
 
 
@@ -460,6 +579,7 @@ def validate_proposal(proposal: EditProposal, policy: RuleContract,
     reasons: list[str] = []
     recognized = checked = 0
     failed = False
+    resolved = False
     for name in policy.required_checks:
         fn = _CHECKS.get(name)
         if fn is None:
@@ -479,12 +599,15 @@ def validate_proposal(proposal: EditProposal, policy: RuleContract,
         reasons.extend(result.reasons)
         recognized = max(recognized, result.recognized)
         checked = max(checked, result.checked)
-    if proposal.is_removal and context.statement_index is None and "content_preserved" not in policy.required_checks:
-        # No statement extractor yet: what the removed text *meant* is unchecked,
-        # whatever the cheaper checks found. Processing coverage is full; relation
-        # coverage is not, so the span stays unresolved and the status partial.
+        resolved = resolved or result.resolved
+    if proposal.is_removal and not resolved and "content_preserved" not in policy.required_checks:
+        # Nothing recognizable was in the removed text (or the statements check
+        # did not run): what it *meant* is unchecked, whatever the cheaper
+        # checks found. Processing coverage is full; relation coverage is not,
+        # so the span stays unresolved and the status partial.
         unresolved.append(tuple(proposal.enclosing))
-        reasons.append("statements_unavailable")
+        reasons.append("statements_unavailable" if "statements" not in policy.required_checks
+                       else "no_statements_recognized")
         issues.append(_issue("deletion_unverified", "warning", proposal,
                              "Removed text could not be verified against recognized statements"))
     coverage = Coverage.from_spans(input_chars, processed, unresolved=unresolved,

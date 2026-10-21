@@ -41,17 +41,17 @@ OPERATIONS = ("format", "abbreviate", "remove_boilerplate", "redact", "reduce")
 # Validation checks a contract may require. ``content_preserved`` is the cheap
 # proof that formatting changed nothing but whitespace; the others adapt the
 # clinical checks. Later phases add relationship checks under their own names.
-CHECKS = ("content_preserved", "facts", "meaning", "introduced", "scope", "statements")
+CHECKS = ("content_preserved", "facts", "meaning", "introduced", "scope", "statements", "do_not_use")
 
 # Per operation: the checks that must complete before an edit is accepted.
 # Formatting that provably preserves content needs no clinical parsing; a
 # semantic removal needs every clinical check it can get.
 DEFAULT_CHECKS: dict[str, tuple[str, ...]] = {
     "format": ("content_preserved",),
-    "abbreviate": ("facts", "meaning", "introduced"),
-    "remove_boilerplate": ("facts", "meaning", "scope"),
-    "redact": ("facts", "meaning", "introduced"),
-    "reduce": ("facts", "meaning", "introduced"),
+    "abbreviate": ("facts", "meaning", "introduced", "statements", "do_not_use"),
+    "remove_boilerplate": ("facts", "meaning", "scope", "statements", "do_not_use"),
+    "redact": ("facts", "meaning", "introduced", "statements"),
+    "reduce": ("facts", "meaning", "introduced", "statements", "do_not_use"),
 }
 
 
@@ -127,14 +127,17 @@ STAGE_OPERATIONS: dict[str, str] = {
 
 # Stages whose job is dropping content: their losses are intentional and are
 # disclosed as such (the facts check's ``by_design`` category), not alarms.
-_ALL_LOSSES = ("n:", "drug:", "kw:")
+# ``statement:`` covers every recognized statement kind for the same reason.
+_ALL_LOSSES = ("n:", "drug:", "kw:", "statement:")
 _ALLOWED_LOSSES: dict[str, tuple[str, ...]] = {
     "sections": _ALL_LOSSES, "imaging_impression": _ALL_LOSSES, "lab_compaction": _ALL_LOSSES,
     "vitals_summary": _ALL_LOSSES, "neuro_summary": _ALL_LOSSES, "mar_summary": _ALL_LOSSES,
     "flowsheet_tables": _ALL_LOSSES, "vent_summary": _ALL_LOSSES,
     # a medication compactor may drop brand names, never doses
-    "med_normalize": ("drug:", "kw:"),
+    "med_normalize": ("drug:", "kw:", "statement:finding"),
     "duplicate_notes": _ALL_LOSSES, "fuzzy_dedup": _ALL_LOSSES, "fuzzy_line_dedup": _ALL_LOSSES,
+    # computed labels and the wrapper never remove statements on purpose either
+    "hospital_day": ("statement:",), "note_order": ("statement:",), "wrapper": ("statement:",),
 }
 # Stages that rewrite dates/labels or wrap the chart: numbers they add are
 # computed (hospital day), not clinical claims, so the introduced check is noise.

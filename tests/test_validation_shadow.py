@@ -103,8 +103,8 @@ def test_shadow_report_flags_the_harmful_rule_and_names_its_source_span():
     cfg = base(boilerplate=[r"Subjective:.*$"])  # eats the negative findings
     result = Pipeline(_mode(cfg, "shadow")).run(SAMPLE)
     codes = {i.code for i in result.validation.issues}
-    assert "negated_statement_removed" in codes
-    bad = [i for i in result.validation.issues if i.code == "negated_statement_removed"][0]
+    assert "statement_lost" in codes
+    bad = [i for i in result.validation.issues if i.code == "statement_lost"][0]
     assert bad.stage_id == "boilerplate"
     start, end = bad.source_spans[0]
     assert "Denies chest pain" in SAMPLE[start:end]
@@ -117,9 +117,9 @@ def test_run_level_coverage_unions_proposals_and_keeps_unresolved_spans():
     cov = result.validation.coverage
     assert cov.input_chars == len(SAMPLE)
     assert cov.processed_chars == len(SAMPLE), "every character was either unchanged or checked"
-    # Line removals are unverified until the statement extractor exists.
+    # Line removals with nothing recognizable in them stay unverified.
     assert cov.status == "partial" and cov.unresolved_spans
-    assert "statements_unavailable" in cov.reasons
+    assert "no_statements_recognized" in cov.reasons
 
 
 def test_history_dict_keeps_only_the_text_free_validation_summary():

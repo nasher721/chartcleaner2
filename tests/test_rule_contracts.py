@@ -114,7 +114,7 @@ def test_contract_sidecar_round_trips_and_validates():
     c = next(iter(contracts.values()))
     assert c.operation == "remove_boilerplate" and c.sections == ("physical_exam",)
     assert c.allow_cross_section is False and c.reviewed is False
-    assert c.required_checks == ("facts", "meaning", "scope")
+    assert c.required_checks == ("facts", "meaning", "scope", "statements", "do_not_use")
     errors, warnings = validate_config({**load_default_config(), "rule_contracts": cfg["rule_contracts"]})
     assert not errors, errors
     bad = {**load_default_config(), "rule_contracts": 7}

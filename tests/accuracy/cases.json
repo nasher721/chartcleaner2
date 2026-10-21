@@ -1095,18 +1095,18 @@
    "category": "medication_relationships",
    "expected": "accept",
    "source": "Meds: heparin 5000 units subcutaneous twice daily.\n",
-   "candidate": "Meds: heparin 5000 units SC BID.\n",
+   "candidate": "Meds: heparin 5000 units subcut BID.\n",
    "required_statements": [
     [
      "heparin 5000 units subcutaneous twice daily",
-     "heparin 5000 units SC BID"
+     "heparin 5000 units subcut BID"
     ]
    ],
    "authorized_removals": [],
    "forbidden_claims": [],
    "required_removals": [],
    "label_status": "provisional",
-   "note": ""
+   "note": "SC/SQ are on the Do Not Use list (mistaken for SL); subcut is the approved form"
   },
   {
    "case_id": "md-v4",

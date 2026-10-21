@@ -109,11 +109,11 @@ def test_deleting_a_line_with_a_lab_value_is_a_fact_loss():
     p = ctx.ledger.propose("boilerplate", "r", 0, 14, "")
     report = validate_proposal(p, RuleContract(key="r", operation="remove_boilerplate"), ctx)
     assert report.decision == "retain_original"
-    assert [i.code for i in report.issues] == ["fact_lost", "deletion_unverified"]
+    assert [i.code for i in report.issues] == ["fact_lost", "statement_lost"]
     assert report.issues[0].source_spans == (SourceSpan(0, 14),)
-    # Processing covered the whole span; what the removed text *meant* is still
-    # unchecked without a statement index, so relation coverage stays partial.
-    assert report.coverage.status == "partial"
+    # The removed text was recognized and judged: processing and relation
+    # coverage are both complete for this proposal.
+    assert report.coverage.status == "complete"
     assert report.coverage.processed_chars == report.coverage.input_chars == 14
 
 
@@ -126,19 +126,29 @@ def test_dropping_a_negation_is_a_meaning_violation():
     assert report.decision == "retain_original"
 
 
-def test_deleting_a_negative_sentence_without_numbers_is_left_unverified_not_approved():
+def test_deleting_a_negative_sentence_without_numbers_is_detected_not_approved():
     source = "Denies shortness of breath.\nPlan: PT\n"
     ctx = _context(source)
     p = ctx.ledger.propose("boilerplate", "r", 0, 28, "")
     report = validate_proposal(p, RuleContract(key="r", operation="remove_boilerplate"), ctx)
-    # No recognized numeric fact — the deletion is *unverified*, so coverage is
-    # partial and the span stays unresolved; it is not a clean accept.
+    # No recognized numeric fact — but the statement extractor recognizes the
+    # negated finding, so its loss is a definite finding, not a clean accept.
+    assert any(i.code == "statement_lost" for i in report.issues)
+    assert "deletion_unverified" not in [i.code for i in report.issues], "recognized, so not unverified"
+    assert report.coverage.recognized_statements == 1
+    assert report.decision == "retain_original"
+
+
+def test_deleting_text_with_signal_but_no_recognized_statement_stays_unverified():
+    source = "Dictated but not read.\nPlan: PT\n"
+    ctx = _context(source)
+    p = ctx.ledger.propose("boilerplate", "r", 0, 23, "")
+    report = validate_proposal(p, RuleContract(key="r", operation="remove_boilerplate"), ctx)
     assert report.coverage.status == "partial"
-    assert report.coverage.unresolved_spans == (SourceSpan(0, 28),)
+    assert report.coverage.unresolved_spans == (SourceSpan(0, 23),)
     assert any(i.code == "deletion_unverified" for i in report.issues)
-    # The cheap negation guard still sees the dropped "Denies".
-    assert any(i.code == "negated_statement_removed" for i in report.issues)
-    assert report.decision != "accept"
+    assert not report.blocking, "unverified is not a definite violation"
+    assert report.decision == "retain_original", "an explicit destructive contract waits for review"
 
 
 def test_whitespace_only_formatting_is_accepted_without_clinical_parsing():
@@ -179,7 +189,9 @@ def test_validator_crash_is_failed_coverage_not_success(monkeypatch):
 def test_context_digests_and_versions_are_recorded():
     ctx = _context("abc", mode="shadow")
     assert ctx.mode == "shadow" and len(ctx.source_digest) == 64 and len(ctx.config_digest) == 64
-    assert ctx.statement_index is None, "Task 5 supplies the statement index"
+    from chartcleaner.clinical_statements import StatementIndex
+    assert isinstance(ctx.statement_index, StatementIndex), "built lazily from the source"
+    assert ctx.statement_index is ctx.statement_index
     assert ctx.check_versions and all(isinstance(v, int) for v in ctx.check_versions.values())
     with pytest.raises(ValueError):
         ValidationContext.for_source("abc", config={}, ledger=EditLedger("abc"), mode="loud")

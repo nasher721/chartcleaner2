@@ -20,8 +20,8 @@ from typing import Any, Protocol
 
 from chartcleaner.context_router import pack_context, resolve_context_tokens, should_bookend
 from chartcleaner.local_llm import GroundingResult, LocalLlmClient, verify_clinical_grounding
-from chartcleaner.summarizer import (LlmUnavailableError, NoModelError, _check_facts, _cite,
-                                     merge_llm_config, run_model)
+from chartcleaner.summarizer import (LlmUnavailableError, NoModelError, _check_claims, _check_facts,
+                                     _cite, merge_llm_config, run_model)
 from chartcleaner.token_estimator import estimate_tokens
 
 __all__ = [
@@ -70,6 +70,9 @@ class QaResult:
     duration_ms: int
     # clinical facts in the answer checked one by one (fact_check.OutputCheck)
     facts: Any = None
+    # relationship-aware claim check (validation.ValidationReport via
+    # fact_check.claims_report); None when the check could not run
+    claims: Any = None
     # where each answer line comes from in the chart (citations.Citation)
     citations: list = field(default_factory=list)
     # context-window packing metadata (context_router.PackedContext)
@@ -205,6 +208,7 @@ def ask_chart(
         model=model,
         duration_ms=duration_ms,
         facts=_check_facts(chart, answer),
+        claims=_check_claims(chart, answer),
         citations=_cite(answer, chart),
         context=packed,
     )
