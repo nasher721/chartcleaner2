@@ -1,0 +1,2098 @@
+{
+ "version": 1,
+ "label_review": "provisional — synthetic labels awaiting clinician review; no real chart text",
+ "cases": [
+  {
+   "case_id": "cr-v1",
+   "category": "clutter_removal",
+   "expected": "accept",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nThis message is confidential and intended only for the recipient.\n",
+   "candidate": "Progress Note\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nThis message is confidential and intended only for the recipient.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Electronically signed by"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "signature line removed"
+  },
+  {
+   "case_id": "cr-v2",
+   "category": "clutter_removal",
+   "expected": "accept",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nThis message is confidential and intended only for the recipient.\n",
+   "config": {
+    "boilerplate": [
+     "This message is confidential.*?recipient\\."
+    ]
+   },
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "confidential and intended"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "footer removed by a boilerplate rule"
+  },
+  {
+   "case_id": "cr-v3",
+   "category": "clutter_removal",
+   "expected": "accept",
+   "source": "Page 1 of 3\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "candidate": "Subjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Page 1 of 3"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "cr-v4",
+   "category": "clutter_removal",
+   "expected": "accept",
+   "source": "Printed from Epic Hyperspace 03/14/2024 09:00\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "candidate": "Subjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Printed from Epic Hyperspace"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "cr-v5",
+   "category": "clutter_removal",
+   "expected": "accept",
+   "source": "Last filed: 03/14/2024 0900 by RN Example\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "config": {
+    "emr_line_metadata": [
+     "^Last filed:.*$"
+    ]
+   },
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Last filed:"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; metadata rule on the real pipeline"
+  },
+  {
+   "case_id": "cr-h1",
+   "category": "clutter_removal",
+   "expected": "reject",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nThis message is confidential and intended only for the recipient.\n",
+   "candidate": "Progress Note\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "confidential and intended"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "footer rule also ate the Plan line"
+  },
+  {
+   "case_id": "cr-h2",
+   "category": "clutter_removal",
+   "expected": "reject",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "candidate": "Progress Note\nSubjective: Patient denies chest pain. Slept well overnight.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Electronically signed by"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "a slash-date rule removed the vitals line"
+  },
+  {
+   "case_id": "cr-h3",
+   "category": "clutter_removal",
+   "expected": "reject",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "candidate": "Progress Note\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Electronically signed by"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "signature pattern spilled into Subjective"
+  },
+  {
+   "case_id": "cr-h4",
+   "category": "clutter_removal",
+   "expected": "reject",
+   "source": "Progress Note\nElectronically signed by Dr. A. Example, MD on 03/14/2024 08:12\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nThis message is confidential and intended only for the recipient.\n",
+   "config": {
+    "boilerplate": [
+     "Electronically signed.*"
+    ]
+   },
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [
+    "Electronically signed by"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "greedy DOTALL rule deletes the rest of the note"
+  },
+  {
+   "case_id": "cr-h5",
+   "category": "clutter_removal",
+   "expected": "reject",
+   "source": "Progress Note\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\nNote: hold warfarin tonight for INR 3.8.\n",
+   "candidate": "Progress\nSubjective: Patient denies chest pain. Slept well overnight.\nObjective: BP 128/76, HR 72, afebrile. Lungs clear bilaterally.\nAssessment: Hemodynamically stable.\nPlan: Continue aspirin 81 mg daily. Ambulate with PT.\n",
+   "required_statements": [
+    "denies chest pain",
+    "BP 128/76",
+    "Lungs clear bilaterally",
+    "aspirin 81 mg daily",
+    "hold warfarin tonight"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; a 'Note' word rule removed a clinical instruction"
+  },
+  {
+   "case_id": "sd-v1",
+   "category": "sentence_deletion",
+   "expected": "accept",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPlan: Continue current regimen. Dictated but not read.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPlan: Continue current regimen.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [
+    "Dictated but not read"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-v2",
+   "category": "sentence_deletion",
+   "expected": "accept",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPlease see nursing flowsheet for details.\nPlan: Continue current regimen.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPlan: Continue current regimen.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [
+    "see nursing flowsheet"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-v3",
+   "category": "sentence_deletion",
+   "expected": "accept",
+   "source": "This note was created using voice recognition software.\nInterval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "config": {
+    "emr_line_metadata": [
+     "^This note was created using voice recognition software\\.$"
+    ]
+   },
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [
+    "voice recognition software"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-v4",
+   "category": "sentence_deletion",
+   "expected": "accept",
+   "source": "Interval History: No acute events overnight. Tolerating diet. Tolerating diet. Denies shortness of breath.\nExam: Alert and oriented. No focal deficits.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "repeated sentence folded"
+  },
+  {
+   "case_id": "sd-v5",
+   "category": "sentence_deletion",
+   "expected": "accept",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nChart reviewed.\nPlan: Continue current regimen.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPlan: Continue current regimen.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [
+    "Chart reviewed."
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "sd-h1",
+   "category": "sentence_deletion",
+   "expected": "reject",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "candidate": "Interval History: No acute events overnight. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "negative sentence with no numbers deleted"
+  },
+  {
+   "case_id": "sd-h2",
+   "category": "sentence_deletion",
+   "expected": "reject",
+   "source": "Allergies: No known drug allergies.\nInterval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet",
+    "No known drug allergies"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-h3",
+   "category": "sentence_deletion",
+   "expected": "reject",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPatient is not a candidate for tPA due to time window.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet",
+    "not a candidate for tPA"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-h4",
+   "category": "sentence_deletion",
+   "expected": "reject",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nPupils are nonreactive on the left.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet",
+    "nonreactive on the left"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "sd-h5",
+   "category": "sentence_deletion",
+   "expected": "reject",
+   "source": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\nNo evidence of hemorrhage on repeat CT.\n",
+   "candidate": "Interval History: No acute events overnight. Denies shortness of breath. Tolerating diet.\nExam: Alert and oriented. No focal deficits.\n",
+   "required_statements": [
+    "Denies shortness of breath",
+    "No focal deficits",
+    "Tolerating diet",
+    "No evidence of hemorrhage"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "ng-v1",
+   "category": "negation",
+   "expected": "accept",
+   "source": "Exam: Awake, following commands. No acute distress. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. NAD. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    [
+     "No acute distress",
+     "NAD"
+    ],
+    "following commands"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "approved abbreviation"
+  },
+  {
+   "case_id": "ng-v2",
+   "category": "negation",
+   "expected": "accept",
+   "source": "Exam: Awake, following commands. Extremities without edema. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. Extremities w/o edema. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    [
+     "without edema",
+     "w/o edema"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-v3",
+   "category": "negation",
+   "expected": "accept",
+   "source": "Exam: Awake, following commands. Denies  fever,   chills. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. Denies fever, chills. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    "Denies fever, chills"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "whitespace only"
+  },
+  {
+   "case_id": "ng-v4",
+   "category": "negation",
+   "expected": "accept",
+   "source": "Review of Systems: Negative for chest pain. Click here to add additional ROS.\n",
+   "candidate": "Review of Systems: Negative for chest pain.\n",
+   "required_statements": [
+    "Negative for chest pain"
+   ],
+   "authorized_removals": [
+    "Click here to add"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-v5",
+   "category": "negation",
+   "expected": "accept",
+   "source": "Impression:\n  - No evidence of hemorrhage.\n  - No midline shift.\n",
+   "candidate": "Impression:\n- No evidence of hemorrhage.\n- No midline shift.\n",
+   "required_statements": [
+    "No evidence of hemorrhage",
+    "No midline shift"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; bullets normalized"
+  },
+  {
+   "case_id": "ng-h1",
+   "category": "negation",
+   "expected": "reject",
+   "source": "Exam: Awake, following commands. No fever. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. Fever. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    "No fever"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-h2",
+   "category": "negation",
+   "expected": "reject",
+   "source": "Exam: Awake, following commands. Denies chest pain. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. Chest pain. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    "Denies chest pain"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-h3",
+   "category": "negation",
+   "expected": "reject",
+   "source": "CT head: No acute infarct. No hemorrhage.\n",
+   "candidate": "CT head: Acute infarct. No hemorrhage.\n",
+   "required_statements": [
+    "No acute infarct",
+    "No hemorrhage"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-h4",
+   "category": "negation",
+   "expected": "reject",
+   "source": "Not on anticoagulation at home.\nExam: Awake, following commands. NAD. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "On anticoagulation at home.\nExam: Awake, following commands. NAD. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    "Not on anticoagulation"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ng-h5",
+   "category": "negation",
+   "expected": "reject",
+   "source": "Exam: Awake, following commands. Negative for seizures. Abdomen soft.\nPlan: PT/OT.\n",
+   "candidate": "Exam: Awake, following commands. Seizures. Abdomen soft.\nPlan: PT/OT.\n",
+   "required_statements": [
+    "Negative for seizures"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "lt-v1",
+   "category": "laterality",
+   "expected": "accept",
+   "source": "Impression: Left MCA infarct. No hemorrhagic conversion.\n",
+   "candidate": "Impression: L MCA infarct. No hemorrhagic conversion.\n",
+   "required_statements": [
+    [
+     "Left MCA infarct",
+     "L MCA infarct"
+    ],
+    "No hemorrhagic conversion"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-v2",
+   "category": "laterality",
+   "expected": "accept",
+   "source": "Exam: Bilateral lower extremity edema, 1+.\n",
+   "candidate": "Exam: Bilateral LE edema, 1+.\n",
+   "required_statements": [
+    [
+     "Bilateral lower extremity edema",
+     "Bilateral LE edema",
+     "b/l LE edema"
+    ],
+    "1+"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-v3",
+   "category": "laterality",
+   "expected": "accept",
+   "source": "Exam: Right-sided weakness 4/5. Click to edit.\n",
+   "candidate": "Exam: Right-sided weakness 4/5.\n",
+   "required_statements": [
+    "Right-sided weakness 4/5"
+   ],
+   "authorized_removals": [
+    "Click to edit"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-v4",
+   "category": "laterality",
+   "expected": "accept",
+   "source": "Pupils:\n  - Right pupil 4 mm reactive\n  - Left pupil 4 mm reactive\n",
+   "candidate": "Pupils:\n- Right pupil 4 mm reactive\n- Left pupil 4 mm reactive\n",
+   "required_statements": [
+    "Right pupil 4 mm reactive",
+    "Left pupil 4 mm reactive"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-v5",
+   "category": "laterality",
+   "expected": "accept",
+   "source": "Neuro: Right hemiparesis, improving.\n",
+   "candidate": "Neuro: R hemiparesis, improving.\n",
+   "required_statements": [
+    [
+     "Right hemiparesis",
+     "R hemiparesis"
+    ],
+    "improving"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "lt-h1",
+   "category": "laterality",
+   "expected": "reject",
+   "source": "Exam: Left leg weakness 3/5.\n",
+   "candidate": "Exam: Right leg weakness 3/5.\n",
+   "required_statements": [
+    "Left leg weakness"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Right leg weakness"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-h2",
+   "category": "laterality",
+   "expected": "reject",
+   "source": "Exam: Left leg weakness 3/5.\n",
+   "candidate": "Exam: Leg weakness 3/5.\n",
+   "required_statements": [
+    "Left leg weakness"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-h3",
+   "category": "laterality",
+   "expected": "reject",
+   "source": "Lungs: Bilateral crackles at the bases.\n",
+   "candidate": "Lungs: Right crackles at the bases.\n",
+   "required_statements": [
+    "Bilateral crackles"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Right crackles"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-h4",
+   "category": "laterality",
+   "expected": "reject",
+   "source": "Pupils: R pupil 6 mm sluggish, L pupil 3 mm brisk.\n",
+   "candidate": "Pupils: L pupil 6 mm sluggish, R pupil 3 mm brisk.\n",
+   "required_statements": [
+    "R pupil 6 mm",
+    "L pupil 3 mm"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "L pupil 6 mm",
+    "R pupil 3 mm"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "lt-h5",
+   "category": "laterality",
+   "expected": "reject",
+   "source": "Impression: Right MCA infarct.\n",
+   "candidate": "Impression: Left MCA infarct.\n",
+   "required_statements": [
+    "Right MCA infarct"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Left MCA infarct"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "un-v1",
+   "category": "uncertainty",
+   "expected": "accept",
+   "source": "Assessment: Possible pneumonia, right lower lobe. Click to add problem.\n",
+   "candidate": "Assessment: Possible pneumonia, right lower lobe.\n",
+   "required_statements": [
+    "Possible pneumonia"
+   ],
+   "authorized_removals": [
+    "Click to add problem"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-v2",
+   "category": "uncertainty",
+   "expected": "accept",
+   "source": "Assessment:  Likely   viral syndrome.\n",
+   "candidate": "Assessment: Likely viral syndrome.\n",
+   "required_statements": [
+    "Likely viral syndrome"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-v3",
+   "category": "uncertainty",
+   "expected": "accept",
+   "source": "Plan: CT angiogram to rule out PE.\n",
+   "candidate": "Plan: CTA to r/o PE.\n",
+   "required_statements": [
+    [
+     "rule out PE",
+     "r/o PE"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-v4",
+   "category": "uncertainty",
+   "expected": "accept",
+   "source": "MRI: Cannot exclude early ischemia in the left pons.\n\n\nPlan: repeat in 24 h.\n",
+   "candidate": "MRI: Cannot exclude early ischemia in the left pons.\nPlan: repeat in 24 h.\n",
+   "required_statements": [
+    "Cannot exclude early ischemia"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-v5",
+   "category": "uncertainty",
+   "expected": "accept",
+   "source": "Assessment:\n  - Concern for sepsis, source unclear.\n",
+   "candidate": "Assessment:\n- Concern for sepsis, source unclear.\n",
+   "required_statements": [
+    "Concern for sepsis"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "un-h1",
+   "category": "uncertainty",
+   "expected": "reject",
+   "source": "Assessment: Possible pneumonia.\n",
+   "candidate": "Assessment: Pneumonia confirmed.\n",
+   "required_statements": [
+    "Possible pneumonia"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Pneumonia confirmed"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-h2",
+   "category": "uncertainty",
+   "expected": "reject",
+   "source": "Assessment: Likely UTI.\n",
+   "candidate": "Assessment: UTI.\n",
+   "required_statements": [
+    "Likely UTI"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-h3",
+   "category": "uncertainty",
+   "expected": "reject",
+   "source": "Plan: Rule out PE.\n",
+   "candidate": "Plan: PE.\n",
+   "required_statements": [
+    [
+     "Rule out PE",
+     "r/o PE"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-h4",
+   "category": "uncertainty",
+   "expected": "reject",
+   "source": "Assessment: Concern for sepsis.\n",
+   "candidate": "Assessment: Sepsis.\n",
+   "required_statements": [
+    "Concern for sepsis"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "un-h5",
+   "category": "uncertainty",
+   "expected": "reject",
+   "source": "Events: Probable seizure at 0300.\n",
+   "candidate": "Events: Seizure at 0300.\n",
+   "required_statements": [
+    "Probable seizure"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "tp-v1",
+   "category": "temporality",
+   "expected": "accept",
+   "source": "PMH: History of MI in 2019.\nLast edited 03/14/2024 10:02\n",
+   "candidate": "PMH: History of MI in 2019.\n",
+   "required_statements": [
+    "History of MI in 2019"
+   ],
+   "authorized_removals": [
+    "Last edited"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-v2",
+   "category": "temporality",
+   "expected": "accept",
+   "source": "Hospital course: post-operative day 2, afebrile.\n",
+   "candidate": "Hospital course: POD 2, afebrile.\n",
+   "required_statements": [
+    [
+     "post-operative day 2",
+     "POD 2",
+     "POD2"
+    ],
+    "afebrile"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-v3",
+   "category": "temporality",
+   "expected": "accept",
+   "source": "Labs: Na 131 on 03/12,   Na 138 on 03/14.\n",
+   "candidate": "Labs: Na 131 on 03/12, Na 138 on 03/14.\n",
+   "required_statements": [
+    "Na 131 on 03/12",
+    "Na 138 on 03/14"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-v4",
+   "category": "temporality",
+   "expected": "accept",
+   "source": "PSH: s/p appendectomy 2015.\n\n\n",
+   "candidate": "PSH: s/p appendectomy 2015.\n",
+   "required_statements": [
+    "s/p appendectomy 2015"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-v5",
+   "category": "temporality",
+   "expected": "accept",
+   "source": "Problems:\n  - Fever, resolved.\n  - Hyponatremia, improving.\n",
+   "candidate": "Problems:\n- Fever, resolved.\n- Hyponatremia, improving.\n",
+   "required_statements": [
+    "Fever, resolved",
+    "Hyponatremia, improving"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "tp-h1",
+   "category": "temporality",
+   "expected": "reject",
+   "source": "PMH: History of stroke in 2019.\n",
+   "candidate": "PMH: Stroke.\n",
+   "required_statements": [
+    "History of stroke in 2019"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-h2",
+   "category": "temporality",
+   "expected": "reject",
+   "source": "PSH: Prior CABG.\n",
+   "candidate": "PSH: CABG.\n",
+   "required_statements": [
+    "Prior CABG"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-h3",
+   "category": "temporality",
+   "expected": "reject",
+   "source": "03/12: Na 131.\n03/14: Na 138.\n",
+   "candidate": "Na 131.\n",
+   "required_statements": [
+    "Na 138",
+    "03/14"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "today's value dropped; yesterday's reads as current"
+  },
+  {
+   "case_id": "tp-h4",
+   "category": "temporality",
+   "expected": "reject",
+   "source": "Problems: Fever, resolved.\n",
+   "candidate": "Problems: Fever.\n",
+   "required_statements": [
+    "Fever, resolved"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "tp-h5",
+   "category": "temporality",
+   "expected": "reject",
+   "source": "PSH: s/p appendectomy 2015.\n",
+   "candidate": "PSH: appendectomy.\n",
+   "required_statements": [
+    "s/p appendectomy 2015"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "md-v1",
+   "category": "medication_relationships",
+   "expected": "accept",
+   "source": "Meds: aspirin 81 milligrams by mouth daily.\n",
+   "candidate": "Meds: aspirin 81 mg PO daily.\n",
+   "required_statements": [
+    [
+     "aspirin 81 milligrams by mouth daily",
+     "aspirin 81 mg PO daily"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-v2",
+   "category": "medication_relationships",
+   "expected": "accept",
+   "source": "Medications:\n  - Metoprolol tartrate 25 mg PO BID\n  - Lisinopril 10 mg PO daily\n",
+   "candidate": "Medications:\n- Metoprolol tartrate 25 mg PO BID\n- Lisinopril 10 mg PO daily\n",
+   "required_statements": [
+    "Metoprolol tartrate 25 mg PO BID",
+    "Lisinopril 10 mg PO daily"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-v3",
+   "category": "medication_relationships",
+   "expected": "accept",
+   "source": "Meds: heparin 5000 units subcutaneous twice daily.\n",
+   "candidate": "Meds: heparin 5000 units SC BID.\n",
+   "required_statements": [
+    [
+     "heparin 5000 units subcutaneous twice daily",
+     "heparin 5000 units SC BID"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-v4",
+   "category": "medication_relationships",
+   "expected": "accept",
+   "source": "Meds:\nvancomycin 1 g IV q12h\n\n\npiperacillin-tazobactam 4.5 g IV q8h\n",
+   "candidate": "Meds:\nvancomycin 1 g IV q12h\npiperacillin-tazobactam 4.5 g IV q8h\n",
+   "required_statements": [
+    "vancomycin 1 g IV q12h",
+    "piperacillin-tazobactam 4.5 g IV q8h"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-v5",
+   "category": "medication_relationships",
+   "expected": "accept",
+   "source": "Meds: Metoprolol 25 mg BID — held for hypotension. Click to add medication.\n",
+   "candidate": "Meds: Metoprolol 25 mg BID — held for hypotension.\n",
+   "required_statements": [
+    "Metoprolol 25 mg BID",
+    "held for hypotension"
+   ],
+   "authorized_removals": [
+    "Click to add medication"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "md-h1",
+   "category": "medication_relationships",
+   "expected": "reject",
+   "source": "Meds:\naspirin 81 mg daily\natorvastatin 40 mg nightly\n",
+   "candidate": "Meds:\naspirin 40 mg daily\natorvastatin 81 mg nightly\n",
+   "required_statements": [
+    "aspirin 81 mg",
+    "atorvastatin 40 mg"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "aspirin 40 mg",
+    "atorvastatin 81 mg"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "same numbers, swapped between drugs"
+  },
+  {
+   "case_id": "md-h2",
+   "category": "medication_relationships",
+   "expected": "reject",
+   "source": "Meds: Metoprolol 25 mg BID — held for hypotension.\n",
+   "candidate": "Meds: Metoprolol 25 mg BID.\n",
+   "required_statements": [
+    "held for hypotension"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-h3",
+   "category": "medication_relationships",
+   "expected": "reject",
+   "source": "Meds: vancomycin 1 g IV q12h.\n",
+   "candidate": "Meds: vancomycin 1 g PO q12h.\n",
+   "required_statements": [
+    "vancomycin 1 g IV"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "vancomycin 1 g PO"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-h4",
+   "category": "medication_relationships",
+   "expected": "reject",
+   "source": "Meds: Warfarin discontinued 03/13 for INR 4.2.\n",
+   "candidate": "Meds: Warfarin 03/13, INR 4.2.\n",
+   "required_statements": [
+    "Warfarin discontinued"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "md-h5",
+   "category": "medication_relationships",
+   "expected": "reject",
+   "source": "Meds: Lisinopril 10 mg daily. Amlodipine 5 mg daily.\n",
+   "candidate": "Meds: Lisinopril 5 mg daily. Amlodipine 10 mg daily.\n",
+   "required_statements": [
+    "Lisinopril 10 mg",
+    "Amlodipine 5 mg"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Lisinopril 5 mg",
+    "Amlodipine 10 mg"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "ms-v1",
+   "category": "measurement_relationships",
+   "expected": "accept",
+   "source": "Labs: Sodium 141 mmol/L, Potassium 4.0 mmol/L.\n",
+   "candidate": "Labs: Na 141, K 4.0.\n",
+   "required_statements": [
+    [
+     "Sodium 141",
+     "Na 141"
+    ],
+    [
+     "Potassium 4.0",
+     "K 4.0"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-v2",
+   "category": "measurement_relationships",
+   "expected": "accept",
+   "source": "BMP: Na 138 | K 4.1 | Cl 102 | HCO3 24\n",
+   "candidate": "BMP: Na 138, K 4.1, Cl 102, HCO3 24\n",
+   "required_statements": [
+    "Na 138",
+    "K 4.1",
+    "Cl 102",
+    "HCO3 24"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-v3",
+   "category": "measurement_relationships",
+   "expected": "accept",
+   "source": "Vitals: Temperature 38.2 C, HR 96.\n",
+   "candidate": "Vitals: T 38.2 C, HR 96.\n",
+   "required_statements": [
+    [
+     "Temperature 38.2",
+     "T 38.2"
+    ],
+    "HR 96"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-v4",
+   "category": "measurement_relationships",
+   "expected": "accept",
+   "source": "Vitals: Blood pressure 128/76.\n",
+   "candidate": "Vitals: BP 128/76.\n",
+   "required_statements": [
+    [
+     "Blood pressure 128/76",
+     "BP 128/76"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-v5",
+   "category": "measurement_relationships",
+   "expected": "accept",
+   "source": "Neuro:   GCS 14 (E4 V4 M6).\n",
+   "candidate": "Neuro: GCS 14 (E4 V4 M6).\n",
+   "required_statements": [
+    "GCS 14",
+    "E4 V4 M6"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "ms-h1",
+   "category": "measurement_relationships",
+   "expected": "reject",
+   "source": "Labs: Na 131, K 5.8.\n",
+   "candidate": "Labs: Na 5.8, K 131.\n",
+   "required_statements": [
+    "Na 131",
+    "K 5.8"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Na 5.8",
+    "K 131"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-h2",
+   "category": "measurement_relationships",
+   "expected": "reject",
+   "source": "CBC: Hgb 7.2, Plt 410.\n",
+   "candidate": "CBC: Hgb 410, Plt 7.2.\n",
+   "required_statements": [
+    "Hgb 7.2",
+    "Plt 410"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Hgb 410",
+    "Plt 7.2"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-h3",
+   "category": "measurement_relationships",
+   "expected": "reject",
+   "source": "Neuro: GCS 14.\n",
+   "candidate": "Neuro: GCS 4.\n",
+   "required_statements": [
+    "GCS 14"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "GCS 4"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-h4",
+   "category": "measurement_relationships",
+   "expected": "reject",
+   "source": "POC glucose 220 at 0600.\n",
+   "candidate": "POC glucose 20 at 0600.\n",
+   "required_statements": [
+    "glucose 220"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "glucose 20"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ms-h5",
+   "category": "measurement_relationships",
+   "expected": "reject",
+   "source": "Vitals: BP 128/76.\n",
+   "candidate": "Vitals: BP 76/128.\n",
+   "required_statements": [
+    "BP 128/76"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "76/128"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "ab-v1",
+   "category": "abbreviation_ambiguity",
+   "expected": "accept",
+   "source": "Meds: furosemide 40 milligrams IV.\n",
+   "candidate": "Meds: furosemide 40 mg IV.\n",
+   "required_statements": [
+    [
+     "furosemide 40 milligrams",
+     "furosemide 40 mg"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ab-v2",
+   "category": "abbreviation_ambiguity",
+   "expected": "accept",
+   "source": "Subjective: Denies shortness of breath.\n",
+   "candidate": "Subjective: Denies SOB.\n",
+   "required_statements": [
+    [
+     "Denies shortness of breath",
+     "Denies SOB"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ab-v3",
+   "category": "abbreviation_ambiguity",
+   "expected": "accept",
+   "source": "PMH: history of atrial fibrillation.\n",
+   "candidate": "PMH: h/o atrial fibrillation.\n",
+   "required_statements": [
+    [
+     "history of atrial fibrillation",
+     "h/o atrial fibrillation"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ab-v4",
+   "category": "abbreviation_ambiguity",
+   "expected": "accept",
+   "source": "Meds: acetaminophen 650 mg as needed for pain.\n",
+   "candidate": "Meds: acetaminophen 650 mg PRN for pain.\n",
+   "required_statements": [
+    [
+     "as needed",
+     "PRN"
+    ],
+    "acetaminophen 650 mg"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "ab-v5",
+   "category": "abbreviation_ambiguity",
+   "expected": "accept",
+   "source": "Transferred to the intensive care unit overnight.\n",
+   "candidate": "Transferred to the ICU overnight.\n",
+   "required_statements": [
+    [
+     "intensive care unit",
+     "ICU"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "ab-h1",
+   "category": "abbreviation_ambiguity",
+   "expected": "reject",
+   "source": "Meds: insulin glargine 10 units nightly.\n",
+   "candidate": "Meds: insulin glargine 10 U nightly.\n",
+   "required_statements": [
+    "10 units"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "10 U"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "Do Not Use: U for units"
+  },
+  {
+   "case_id": "ab-h2",
+   "category": "abbreviation_ambiguity",
+   "expected": "reject",
+   "source": "Meds: lisinopril 10 mg every day.\n",
+   "candidate": "Meds: lisinopril 10 mg QD.\n",
+   "required_statements": [
+    [
+     "every day",
+     "daily"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "QD"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "Do Not Use: QD"
+  },
+  {
+   "case_id": "ab-h3",
+   "category": "abbreviation_ambiguity",
+   "expected": "reject",
+   "source": "Meds: morphine sulfate 2 mg IV q4h PRN.\n",
+   "candidate": "Meds: MS 2 mg IV q4h PRN.\n",
+   "required_statements": [
+    "morphine sulfate 2 mg"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "MS 2 mg"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "Do Not Use: MS"
+  },
+  {
+   "case_id": "ab-h4",
+   "category": "abbreviation_ambiguity",
+   "expected": "reject",
+   "source": "Physical exam unremarkable.\n",
+   "candidate": "PE unremarkable.\n",
+   "required_statements": [
+    "Physical exam"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "PE unremarkable"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "PE is ambiguous (pulmonary embolism)"
+  },
+  {
+   "case_id": "ab-h5",
+   "category": "abbreviation_ambiguity",
+   "expected": "reject",
+   "source": "Mental status improved overnight.\n",
+   "candidate": "MS improved overnight.\n",
+   "required_statements": [
+    "Mental status"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "MS improved"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; MS is ambiguous"
+  },
+  {
+   "case_id": "dd-v1",
+   "category": "deduplication",
+   "expected": "accept",
+   "source": "Plan: Continue ceftriaxone. Repeat CXR in AM.\n\nPlan: Continue ceftriaxone. Repeat CXR in AM.\n",
+   "candidate": "Plan: Continue ceftriaxone. Repeat CXR in AM.\n",
+   "required_statements": [
+    "Continue ceftriaxone",
+    "Repeat CXR in AM"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "exact duplicate paragraph folded"
+  },
+  {
+   "case_id": "dd-v2",
+   "category": "deduplication",
+   "expected": "accept",
+   "source": "Allergies: NKDA\nAllergies: NKDA\nMeds: aspirin 81 mg daily\n",
+   "candidate": "Allergies: NKDA\nMeds: aspirin 81 mg daily\n",
+   "required_statements": [
+    "Allergies: NKDA",
+    "aspirin 81 mg daily"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "dd-v3",
+   "category": "deduplication",
+   "expected": "accept",
+   "source": "Progress Note\nProgress Note\nSubjective: Slept well.\n",
+   "candidate": "Progress Note\nSubjective: Slept well.\n",
+   "required_statements": [
+    "Slept well"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "dd-v4",
+   "category": "deduplication",
+   "expected": "accept",
+   "source": "Note 03/12\nLabs: Na 131.\nPlan: continue antibiotics.\n\nNote 03/13\nLabs: Na 134.\nPlan: continue antibiotics.\n",
+   "candidate": "Note 03/12\nLabs: Na 131.\nPlan: continue antibiotics.\n\nNote 03/13\nLabs: Na 134.\n[plan unchanged]\n",
+   "required_statements": [
+    "Na 131",
+    "Na 134",
+    "continue antibiotics"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "copy-forward plan folded, both values kept"
+  },
+  {
+   "case_id": "dd-v5",
+   "category": "deduplication",
+   "expected": "accept",
+   "source": "Exam: No focal deficits. No focal deficits. Abdomen soft.\n",
+   "candidate": "Exam: No focal deficits. Abdomen soft.\n",
+   "required_statements": [
+    "No focal deficits",
+    "Abdomen soft"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "dd-h1",
+   "category": "deduplication",
+   "expected": "reject",
+   "source": "03/12: Na 131.\n03/14: Na 138.\n",
+   "candidate": "03/12: Na 131.\n",
+   "required_statements": [
+    "Na 131",
+    "Na 138"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "near-duplicate folding removed the newer value"
+  },
+  {
+   "case_id": "dd-h2",
+   "category": "deduplication",
+   "expected": "reject",
+   "source": "Day 1: No fever.\nDay 2: Fever overnight.\n",
+   "candidate": "Day 1: No fever.\n",
+   "required_statements": [
+    "No fever",
+    "Fever overnight"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "dd-h3",
+   "category": "deduplication",
+   "expected": "reject",
+   "source": "03/12 Meds: Lisinopril 10 mg daily.\n03/13 Meds: Lisinopril 20 mg daily.\n",
+   "candidate": "03/12 Meds: Lisinopril 10 mg daily.\n",
+   "required_statements": [
+    "Lisinopril 10 mg",
+    "Lisinopril 20 mg"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "dd-h4",
+   "category": "deduplication",
+   "expected": "reject",
+   "source": "Left pupil 3 mm reactive.\nRight pupil 5 mm sluggish.\n",
+   "candidate": "Left pupil 3 mm reactive.\n",
+   "required_statements": [
+    "Left pupil 3 mm",
+    "Right pupil 5 mm"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "dd-h5",
+   "category": "deduplication",
+   "expected": "reject",
+   "source": "Day 1: remains intubated.\nDay 2: tolerated extubation.\n",
+   "candidate": "Day 1: remains intubated.\n",
+   "required_statements": [
+    "remains intubated",
+    "tolerated extubation"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "rc-v1",
+   "category": "redaction_collisions",
+   "expected": "accept",
+   "source": "MRN: 12345678\nCBC: Hgb 12.3, Plt 230.\n",
+   "candidate": "MRN: [REDACTED_MRN]\nCBC: Hgb 12.3, Plt 230.\n",
+   "required_statements": [
+    "Hgb 12.3",
+    "Plt 230"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "12345678"
+   ],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-v2",
+   "category": "redaction_collisions",
+   "expected": "accept",
+   "source": "Signed: Dr. Example\nNeuro: Glasgow Coma Scale 14.\n",
+   "candidate": "Signed: [REDACTED_NAME]\nNeuro: Glasgow Coma Scale 14.\n",
+   "required_statements": [
+    "Glasgow Coma Scale 14"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "Dr. Example"
+   ],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-v3",
+   "category": "redaction_collisions",
+   "expected": "accept",
+   "source": "Callback: (555) 123-4567\nVitals: BP 120/80.\n",
+   "candidate": "Callback: [REDACTED_PHONE]\nVitals: BP 120/80.\n",
+   "required_statements": [
+    "BP 120/80"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "(555) 123-4567"
+   ],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-v4",
+   "category": "redaction_collisions",
+   "expected": "accept",
+   "source": "DOB: 01/02/1960\nHD 3, afebrile.\n",
+   "candidate": "DOB: [REDACTED_DATE]\nHD 3, afebrile.\n",
+   "required_statements": [
+    "HD 3"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "01/02/1960"
+   ],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-v5",
+   "category": "redaction_collisions",
+   "expected": "accept",
+   "source": "Signed: Dr. Example\nPMH: Parkinson disease.\n",
+   "candidate": "Signed: [REDACTED_NAME]\nPMH: Parkinson disease.\n",
+   "required_statements": [
+    "Parkinson disease"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "Dr. Example"
+   ],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "rc-h1",
+   "category": "redaction_collisions",
+   "expected": "reject",
+   "source": "PMH: Parkinson disease.\n",
+   "candidate": "PMH: [REDACTED_NAME] disease.\n",
+   "required_statements": [
+    "Parkinson disease"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-h2",
+   "category": "redaction_collisions",
+   "expected": "reject",
+   "source": "Exam: Bell palsy on the right.\n",
+   "candidate": "Exam: [REDACTED_NAME] palsy on the right.\n",
+   "required_statements": [
+    "Bell palsy"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-h3",
+   "category": "redaction_collisions",
+   "expected": "reject",
+   "source": "Assessment: SAH, Hunt-Hess grade 3.\n",
+   "candidate": "Assessment: SAH, [REDACTED_NAME] grade 3.\n",
+   "required_statements": [
+    "Hunt-Hess grade 3"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "rc-h4",
+   "category": "redaction_collisions",
+   "expected": "reject",
+   "source": "Patient: John Smith\nMRN: 12345678\nCBC: Hgb 12.3.\n",
+   "candidate": "Patient: John Smith\nMRN: 12345678\nCBC: Hgb 12.3.\n",
+   "required_statements": [
+    "Hgb 12.3"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [
+    "John Smith",
+    "12345678"
+   ],
+   "label_status": "provisional",
+   "note": "redaction reverted: identifiers restored"
+  },
+  {
+   "case_id": "rc-h5",
+   "category": "redaction_collisions",
+   "expected": "reject",
+   "source": "Neuro: Glasgow Coma Scale 14.\n",
+   "candidate": "Neuro: [REDACTED_LOCATION] Coma Scale 14.\n",
+   "required_statements": [
+    "Glasgow Coma Scale 14"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; eponym mistaken for a location"
+  },
+  {
+   "case_id": "st-v1",
+   "category": "section_table_boundaries",
+   "expected": "accept",
+   "source": "Labs:   Na   138   K   4.1\n",
+   "candidate": "Labs: Na 138 K 4.1\n",
+   "required_statements": [
+    "Na 138",
+    "K 4.1"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-v2",
+   "category": "section_table_boundaries",
+   "expected": "accept",
+   "source": "assessment and plan:\nContinue heparin drip.\n",
+   "candidate": "ASSESSMENT AND PLAN:\nContinue heparin drip.\n",
+   "required_statements": [
+    [
+     "assessment and plan",
+     "ASSESSMENT AND PLAN"
+    ],
+    "Continue heparin drip"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-v3",
+   "category": "section_table_boundaries",
+   "expected": "accept",
+   "source": "Social History: Nonsmoker.\n\n\n\nAllergies: penicillin (rash).\n",
+   "candidate": "Social History: Nonsmoker.\n\nAllergies: penicillin (rash).\n",
+   "required_statements": [
+    "Nonsmoker",
+    "penicillin (rash)"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-v4",
+   "category": "section_table_boundaries",
+   "expected": "accept",
+   "source": "Social History: Nonsmoker. Click to add.\nAllergies: penicillin (rash).\n",
+   "candidate": "Social History: Nonsmoker.\nAllergies: penicillin (rash).\n",
+   "required_statements": [
+    "Nonsmoker",
+    "Allergies: penicillin"
+   ],
+   "authorized_removals": [
+    "Click to add"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-v5",
+   "category": "section_table_boundaries",
+   "expected": "accept",
+   "source": "| Date | Na | K |\n| 03/12 | 131 | 4.0 |\n| 03/14 | 138 | 4.4 |\n",
+   "candidate": "Date, Na, K\n03/12, 131, 4.0\n03/14, 138, 4.4\n",
+   "required_statements": [
+    [
+     "03/12 | 131 | 4.0",
+     "03/12, 131, 4.0"
+    ],
+    [
+     "03/14 | 138 | 4.4",
+     "03/14, 138, 4.4"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out"
+  },
+  {
+   "case_id": "st-h1",
+   "category": "section_table_boundaries",
+   "expected": "reject",
+   "source": "Social History: Nonsmoker. Click to add.\nAllergies: penicillin (rash).\nMeds: aspirin.\n",
+   "candidate": "Social History: Nonsmoker.\nMeds: aspirin.\n",
+   "required_statements": [
+    "Nonsmoker",
+    "penicillin (rash)"
+   ],
+   "authorized_removals": [
+    "Click to add"
+   ],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "removal crossed the section boundary into Allergies"
+  },
+  {
+   "case_id": "st-h2",
+   "category": "section_table_boundaries",
+   "expected": "reject",
+   "source": "| Date | Na | K |\n| 03/12 | 131 | 4.0 |\n| 03/14 | 138 | 4.4 |\n",
+   "candidate": "| Date | Na | K |\n| 03/12 | 131 | 4.0 |\n",
+   "required_statements": [
+    [
+     "03/12 | 131 | 4.0",
+     "03/12, 131, 4.0"
+    ],
+    [
+     "03/14 | 138 | 4.4",
+     "03/14, 138, 4.4"
+    ]
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-h3",
+   "category": "section_table_boundaries",
+   "expected": "reject",
+   "source": "Labs: Na 138 K 4.4\n",
+   "candidate": "Labs: Na 4.4 K 138\n",
+   "required_statements": [
+    "Na 138",
+    "K 4.4"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [
+    "Na 4.4",
+    "K 138"
+   ],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": ""
+  },
+  {
+   "case_id": "st-h4",
+   "category": "section_table_boundaries",
+   "expected": "reject",
+   "source": "Plan:\nContinue heparin drip.\nFollow-up:\nRepeat CT in AM.\n",
+   "candidate": "Plan:\nFollow-up:\nRepeat CT in AM.\n",
+   "required_statements": [
+    "Continue heparin drip",
+    "Repeat CT in AM"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "header rule stripped the first line of the section"
+  },
+  {
+   "case_id": "st-h5",
+   "category": "section_table_boundaries",
+   "expected": "reject",
+   "source": "Labs:\nNa 138, K 4.4\nLabs (continued)\nHgb 9.1, Plt 410\n",
+   "candidate": "Labs:\nNa 138, K 4.4\n",
+   "required_statements": [
+    "Na 138",
+    "Plt 410"
+   ],
+   "authorized_removals": [],
+   "forbidden_claims": [],
+   "required_removals": [],
+   "label_status": "provisional",
+   "note": "held-out; a chunk boundary dropped the continued table"
+  }
+ ]
+}
