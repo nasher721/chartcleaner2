@@ -44,6 +44,7 @@ class ConfigValidator(
         self._validate_required_regex_lists()
         self._validate_required_regex_pairs()
         self._validate_optional_regex_pairs()
+        self._validate_rule_contracts()
         self._validate_abbreviations()
         self._validate_clinical_headers()
         self._validate_option_groups()

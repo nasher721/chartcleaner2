@@ -23,8 +23,8 @@ from pathlib import Path
 from . import store
 from .stages import run_learned
 
-__all__ = ["record", "record_keep", "load", "check", "clear", "examples_path", "for_rule",
-           "forget"]
+__all__ = ["record", "record_keep", "load", "check", "check_contract_examples", "clear",
+           "examples_path", "for_rule", "forget"]
 
 
 def examples_path() -> Path:
@@ -117,3 +117,37 @@ def clear() -> int:
     if path.exists():
         path.unlink()
     return count
+
+
+def check_contract_examples(cfg: dict, sid: str, contract) -> list[dict]:
+    """Failures of a rule contract's own examples under ``cfg`` (text-free).
+
+    A destructive contract must carry at least one ``match`` example (text the
+    rule changes to ``expected``) and one ``keep`` example (a near-match the
+    rule must leave alone). Each failure is ``{"kind", "index", "reason"}``
+    with reasons ``missing_match_example``, ``missing_keep_example``,
+    ``match_example_mismatch`` (unchanged, or changed differently) or
+    ``keep_example_changed``.
+    """
+    from .rule_preview import run_stage_text
+
+    failures: list[dict] = []
+    if not getattr(contract, "destructive", False):
+        return failures
+    examples = list(getattr(contract, "examples", ()) or ())
+    if not any(e.kind == "match" for e in examples):
+        failures.append({"kind": "match", "index": None, "reason": "missing_match_example"})
+    if not any(e.kind == "keep" for e in examples):
+        failures.append({"kind": "keep", "index": None, "reason": "missing_keep_example"})
+    for i, ex in enumerate(examples):
+        try:
+            now = run_stage_text(sid, ex.text, cfg)
+        except Exception:
+            failures.append({"kind": ex.kind, "index": i, "reason": "example_error"})
+            continue
+        if ex.kind == "keep":
+            if now != ex.text:
+                failures.append({"kind": "keep", "index": i, "reason": "keep_example_changed"})
+        elif now == ex.text or now != ex.expected:
+            failures.append({"kind": "match", "index": i, "reason": "match_example_mismatch"})
+    return failures

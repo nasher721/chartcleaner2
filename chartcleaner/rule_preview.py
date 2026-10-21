@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from .regex_risk import risks as regex_risks
 from .stages import SLOW_RULE_MS, run_learned, run_regex_list, run_regex_pairs
 
-__all__ = ["ELLIPSIS", "RuleImpact", "clip_segments", "excerpt_windows", "preview",
-           "trial_config", "visible_line"]
+__all__ = ["ELLIPSIS", "PipelineTrialReport", "RuleImpact", "clip_segments", "excerpt_windows",
+           "preview", "run_stage_text", "trial_config", "trial_pipeline", "visible_line"]
 
 # How much of the note to show around a cluster, and how many clusters to draw.
 EXCERPT_CONTEXT = 2
@@ -89,6 +89,13 @@ def _run_stage(sid: str, text: str, cfg: dict) -> str:
     if sid == "learned_rules":
         return run_learned(text, cfg, None)[0]  # honors paused / section-scoped rules
     return run_regex_pairs(text, cfg, None, key, sid=sid)[0]
+
+
+def run_stage_text(sid: str, text: str, cfg: dict) -> str:
+    """Run only stage ``sid`` of ``cfg`` on ``text`` (contract examples use this)."""
+    if sid not in _STAGES:
+        raise ValueError(f"No stage-only run for {sid!r}")
+    return _run_stage(sid, text, cfg)
 
 
 def trial_config(cfg: dict, sid: str, entry) -> dict:
@@ -431,3 +438,156 @@ def preview(cfg: dict, sid: str, entry, texts: list[str], *,
         from .rule_examples import check
         impact.example_failures = check(trial, examples)["failures"]
     return impact
+
+
+# --- full-pipeline trial ------------------------------------------------------
+
+@dataclass
+class PipelineTrialReport:
+    """What adding one rule does to the *whole* pipeline, before it is promoted.
+
+    :func:`preview` runs one stage and attributes every difference to the new
+    rule; this runs every stage, so a rule that is harmless on its own but
+    exposes a line to a sloppy downstream rule shows up as an *interaction*.
+    Counts are text-free (``summary``); ``samples`` hold lines for display only.
+    """
+
+    stage_id: str
+    charts_checked: int = 0
+    charts_changed: int = 0
+    direct_facts_lost: int = 0                  # clinical values the rule itself removes
+    interactions: list[dict] = field(default_factory=list)   # {"chart", "stage_id", "facts_lost"}
+    new_issues: dict[str, int] = field(default_factory=dict)        # validation code -> count
+    new_issue_stages: dict[str, int] = field(default_factory=dict)  # stage id -> count
+    contract_failures: list[dict] = field(default_factory=list)     # rule_examples.check_contract_examples
+    regressions_checked: int = 0
+    regression_differences: int = 0
+    samples: list[dict] = field(default_factory=list)
+    max_ms: float = 0.0
+    errors: int = 0
+
+    @property
+    def promotable(self) -> bool:
+        """No failed mandatory counterexample and no interaction regression."""
+        return not self.contract_failures and not self.interactions and not self.errors
+
+    @property
+    def needs_review(self) -> bool:
+        """A difference alone asks for a look, even when promotion is allowed."""
+        return bool(self.charts_changed or self.regression_differences or self.new_issues
+                    or self.interactions or self.contract_failures or self.errors)
+
+    @property
+    def headline(self) -> str:
+        if self.contract_failures:
+            return (f"Not promotable: {len(self.contract_failures)} contract example(s) failed "
+                    f"(every intended match and near-match must behave).")
+        if self.interactions:
+            return (f"Not promotable: in {len(self.interactions)} chart(s) another stage removed "
+                    f"clinical values it used to keep.")
+        parts = []
+        if self.charts_checked:
+            parts.append(f"Changes {self.charts_changed} of {self.charts_checked} chart(s).")
+        if self.regressions_checked:
+            parts.append(f"{self.regression_differences} of {self.regressions_checked} known-good "
+                         f"chart(s) would change.")
+        return " ".join(parts) or "Nothing to compare against yet."
+
+    def summary(self) -> dict:
+        return {"stage_id": self.stage_id, "charts_checked": self.charts_checked,
+                "charts_changed": self.charts_changed, "direct_facts_lost": self.direct_facts_lost,
+                "interactions": len(self.interactions),
+                "interaction_stages": sorted({x["stage_id"] for x in self.interactions}),
+                "new_issues": dict(self.new_issues), "new_issue_stages": dict(self.new_issue_stages),
+                "contract_failures": [dict(f) for f in self.contract_failures],
+                "regressions_checked": self.regressions_checked,
+                "regression_differences": self.regression_differences,
+                "promotable": self.promotable, "needs_review": self.needs_review,
+                "max_ms": self.max_ms, "errors": self.errors}
+
+
+def _losses(result) -> Counter:
+    report = getattr(result, "fact_check", None)
+    if report is None:
+        return Counter()
+    return Counter({(x.key, x.stage_id): x.count for x in report.losses if x.category != "by_design"})
+
+
+def _issue_counts(result) -> tuple[Counter, Counter]:
+    report = getattr(result, "validation", None)
+    if report is None:
+        return Counter(), Counter()
+    return (Counter(i.code for i in report.issues if i.severity in ("error", "critical")),
+            Counter(i.stage_id for i in report.issues if i.severity in ("error", "critical")))
+
+
+def trial_pipeline(cfg: dict, sid: str, entry, texts: list[str], *, contract=None,
+                   known_good: list | None = None, custom_dir=None, max_samples: int = 8,
+                   skip_text: str | None = None) -> PipelineTrialReport:
+    """Run the full candidate pipeline (``cfg`` + ``entry`` in stage ``sid``) on ``texts``.
+
+    ``contract`` is the rule's :class:`~chartcleaner.rule_contracts.RuleContract`
+    (its examples are checked; a destructive contract needs a match *and* a
+    keep example). ``known_good`` defaults to the stored encrypted known-good
+    charts; their expectations are compared, never rewritten.
+    """
+    from .engine import Pipeline
+    from .fact_check import fact_counts
+
+    if sid not in _STAGES:
+        raise ValueError(f"No pipeline trial for stage {sid!r}")
+    trial = trial_config(cfg, sid, entry)
+    base = copy.deepcopy(cfg)
+    base.setdefault(_STAGES[sid][0], [])
+    report = PipelineTrialReport(stage_id=sid)
+    baseline_pipe, trial_pipe = Pipeline(base, custom_dir=custom_dir), Pipeline(trial, custom_dir=custom_dir)
+    for i, text in enumerate(texts):
+        if not text or (skip_text is not None and text == skip_text):
+            continue
+        report.charts_checked += 1
+        try:
+            t0 = time.perf_counter()
+            before = baseline_pipe.run(text, wrap=False, fact_check=True, validation="shadow")
+            t1 = time.perf_counter()
+            after = trial_pipe.run(text, wrap=False, fact_check=True, validation="shadow")
+            report.max_ms = max(report.max_ms, round(((time.perf_counter() - t1) - (t1 - t0)) * 1000, 1))
+        except Exception:
+            report.errors += 1
+            continue
+        if before.text == after.text:
+            continue
+        report.charts_changed += 1
+        # The rule's own effect, measured on its stage alone...
+        try:
+            own_before = _run_stage(sid, text, base)
+            own_after = _run_stage(sid, text, trial)
+            direct = fact_counts(own_before) - fact_counts(own_after)
+        except Exception:
+            direct = Counter()
+        report.direct_facts_lost += sum(direct.values())
+        # ...versus what the whole pipeline newly loses, attributed by stage.
+        new_losses = _losses(after) - _losses(before)
+        by_stage: dict[str, int] = {}
+        for (_key, stage_id), n in new_losses.items():
+            if stage_id != sid:
+                by_stage[stage_id] = by_stage.get(stage_id, 0) + n
+        for stage_id, n in sorted(by_stage.items()):
+            report.interactions.append({"chart": i, "stage_id": stage_id, "facts_lost": n})
+        codes_before, stages_before = _issue_counts(before)
+        codes_after, stages_after = _issue_counts(after)
+        for code, n in (codes_after - codes_before).items():
+            report.new_issues[code] = report.new_issues.get(code, 0) + n
+        for stage_id, n in (stages_after - stages_before).items():
+            report.new_issue_stages[stage_id] = report.new_issue_stages.get(stage_id, 0) + n
+        for c in _changed_lines(before.text, after.text):
+            if len(report.samples) < max_samples and c not in report.samples:
+                report.samples.append({"before": c["before"][:300], "after": c["after"][:300]})
+    if contract is not None:
+        from .rule_examples import check_contract_examples
+        report.contract_failures = check_contract_examples(trial, sid, contract)
+    from . import regression_set
+    charts = regression_set.list_charts() if known_good is None else list(known_good)
+    report.regressions_checked = len(charts)
+    if charts:
+        report.regression_differences = len(regression_set.changed(trial, custom_dir, charts))
+    return report

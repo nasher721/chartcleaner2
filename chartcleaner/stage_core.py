@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Callable
 
 from .abbreviations import MAX_TRACKED_CHANGES, LineCounter
+from .rule_contracts import contract_key
 from .section_parser import parse_clinical_sections
 
 if TYPE_CHECKING:
@@ -300,9 +301,13 @@ def _apply_rules(
     for pattern, replacement in rules:
         own = rule_scopes.get(pattern) if rule_scopes else None
         rule_scope = _both(scope, _scope_predicate(own, text)) if own else scope
+        # Proposals carry the contract key (stage + pattern + replacement + the
+        # flags actually used) so an explicit contract is found at run time;
+        # rule_hits keeps the legacy pattern-only id.
+        key = contract_key(sid, pattern, replacement, flags) if sid else rule_id(pattern)
         text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
                               keep, slow, rule_scope, table_lines, ledger=ledger, sid=sid,
-                              rule_key=rule_id(pattern), judge=judge)
+                              rule_key=key, judge=judge)
         if n:
             hits[rule_id(pattern)] = n
         total += n

@@ -14,13 +14,32 @@ from typing import Any
 
 from nicegui import ui
 
-from . import rule_catalog, rule_examples, rule_meta
+from . import rule_catalog, rule_contracts, rule_examples, rule_meta
 from .engine import validate_config
 from .highlight_rules import describe_rule, make_rule
 
 
 ConfigLoader = Callable[[], dict]
 ConfigSaver = Callable[[dict], Any]
+
+
+def promotion_blocker(config: dict, pair: list[str], *, texts: list[str] | None = None) -> str | None:
+    """Why a contracted learned rule may not be saved yet (``None`` when it may).
+
+    A rule without a contract is saved as before. A contracted one runs the
+    full-pipeline trial (:func:`rule_preview.trial_pipeline`) on its own
+    examples and the stored known-good charts: a failed mandatory
+    counterexample or an interaction that removes clinical values elsewhere
+    blocks promotion; a mere difference is reported for review, not blocked.
+    """
+    contract = rule_contracts.contract_for_pair(config, "learned_rules", pair)
+    if contract is None:
+        return None
+    from .rule_preview import trial_pipeline
+    without = dict(config)
+    without["learned_rules"] = [p for p in _pairs(config) if p != list(pair)]
+    report = trial_pipeline(without, "learned_rules", pair, list(texts or []), contract=contract)
+    return None if report.promotable else report.headline
 
 
 def _pairs(config: dict) -> list[list[str]]:
@@ -197,9 +216,16 @@ def render_learned_editor(load_current: ConfigLoader, save_current: ConfigSaver,
                     if target_index is None:
                         ui.notify("The rule list changed; reopen this dialog and try again.", type="warning")
                         return
+                    old_pair = list(current[target_index])
                     fresh = rule_meta.replace(fresh, current[target_index][0], pair, shape=None)
+                    # An edited rule is a different rule: its contract follows it, unreviewed.
+                    fresh = rule_contracts.on_rule_edited(fresh, "learned_rules", old_pair, pair)
                     current = _pairs(fresh)
                 fresh["learned_rules"] = current
+                blocker = promotion_blocker(fresh, pair)
+                if blocker:
+                    ui.notify(blocker, type="negative")
+                    return
                 enabled = _ensure_enabled(fresh)
                 try:
                     ok, error = _save(fresh, save_current)

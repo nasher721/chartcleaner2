@@ -24,8 +24,9 @@ import time
 
 from .stage_core import rule_id
 
-__all__ = ["FIELDS", "SOURCES", "SOURCE_LABELS", "active", "add_rule", "describe_pair", "entry",
-           "is_enabled", "label", "meta_map", "prune", "replace", "set_enabled", "update"]
+__all__ = ["FIELDS", "SOURCES", "SOURCE_LABELS", "active", "add_rule", "contract_key_for",
+           "describe_pair", "entry", "is_enabled", "label", "meta_map", "prune", "replace",
+           "set_enabled", "update"]
 
 FIELDS = ("shape", "enabled", "archived", "scope", "note", "tags", "source", "added")
 SOURCES = ("selection", "quick_add", "builder", "inbox", "import", "editor", "cli", "api")
@@ -73,6 +74,16 @@ def label(cfg: dict, pair: list[str]) -> str:
 
 def is_enabled(cfg: dict, pattern: str) -> bool:
     return entry(cfg, pattern).get("enabled", True) is not False
+
+
+def contract_key_for(cfg: dict, pair: list[str] | tuple[str, str]) -> str:
+    """The :mod:`rule_contracts` key of a learned rule as it runs under ``cfg``.
+
+    Learned rules keep ``rule_id`` (pattern only) for their settings; the
+    contract is keyed on pattern *and* replacement and the effective flags.
+    """
+    from .rule_contracts import contract_key, effective_flags
+    return contract_key("learned_rules", pair[0], pair[1], effective_flags(cfg, "learned_rules"))
 
 
 def _pairs(cfg: dict) -> list[list[str]]:

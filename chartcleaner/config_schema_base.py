@@ -67,6 +67,7 @@ KNOWN_CONFIG_KEYS = frozenset(
         "local_llm",
         "fact_check",
         "cleaning_validation",
+        "rule_contracts",
     }
 )
 

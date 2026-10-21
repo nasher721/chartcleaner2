@@ -75,6 +75,12 @@ def _exceptions(cfg: dict, sid: str) -> list[str]:
     return [v for v in values if isinstance(v, str)] if isinstance(values, list) else []
 
 
+def _contracts(cfg: dict) -> dict[str, dict]:
+    group = (cfg or {}).get("rule_contracts")
+    entries = group.get("contracts") if isinstance(group, dict) else None
+    return {k: v for k, v in entries.items() if isinstance(v, dict)} if isinstance(entries, dict) else {}
+
+
 def diff(old: dict, new: dict) -> list[dict]:
     """The rule changes between two configs, item by item."""
     changes: list[dict] = []
@@ -90,6 +96,11 @@ def diff(old: dict, new: dict) -> list[dict]:
         if mb.get(rid) != ma.get(rid):
             changes.append({"kind": "meta", "id": rid, "before": copy.deepcopy(mb.get(rid)),
                             "after": copy.deepcopy(ma.get(rid))})
+    kb, ka = _contracts(old), _contracts(new)
+    for key in sorted(set(kb) | set(ka)):
+        if kb.get(key) != ka.get(key):
+            changes.append({"kind": "contract", "key": key, "before": copy.deepcopy(kb.get(key)),
+                            "after": copy.deepcopy(ka.get(key))})
     (cb, db), (ca, da) = _abbr(old), _abbr(new)
     abbr_changes_from = len(changes)
     for key in sorted(set(cb) | set(ca)):
@@ -175,6 +186,13 @@ def summarize(changes: list[dict], new_meta: dict | None = None) -> str:
         parts.append(f"Never remove “{text[:50]}”")
     if drop:
         parts.append(f"Removed {len(drop)} “never remove” text(s)")
+    contracts = [c for c in changes if c["kind"] == "contract"]
+    if contracts:
+        added = sum(1 for c in contracts if c["before"] is None)
+        removed = sum(1 for c in contracts if c["after"] is None)
+        edited = len(contracts) - added - removed
+        bits = [f"{n} {verb}" for n, verb in ((added, "added"), (edited, "edited"), (removed, "removed")) if n]
+        parts.append("Rule contract(s): " + ", ".join(bits))
     return "; ".join(parts) or "Rule settings changed"
 
 
@@ -297,6 +315,19 @@ def revert(cfg: dict, entry: dict) -> dict:
             _set_opt(out, c["sid"], "exceptions", keep)
         elif kind == "stage":
             _set_opt(out, c["sid"], "enabled", c["before"])
+        elif kind == "contract":
+            group = copy.deepcopy(out.get("rule_contracts")) if isinstance(out.get("rule_contracts"), dict) else {}
+            entries = dict(group.get("contracts") or {})
+            if c["before"] is None:
+                entries.pop(c["key"], None)
+            else:
+                entries[c["key"]] = copy.deepcopy(c["before"])
+            if entries:
+                group["contracts"] = entries
+                group.setdefault("schema_version", 1)
+                out["rule_contracts"] = group
+            else:
+                out.pop("rule_contracts", None)
         elif kind == "abbr_group":
             group = out.get("abbreviations")
             if isinstance(group, dict) and not group.get("custom") and not group.get("disabled"):

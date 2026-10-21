@@ -48,7 +48,7 @@ SCHEMA_VERSION = 1
 # Version of each check: bumping one invalidates cached verdicts and review
 # acknowledgements that were made under the older behaviour.
 CHECK_VERSIONS: dict[str, int] = {
-    "content_preserved": 1, "facts": 1, "meaning": 1, "introduced": 1, "scope": 0, "statements": 0,
+    "content_preserved": 1, "facts": 1, "meaning": 1, "introduced": 1, "scope": 1, "statements": 0,
 }
 
 
@@ -181,6 +181,8 @@ class ValidationContext:
     statement_index: Any = None  # supplied by the clinical-statements task
     check_versions: dict[str, int] = field(default_factory=lambda: dict(CHECK_VERSIONS))
     stage_id: str = ""
+    _sections_cache: Any = field(default=None, init=False, repr=False, compare=False)
+    _note_type_cache: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
@@ -196,6 +198,31 @@ class ValidationContext:
     def validator_version(self) -> str:
         parts = ",".join(f"{k}={v}" for k, v in sorted(self.check_versions.items()))
         return f"{VALIDATOR_VERSION}:{parts}"
+
+    # -- section / note-type context (cached per ledger epoch) -------------------
+
+    def sections(self) -> tuple[tuple[int, int, str], ...]:
+        """``(start, end, domain)`` of the clinical sections in the current text."""
+        epoch = self.ledger.epoch
+        if self._sections_cache is None or self._sections_cache[0] != epoch:
+            from .stage_core import _section_spans
+            self._sections_cache = (epoch, tuple(_section_spans(self.ledger.current)))
+        return self._sections_cache[1]
+
+    def domain_at(self, pos: int) -> str:
+        for start, end, domain in self.sections():
+            if start <= pos < end:
+                return domain
+        return "preamble"
+
+    def note_type(self) -> str | None:
+        if self._note_type_cache is None:
+            from .note_type import detect
+            try:
+                self._note_type_cache = detect(self.source).kind or ""
+            except Exception:
+                self._note_type_cache = ""
+        return self._note_type_cache or None
 
 
 # --- checks --------------------------------------------------------------------
@@ -335,10 +362,46 @@ def _check_introduced(proposal: EditProposal, contract: RuleContract,
 
 def _check_scope(proposal: EditProposal, contract: RuleContract, context: ValidationContext,
                  lines: _Lines) -> _Check:
+    """Whole-match scope: the match must start *and* end inside an allowed section.
+
+    An unknown section (preamble, unrecognised header) authorizes nothing; a
+    match that starts in scope but runs into the next section is rejected
+    unless the contract allows crossing. Only an explicit contract disallows
+    crossing by default — legacy rules keep today's behaviour.
+    """
     out = _Check()
-    if contract.sections or contract.note_types or not contract.allow_cross_section:
-        if context.check_versions.get("scope", 0) < 1:
-            out.reasons.append("scope_unchecked")  # the rule-contract task implements it
+    if not (contract.sections or contract.note_types or not contract.allow_cross_section):
+        return out
+    if proposal.epoch != context.ledger.epoch:
+        out.reasons.append("scope_unchecked")  # offsets no longer address the current text
+        out.unresolved.append(tuple(proposal.enclosing))
+        return out
+    if contract.note_types:
+        kind = context.note_type()
+        if kind is None:
+            out.reasons.append("note_type_unknown")
+            out.unresolved.append(tuple(proposal.enclosing))
+        elif kind not in contract.note_types:
+            out.issues.append(_issue("scope_violation", "error", proposal,
+                                     "The rule is not allowed in this note type"))
+    if proposal.start >= proposal.end:
+        return out
+    first = context.domain_at(proposal.start)
+    last = context.domain_at(proposal.end - 1)
+    allowed = {s.strip().casefold() for s in contract.sections}
+    if allowed:
+        if first.casefold() not in allowed:
+            out.issues.append(_issue("scope_violation", "error", proposal,
+                                     "The match is outside the rule's sections" if first != "preamble"
+                                     else "An unrecognised section cannot authorize a scoped removal"))
+        elif last != first:
+            code = "scope_violation" if (not contract.allow_cross_section or last.casefold() not in allowed) else None
+            if code:
+                out.issues.append(_issue(code, "error", proposal,
+                                         "The match starts in scope but ends in another section"))
+    elif last != first and not contract.allow_cross_section:
+        out.issues.append(_issue("cross_section", "error", proposal,
+                                 "The match crosses a section boundary"))
     return out
 
 
@@ -366,13 +429,20 @@ _CHECKS: dict[str, CheckFn] = {
 
 def decide_report(issues: Iterable[ValidationIssue], coverage: Coverage,
                   contract: RuleContract) -> str:
-    """The shared decision for one proposal (see the design's decision table)."""
+    """The shared decision for one proposal (see the design's decision table).
+
+    A definite violation or a failed check keeps the original. Missing
+    evidence (unresolved spans) keeps it too for an explicit destructive
+    contract until the rule is reviewed; an implicit legacy contract has no
+    review to wait for, so only definite findings stop it — its coverage still
+    says what was not checked.
+    """
     issues = tuple(issues)
     if coverage.status == "failed":
         return "retain_original"
     if any(i.blocking for i in issues):
         return "retain_original"
-    if coverage.unresolved_spans and not contract.reviewed:
+    if coverage.unresolved_spans and contract.destructive and not contract.reviewed and not contract.legacy:
         return "retain_original"  # missing evidence: keep the passage, ask for review
     return "accept"
 
@@ -447,7 +517,8 @@ def validate_candidate(source: str, candidate: str, cfg: dict, *, mode: str = "s
         b += 1
     proposal = ledger.propose(stage_id, None, a, len(source) - b, candidate[a:len(candidate) - b],
                               mapping="coarse")
-    return validate_proposal(proposal, RuleContract(key="candidate", operation="reduce"), context)
+    return validate_proposal(proposal, RuleContract(key="candidate", operation="reduce", legacy=True),
+                             context)
 
 
 def off_report(input_chars: int) -> ValidationReport:

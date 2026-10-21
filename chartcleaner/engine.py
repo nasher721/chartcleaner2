@@ -616,9 +616,11 @@ class Pipeline:
             from .edit_provenance import EditLedger
             ledger = EditLedger(text)
         if mode != "off":
+            from .rule_contracts import load_contracts
             from .validation import ValidationContext, ValidationSession
             context = ValidationContext.for_source(text, config=self.config, ledger=ledger, mode=mode)
-            session = ValidationSession(context, max_proposals=self._validation_budget())
+            session = ValidationSession(context, contracts=load_contracts(self.config),
+                                        max_proposals=self._validation_budget())
         ctx = CleanContext(self.config, track_changes=track_changes, ledger=ledger,
                            judge=session.judge if session else None, validation_context=context)
         chars_before = len(text)

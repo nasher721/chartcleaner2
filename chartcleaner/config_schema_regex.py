@@ -59,3 +59,28 @@ class RegexSchemaMixin:
                 re.compile(rf"^\s*({h})\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
             except re.error as e:
                 self.errors.append(f"clinical_headers[{h!r}]: invalid regex ({e})")
+
+    def _validate_rule_contracts(self) -> None:
+        """The ``rule_contracts`` sidecar: versioned, keyed entries beside the regex rules."""
+        group = self.cfg.get("rule_contracts")
+        if group is None:
+            return
+        if not isinstance(group, dict):
+            self.errors.append("rule_contracts: must be an object")
+            return
+        from .rule_contracts import SCHEMA_VERSION, validate_contract_entry
+        version = group.get("schema_version", 1)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            self.errors.append("rule_contracts.schema_version: must be a positive integer")
+        elif version > SCHEMA_VERSION:
+            self.errors.append(f"rule_contracts.schema_version: {version} is newer than this build "
+                               f"supports ({SCHEMA_VERSION}); update Chart Cleaner")
+        contracts = group.get("contracts", {})
+        if not isinstance(contracts, dict):
+            self.errors.append("rule_contracts.contracts: must map contract keys to objects")
+            return
+        for key, entry in contracts.items():
+            self.errors.extend(validate_contract_entry(str(key), entry))
+        for key in group:
+            if key not in ("schema_version", "contracts"):
+                self.warnings.append(f"rule_contracts.{key}: unknown option (kept as-is, ignored)")

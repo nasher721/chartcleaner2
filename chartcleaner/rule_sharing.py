@@ -25,6 +25,10 @@ ABBREVIATION_KEY = "abbreviations"
 # without them (and older files) still import unchanged.
 STAGE_RULES_KEY = "stage_rules"
 EXCEPTIONS_KEY = "exceptions"
+# Rule contracts travel with a complete export — their scope and operation,
+# never their examples (those may hold chart text) and never as *reviewed*:
+# review is granted on the importing machine after its own trial.
+CONTRACTS_KEY = "rule_contracts"
 STAGE_LINE_KEYS = ("emr_line_metadata", "boilerplate")
 STAGE_PAIR_KEYS = ("epic_phi_patterns", "literal_replacements")
 STAGE_RULE_LABELS = {
@@ -183,8 +187,49 @@ def payload_from_config(config: dict, *, complete: bool = False) -> dict:
 def _complete_sections(config: dict) -> dict:
     stage_rules = {key: config[key] for key in STAGE_LINE_KEYS + STAGE_PAIR_KEYS
                    if isinstance(config.get(key), list)}
-    return {STAGE_RULES_KEY: _validate_stage_rules(stage_rules),
-            EXCEPTIONS_KEY: _validate_exceptions(_config_exceptions(config))}
+    out = {STAGE_RULES_KEY: _validate_stage_rules(stage_rules),
+           EXCEPTIONS_KEY: _validate_exceptions(_config_exceptions(config))}
+    contracts = _export_contracts(config)
+    if contracts:
+        out[CONTRACTS_KEY] = contracts
+    return out
+
+
+def _export_contracts(config: dict) -> dict:
+    """Contract entries without their examples (private text stays local)."""
+    group = config.get(CONTRACTS_KEY)
+    entries = group.get("contracts") if isinstance(group, dict) else None
+    if not isinstance(entries, dict):
+        return {}
+    return {key: {k: v for k, v in entry.items() if k != "examples"}
+            for key, entry in entries.items() if isinstance(entry, dict)}
+
+
+def _validate_contracts(value: Any) -> dict:
+    from .rule_contracts import validate_contract_entry
+    if not isinstance(value, dict):
+        raise ValueError("rule_contracts must map contract keys to objects")
+    out: dict = {}
+    for key, entry in value.items():
+        if not isinstance(key, str):
+            raise ValueError("rule_contracts keys must be strings")
+        cleaned = {k: v for k, v in entry.items() if k != "examples"} if isinstance(entry, dict) else entry
+        problems = validate_contract_entry(key, cleaned)
+        if problems:
+            raise ValueError(problems[0])
+        out[key] = cleaned
+    return out
+
+
+def _merge_contracts(config: dict, incoming: dict, mode: str) -> dict:
+    """The ``rule_contracts`` group after an import: incoming entries are never
+    reviewed and carry no examples, whatever the file says."""
+    from .rule_contracts import SCHEMA_VERSION
+    current = config.get(CONTRACTS_KEY) if mode == "merge" else None
+    entries = dict((current or {}).get("contracts") or {}) if isinstance(current, dict) else {}
+    for key, entry in incoming.items():
+        entries[key] = {**entry, "reviewed": False, "examples": []}
+    return {"schema_version": SCHEMA_VERSION, "contracts": entries}
 
 
 def validate_payload(payload: Any) -> dict:
@@ -233,6 +278,8 @@ def validate_payload(payload: Any) -> dict:
         result[STAGE_RULES_KEY] = _validate_stage_rules(payload[STAGE_RULES_KEY])
     if EXCEPTIONS_KEY in payload:
         result[EXCEPTIONS_KEY] = _validate_exceptions(payload[EXCEPTIONS_KEY])
+    if CONTRACTS_KEY in payload:
+        result[CONTRACTS_KEY] = _validate_contracts(payload[CONTRACTS_KEY])
     return result
 
 
@@ -296,6 +343,7 @@ def preview_import(config: dict, payload: dict, mode: str = "merge") -> dict:
             "stage_rules": sum(len(v) for v in (checked.get(STAGE_RULES_KEY) or {}).values()),
             "stage_rules_added": stage_added,
             "exceptions_added": exceptions_added, "incoming": len(incoming), "existing": len(current),
+            "contracts": len(checked.get(CONTRACTS_KEY) or {}),
             "added": added,
             "duplicates": len(incoming) - added - rule_conflicts,
             "rule_conflicts": rule_conflicts,
@@ -353,6 +401,9 @@ def apply_import(config: dict, payload: dict, mode: str = "merge") -> dict:
     exceptions = checked.get(EXCEPTIONS_KEY)
     if exceptions:
         out["stage_options"] = _merge_exceptions(out, exceptions, mode)[0]
+    contracts = checked.get(CONTRACTS_KEY)
+    if contracts:
+        out[CONTRACTS_KEY] = _merge_contracts(config, contracts, mode)
     return out
 
 

@@ -21,7 +21,8 @@ from pathlib import Path
 
 from . import store
 
-__all__ = ["KnownGood", "Regression", "add", "approve", "list_charts", "list_ids", "remove", "check", "MAX_CHARTS"]
+__all__ = ["KnownGood", "Regression", "add", "approve", "changed", "list_charts", "list_ids", "remove",
+           "check", "MAX_CHARTS"]
 
 MAX_CHARTS = 50
 
@@ -116,6 +117,16 @@ def check(cfg: dict, custom_dir: str | Path | None = None,
                                          "approved", "now", lineterm="", n=1))
         results.append(Regression(kg.id, kg.label, True, diff=diff[:200]))
     return results
+
+
+def changed(cfg: dict, custom_dir: str | Path | None = None,
+            charts: list[KnownGood] | None = None) -> list[Regression]:
+    """Only the known-good charts whose output ``cfg`` would change (or that error).
+
+    Reporting, never approving: the stored expectation is left exactly as it
+    is until the user accepts the new output on purpose (:func:`approve`).
+    """
+    return [r for r in check(cfg, custom_dir, charts) if r.changed]
 
 
 def approve(chart_id: str, expected: str) -> bool:
