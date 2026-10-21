@@ -486,6 +486,9 @@ class StageSpec:
 # "clean" runs the full pipeline; the other two run a single abbreviation pass.
 PIPELINE_MODES = ("clean", "abbreviations", "expand")
 
+# Runner kinds that propose edits match by match (see stage_core._subn_tracked).
+_REGEX_KINDS = frozenset({"regex_lines", "regex_lines_dotall", "regex_pairs_phi", "regex_pairs", "learned"})
+
 
 class Pipeline:
     """The ordered cleaning pipeline built from a config dict."""
@@ -769,7 +772,11 @@ class Pipeline:
                 else:
                     st.matches, st.details = n, details
             else:
-                use = cache is not None
+                # Under enforcement a regex stage's output embodies per-match
+                # verdicts, so it is neither read from nor written to the cache
+                # (warm and cold runs must decide identically). Opaque stages
+                # cache their *candidate* and are judged again on every use.
+                use = cache is not None and not (ctx.enforcing and spec.kind in _REGEX_KINDS)
                 key = cache.key(spec.id, text, self.config, ctx.track_changes) if use else None
                 hit = cache.get(key) if use else None
                 if hit is not None:

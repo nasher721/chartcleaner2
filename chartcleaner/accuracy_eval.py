@@ -286,6 +286,7 @@ class CaseOutcome:
     label_inconsistent: bool
     output_digest: str
     error: str | None = None
+    withheld: bool = False
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -293,7 +294,7 @@ class CaseOutcome:
 
 _COUNT_KEYS = ("harmful", "escapes", "valid", "valid_rejected", "required", "retained",
                "forbidden", "unsupported", "authorized", "removed", "required_removals",
-               "exposed", "review_burden", "label_inconsistent", "errors")
+               "exposed", "review_burden", "withheld", "label_inconsistent", "errors")
 
 
 def _rate(num: int, den: int) -> float | None:
@@ -319,6 +320,7 @@ def _metrics(outcomes: Sequence[CaseOutcome]) -> dict[str, Any]:
         c["required_removals"] += o.required_removals
         c["exposed"] += o.exposed
         c["review_burden"] += int(o.applied != "accept")
+        c["withheld"] += int(o.withheld)
         c["label_inconsistent"] += int(o.label_inconsistent)
         c["errors"] += int(o.error is not None)
     c["escape_rate"] = _rate(c["escapes"], c["harmful"])
@@ -438,9 +440,14 @@ def _evaluate_case(case: AccuracyCase, cfg: dict, mode: str, decide: Decider) ->
     except Exception as e:  # a failing case must not hide the rest of the report
         error = f"{type(e).__name__}"
         candidate, decision = case.source, Decision("retain_original", None, "failed")
+    withheld = decision.applied == "withhold_release"
     output = candidate if decision.applied == "accept" else case.source
     checks = _literal_checks(case, output)
-    harmed = checks.harmed(case)
+    if withheld:
+        # Nothing is released: no escape and no exposure, but every required
+        # removal counts as not done and the case lands on the review pile.
+        checks = _Checks(retained=checks.retained, unsupported=0, removed=0, exposed=0)
+    harmed = (not withheld) and checks.harmed(case)
     candidate_harm = _literal_checks(case, candidate).harmed(case)
     return CaseOutcome(
         case_id=case.case_id, category=case.category, harmful=case.harmful,
@@ -454,7 +461,7 @@ def _evaluate_case(case: AccuracyCase, cfg: dict, mode: str, decide: Decider) ->
         false_rejection=(not case.harmful) and decision.applied != "accept",
         label_inconsistent=(case.harmful != candidate_harm) and error is None,
         output_digest=hashlib.sha256(output.encode("utf-8", "surrogatepass")).hexdigest()[:16],
-        error=error,
+        error=error, withheld=withheld,
     )
 
 

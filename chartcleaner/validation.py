@@ -35,7 +35,7 @@ from .rule_contracts import RuleContract, default_contract
 __all__ = [
     "COVERAGE_STATUSES", "DECISIONS", "SEVERITIES", "VALIDATOR_VERSION", "Coverage",
     "ValidationContext", "ValidationIssue", "ValidationReport", "ValidationSession",
-    "decide_report", "off_report", "validate_candidate", "validate_proposal",
+    "decide_edit", "decide_report", "off_report", "validate_candidate", "validate_proposal",
 ]
 
 COVERAGE_STATUSES = ("complete", "partial", "unavailable", "failed")
@@ -142,6 +142,9 @@ class ValidationReport:
     issues: tuple[ValidationIssue, ...]
     coverage: Coverage
     decision: str
+    # enforcement bookkeeping: proposals kept as original / withheld from release
+    rejected: int = 0
+    withheld: int = 0
 
     def __post_init__(self) -> None:
         if self.decision not in DECISIONS:
@@ -154,7 +157,8 @@ class ValidationReport:
 
     def to_dict(self) -> dict:
         return {"decision": self.decision, "coverage": self.coverage.to_dict(),
-                "issues": [i.to_dict() for i in self.issues]}
+                "issues": [i.to_dict() for i in self.issues], "rejected": self.rejected,
+                "withheld": self.withheld}
 
     def summary(self) -> dict:
         """Codes and counts only — no messages, no chart text."""
@@ -164,6 +168,7 @@ class ValidationReport:
         return {"decision": self.decision, "status": self.coverage.status,
                 "issues": len(self.issues), "blocking": len(self.blocking),
                 "by_code": dict(sorted(by_code.items())),
+                "rejected": self.rejected, "withheld": self.withheld,
                 "processed_chars": self.coverage.processed_chars,
                 "input_chars": self.coverage.input_chars,
                 "unresolved_chars": union_length(self.coverage.unresolved_spans),
@@ -566,6 +571,18 @@ def decide_report(issues: Iterable[ValidationIssue], coverage: Coverage,
     return "accept"
 
 
+def decide_edit(proposal: EditProposal, report: ValidationReport, contract: RuleContract) -> str:
+    """The enforcement decision for one proposal (the shared decision enum).
+
+    The report's own decision stands, with one escalation: a *redaction* that
+    cannot be accepted leaves identifying text in place, so keeping the
+    original is not enough — release is withheld.
+    """
+    if contract.operation == "redact" and report.decision != "accept":
+        return "withhold_release"
+    return report.decision
+
+
 def validate_proposal(proposal: EditProposal, policy: RuleContract,
                       context: ValidationContext) -> ValidationReport:
     """Run ``policy.required_checks`` over ``proposal`` and decide."""
@@ -686,9 +703,14 @@ class ValidationSession:
             self.unvalidated.append(proposal)
             # Missing evidence: shadow ships the text anyway; enforcement keeps the passage.
             return "retain_original" if self.context.mode == "enforce" else "accept"
-        report = validate_proposal(proposal, self.contract_for(proposal), self.context)
+        contract = self.contract_for(proposal)
+        report = validate_proposal(proposal, contract, self.context)
+        decision = decide_edit(proposal, report, contract)
+        if decision != report.decision:
+            report = ValidationReport(report.issues, report.coverage, decision)
+            proposal.report = report
         self.reports.append((proposal, report))
-        return report.decision if self.context.mode == "enforce" else "accept"
+        return decision if self.context.mode == "enforce" else "accept"
 
     def report(self) -> ValidationReport:
         source_len = len(self.context.source)
@@ -723,4 +745,8 @@ class ValidationSession:
             decision = "retain_original"  # unchecked edits are not accepted edits
         if coverage.status == "failed" and decision == "accept":
             decision = "retain_original"
-        return ValidationReport(tuple(issues), coverage, decision)
+        enforcing = self.context.mode == "enforce"
+        applied = [p.decision for p, _rep in self.reports] + [p.decision for p in self.unvalidated]
+        rejected = sum(1 for d in applied if d == "retain_original") if enforcing else 0
+        withheld = sum(1 for d in applied if d == "withhold_release") if enforcing else 0
+        return ValidationReport(tuple(issues), coverage, decision, rejected=rejected, withheld=withheld)

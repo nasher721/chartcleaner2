@@ -21,7 +21,8 @@
    "unsupported": 4,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "clutter_removal": {
    "authorized": 8,
@@ -44,7 +45,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "deduplication": {
    "authorized": 0,
@@ -67,7 +69,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "laterality": {
    "authorized": 1,
@@ -90,7 +93,8 @@
    "unsupported": 4,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "measurement_relationships": {
    "authorized": 0,
@@ -113,7 +117,8 @@
    "unsupported": 6,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "medication_relationships": {
    "authorized": 0,
@@ -136,7 +141,8 @@
    "unsupported": 3,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "negation": {
    "authorized": 1,
@@ -159,7 +165,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "redaction_collisions": {
    "authorized": 0,
@@ -182,7 +189,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "section_table_boundaries": {
    "authorized": 2,
@@ -205,7 +213,8 @@
    "unsupported": 2,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "sentence_deletion": {
    "authorized": 3,
@@ -228,7 +237,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "temporality": {
    "authorized": 1,
@@ -251,7 +261,8 @@
    "unsupported": 0,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   },
   "uncertainty": {
    "authorized": 1,
@@ -274,7 +285,8 @@
    "unsupported": 1,
    "valid": 4,
    "valid_rejected": 0,
-   "valid_rejection_rate": 0.0
+   "valid_rejection_rate": 0.0,
+   "withheld": 0
   }
  },
  "cases": 96,
@@ -309,7 +321,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 4,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -331,7 +344,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 4,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -353,7 +367,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 4,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -375,7 +390,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 4,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -397,7 +413,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -419,7 +436,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -441,7 +459,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -463,7 +482,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -485,7 +505,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -507,7 +528,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -529,7 +551,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -551,7 +574,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -573,7 +597,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -595,7 +620,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -617,7 +643,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -639,7 +666,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -661,7 +689,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -683,7 +712,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -705,7 +735,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -727,7 +758,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -749,7 +781,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -771,7 +804,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -793,7 +827,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -815,7 +850,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -837,7 +873,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -859,7 +896,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -881,7 +919,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -903,7 +942,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -925,7 +965,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -947,7 +988,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -969,7 +1011,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -991,7 +1034,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 2
+   "unsupported": 2,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1013,7 +1057,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1035,7 +1080,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1057,7 +1103,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1079,7 +1126,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1101,7 +1149,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1123,7 +1172,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1145,7 +1195,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1167,7 +1218,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1189,7 +1241,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1211,7 +1264,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1233,7 +1287,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1255,7 +1310,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1277,7 +1333,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1299,7 +1356,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1321,7 +1379,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1343,7 +1402,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1365,7 +1425,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1387,7 +1448,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1409,7 +1471,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1431,7 +1494,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1453,7 +1517,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 2
+   "unsupported": 2,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1475,7 +1540,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1497,7 +1563,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1519,7 +1586,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1541,7 +1609,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1563,7 +1632,8 @@
    "required": 4,
    "required_removals": 0,
    "retained": 4,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1585,7 +1655,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1607,7 +1678,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1629,7 +1701,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 2
+   "unsupported": 2,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1651,7 +1724,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 2
+   "unsupported": 2,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1673,7 +1747,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1695,7 +1770,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1717,7 +1793,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1739,7 +1816,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1761,7 +1839,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1783,7 +1862,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1805,7 +1885,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1827,7 +1908,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1849,7 +1931,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1871,7 +1954,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 1
+   "unsupported": 1,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1893,7 +1977,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1915,7 +2000,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1937,7 +2023,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1959,7 +2046,8 @@
    "required": 3,
    "required_removals": 0,
    "retained": 3,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -1981,7 +2069,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2003,7 +2092,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2025,7 +2115,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2047,7 +2138,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2069,7 +2161,8 @@
    "required": 2,
    "required_removals": 1,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2091,7 +2184,8 @@
    "required": 1,
    "required_removals": 1,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2113,7 +2207,8 @@
    "required": 1,
    "required_removals": 1,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2135,7 +2230,8 @@
    "required": 1,
    "required_removals": 1,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2157,7 +2253,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2179,7 +2276,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2201,7 +2299,8 @@
    "required": 1,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2223,7 +2322,8 @@
    "required": 1,
    "required_removals": 2,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2245,7 +2345,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2267,7 +2368,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2289,7 +2391,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2311,7 +2414,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 2,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2333,7 +2437,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2355,7 +2460,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2377,7 +2483,8 @@
    "required": 2,
    "required_removals": 0,
    "retained": 0,
-   "unsupported": 2
+   "unsupported": 2,
+   "withheld": false
   },
   {
    "advisory": null,
@@ -2399,11 +2506,12 @@
    "required": 2,
    "required_removals": 0,
    "retained": 1,
-   "unsupported": 0
+   "unsupported": 0,
+   "withheld": false
   }
  ],
- "peak_memory_bytes": 3142983,
- "runtime_ms": 279.2,
+ "peak_memory_bytes": 3149347,
+ "runtime_ms": 272.6,
  "split": "development",
  "totals": {
   "authorized": 17,
@@ -2426,6 +2534,7 @@
   "unsupported": 20,
   "valid": 48,
   "valid_rejected": 0,
-  "valid_rejection_rate": 0.0
+  "valid_rejection_rate": 0.0,
+  "withheld": 0
  }
 }
