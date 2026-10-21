@@ -61,10 +61,24 @@ def _tracking(ctx: Any) -> bool:
     return bool(getattr(ctx, "track_changes", False))
 
 
+def _ledger_for(ctx: Any, text: str):
+    """The run's :class:`~chartcleaner.edit_provenance.EditLedger` if it is in step with ``text``.
+
+    A stage that transformed the text before calling the regex machinery
+    leaves the ledger behind; proposing matches against stale offsets would
+    mislabel provenance, so the engine's post-stage reconcile covers it instead.
+    """
+    ledger = getattr(ctx, "ledger", None)
+    if ledger is None or ledger.current != text:
+        return None
+    return ledger
+
+
 def _subn_tracked(
     regex: re.Pattern, replacement: str, text: str, changes: list[dict] | None, pattern: str,
     exceptions: list[str] | None = None, scope: Callable[[int], bool] | None = None,
-    table_lines: set[int] | None = None,
+    table_lines: set[int] | None = None, *, ledger: Any = None, sid: str | None = None,
+    rule_key: str | None = None, judge: Callable[[Any], str] | None = None,
 ) -> tuple[str, int]:
     """``regex.subn`` that also records each change while ``changes`` is a list.
 
@@ -73,13 +87,21 @@ def _subn_tracked(
     whether a match at that offset is in scope (section-scoped removal).
     ``table_lines`` is a set of line-start offsets that must be left untouched
     (table-safe whitespace).
+
+    With a ``ledger`` every surviving match becomes an
+    :class:`~chartcleaner.edit_provenance.EditProposal` (whatever the display
+    cap on ``changes``); ``judge(proposal)`` returns the decision and only
+    accepted proposals change the text. All matches of one rule are proposed
+    against the same input and resolved as one batch.
     """
-    if changes is None and not exceptions and scope is None and table_lines is None:
+    if (changes is None and not exceptions and scope is None and table_lines is None
+            and ledger is None):
         return regex.subn(replacement, text)
     rid = rule_id(pattern)
     keep = [e.casefold() for e in exceptions or []]
     skipped = 0
     lines = LineCounter(text)
+    proposals: list[tuple[Any, str]] = []
 
     # Line start offsets, built lazily (only when a "never remove" exception is
     # actually hit) so the common case — no exceptions, or no matches — pays
@@ -125,6 +147,13 @@ def _subn_tracked(
                 skipped += 1
                 return found
         after = match.expand(replacement)
+        if ledger is not None:
+            proposal = ledger.propose(sid or "regex", rule_key or rid, match.start(), match.end(), after)
+            decision = judge(proposal) if judge is not None else "accept"
+            proposals.append((proposal, decision))
+            if decision != "accept":
+                skipped += 1
+                return found
         if changes is not None and len(changes) < MAX_TRACKED_CHANGES:
             changes.append({
                 "rule": pattern,
@@ -136,6 +165,8 @@ def _subn_tracked(
         return after
 
     out, n = regex.subn(repl, text)
+    if proposals:
+        ledger.resolve_many(proposals)
     return out, n - skipped
 
 
@@ -213,9 +244,10 @@ SLOW_RULE_MS = 25.0
 
 def _timed_subn(regex, replacement, text, changes, pattern, keep, slow: dict[str, float],
                 scope: Callable[[int], bool] | None = None,
-                table_lines: set[int] | None = None):
+                table_lines: set[int] | None = None, **provenance):
     started = time.perf_counter()
-    out, n = _subn_tracked(regex, replacement, text, changes, pattern, keep, scope, table_lines)
+    out, n = _subn_tracked(regex, replacement, text, changes, pattern, keep, scope, table_lines,
+                           **provenance)
     ms = (time.perf_counter() - started) * 1000
     if ms >= SLOW_RULE_MS:
         slow[rule_id(pattern)] = round(ms, 1)
@@ -263,11 +295,14 @@ def _apply_rules(
     hits: dict[str, int] = {}
     slow: dict[str, float] = {}
     total = 0
+    ledger = _ledger_for(ctx, text)
+    judge = getattr(ctx, "judge", None) if ledger is not None else None
     for pattern, replacement in rules:
         own = rule_scopes.get(pattern) if rule_scopes else None
         rule_scope = _both(scope, _scope_predicate(own, text)) if own else scope
         text, n = _timed_subn(_compiled(pattern, flags), replacement, text, changes, pattern,
-                              keep, slow, rule_scope, table_lines)
+                              keep, slow, rule_scope, table_lines, ledger=ledger, sid=sid,
+                              rule_key=rule_id(pattern), judge=judge)
         if n:
             hits[rule_id(pattern)] = n
         total += n

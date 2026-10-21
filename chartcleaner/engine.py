@@ -361,6 +361,8 @@ class RunResult:
     tokens_before: int = 0
     # FactReport from fact_check (holds chart text; history keeps summary only)
     fact_check: Any = None
+    # EditLedger from edit_provenance (in memory only; never in history)
+    ledger: Any = None
 
     @property
     def chars_after(self) -> int:
@@ -433,10 +435,15 @@ class RunResult:
 class CleanContext:
     """Handed to custom script rules: lets them report counts and messages."""
 
-    def __init__(self, config: dict, *, track_changes: bool = False):
+    def __init__(self, config: dict, *, track_changes: bool = False, ledger: Any = None,
+                 judge: Any = None):
         self._config = config
         # When True, built-in stages record each change in details["changes"].
         self.track_changes = track_changes
+        # Source-linked provenance for this run (edit_provenance.EditLedger) and
+        # the hook that decides each proposal; both None when provenance is off.
+        self.ledger = ledger
+        self.judge = judge
         self.counters: dict[str, int] = {}
         self.logs: list[str] = []
 
@@ -574,7 +581,7 @@ class Pipeline:
 
     def run(self, text: str, wrap: bool | None = None, *,
             track_changes: bool = False, fact_check: bool | None = None,
-            cache: Any = None) -> RunResult:
+            cache: Any = None, provenance: bool = False) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
@@ -584,9 +591,15 @@ class Pipeline:
         :class:`~chartcleaner.fact_check.FactReport` in ``result.fact_check``.
         ``cache`` (a :class:`~chartcleaner.stage_cache.StageCache`) reuses a
         builtin stage's output when its input text and own settings are unchanged.
+        ``provenance`` keeps an :class:`~chartcleaner.edit_provenance.EditLedger`
+        of every proposed edit with its original source spans in ``result.ledger``.
         """
         started = time.perf_counter()
-        ctx = CleanContext(self.config, track_changes=track_changes)
+        ledger = None
+        if provenance:
+            from .edit_provenance import EditLedger
+            ledger = EditLedger(text)
+        ctx = CleanContext(self.config, track_changes=track_changes, ledger=ledger)
         chars_before = len(text)
         words_before = len(text.split())
         lines_before = text.count("\n") + 1
@@ -609,6 +622,8 @@ class Pipeline:
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
             stage_stats.append(wrapper_stat)
+            if ledger is not None:
+                ledger.reconcile("wrapper", text)
         report = None
         if tracker is not None:
             try:
@@ -627,6 +642,7 @@ class Pipeline:
             lines_before=lines_before,
             tokens_before=tokens_before,
             fact_check=report,
+            ledger=ledger,
         )
 
     def stage_io(self, text: str, sid: str, *, cache: Any = None) -> tuple[str, str, StageStat]:
@@ -658,12 +674,17 @@ class Pipeline:
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
+        ledger = ctx.ledger
         for spec, before, text, st, warning in self._iter_stages(text, ctx, cache):
             if warning:
                 warnings.append(warning)
             stats.append(st)
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
+            if ledger is not None and ledger.current != text:
+                # An opaque stage (compactor, custom script, cache hit…) moved the
+                # text without proposing edits: one coarse proposal covers the gap.
+                ledger.reconcile(spec.id, text)
         return text, stats, warnings
 
     def _execute_single_stage(
