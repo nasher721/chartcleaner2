@@ -48,10 +48,15 @@ class BatchResult:
     summary: str = ""
     # slim per-stage summaries so batch runs still feed the Statistics dashboard
     stages: list[dict] = field(default_factory=list)
+    # shared release decision ("ready" | "review" | "blocked"); blocked results
+    # carry no cleaned text and get status "blocked"
+    release: str = ""
+    release_reasons: list[str] = field(default_factory=list)
 
     @property
     def needs_review(self) -> bool:
-        return self.status == "ok" and (self.facts_status not in ("", "ok") or self.findings > 0)
+        return self.status == "ok" and (self.facts_status not in ("", "ok") or self.findings > 0
+                                        or self.release == "review")
 
 
 def run_batch(
@@ -165,10 +170,14 @@ class _Runner:
         result = self.pipes[preset].run(text)
         audit = run_audit(result.text, run_cfg)
         findings = 0 if audit.skipped else sum(audit.counts.values())
+        cleaned = format_output(result.text, "text", self.delta)[0] if self.delta else result.text
+        from .review_state import release_decision
+        decision = release_decision(result, output_text=cleaned)
         return BatchResult(
             name=name,
             path=path,
-            status="ok",
+            status="ok" if decision.releasable else "blocked",
+            error="" if decision.releasable else "Release withheld: " + ", ".join(decision.reasons),
             chars_before=result.chars_before,
             chars_after=result.chars_after,
             reduction=result.reduction,
@@ -177,11 +186,13 @@ class _Runner:
             elapsed_ms=result.duration_ms,
             facts=result.fact_check.headline() if result.fact_check else "",
             facts_status=result.fact_check.status if result.fact_check else "",
-            cleaned=format_output(result.text, "text", self.delta)[0] if self.delta else result.text,
+            cleaned=cleaned if decision.releasable else "",
             note_type=note_label,
             preset=preset,
             stages=[{"label": s.label, "matches": s.matches,
                      "before": s.chars_before, "after": s.chars_after,
                      "skipped": s.skipped}
                     for s in result.stages],
+            release=decision.status,
+            release_reasons=list(decision.reasons),
         )

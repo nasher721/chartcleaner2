@@ -49,7 +49,8 @@ def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool =
     """
     out = service.clean(text, preset=preset or None, fmt=format, delta=delta, trends=trends,
                         source="api:mcp")
-    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings", "trends")
+    # ``text`` is empty when release is withheld; ``release`` says why.
+    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings", "trends", "release")
             if k in out}
 
 

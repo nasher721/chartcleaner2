@@ -1,6 +1,11 @@
-"""In-memory findings shared by the Clean status, review list and copy gate."""
+"""In-memory findings shared by the Clean status, review list and copy gate,
+and the one release decision every output surface consults."""
+from dataclasses import dataclass
 from difflib import SequenceMatcher, get_close_matches
+import hashlib
 import re
+
+RELEASE_STATUSES = ("ready", "review", "blocked")
 
 
 def review_findings(report, audit, *, source='', output=''):
@@ -74,3 +79,128 @@ def redaction_candidates(before, after):
     return [dict(start=m.start(), end=m.end(), token=m.group(),
                  original=mapping.get(after[:m.start()].count('\n')))
             for m in matches]
+
+
+# --- release ---------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ReleaseDecision:
+    """Whether a result may leave the app as de-identified, cleaned text.
+
+    ``blocked`` (a mandatory redaction failed; no acknowledgement overrides
+    it), ``review`` (someone must look and acknowledge with
+    ``acknowledgement_key``), or ``ready``.
+    """
+
+    status: str
+    reasons: tuple[str, ...]
+    acknowledgement_key: str
+    deidentification_complete: bool
+
+    def __post_init__(self):
+        if self.status not in RELEASE_STATUSES:
+            raise ValueError(f"status must be one of {RELEASE_STATUSES}")
+
+    @property
+    def releasable(self) -> bool:
+        return self.status != "blocked"
+
+    def to_dict(self) -> dict:
+        return {"status": self.status, "reasons": list(self.reasons),
+                "acknowledgement_key": self.acknowledgement_key,
+                "deidentification_complete": self.deidentification_complete}
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def acknowledgement_key(result, output_text: str) -> str:
+    """Key an acknowledgement binds to: source, this exact output, config, validator."""
+    parts = (getattr(result, "source_digest", "") or "", _sha(output_text),
+             getattr(result, "config_digest", "") or "", getattr(result, "validator_version", "") or "")
+    return _sha("|".join(parts))[:16]
+
+
+# Reasons that need a human acknowledgement before release; the others are
+# disclosed on the decision but do not gate it.
+_REVIEW_REASONS = frozenset({"clinical_alert", "edits_retained", "harmful_edits_shipped",
+                             "redaction_unverified", "coverage_failed", "edited_output_issues",
+                             "budget_exhausted"})
+
+
+def release_decision(result, *, output_text: str, acknowledgement: str | None = None,
+                     source: str | None = None) -> ReleaseDecision:
+    """The one decision UI copy, export, CLI, API, MCP, batch and watcher all use.
+
+    ``output_text`` is what would leave (edits included); when it differs from
+    the pipeline's text and ``source`` is given, the edited text is validated
+    again. A failed mandatory redaction blocks regardless of acknowledgement.
+    """
+    reasons: list[str] = []
+    validation = getattr(result, "validation", None)
+    deidentified = True
+    if validation is not None:
+        if validation.withheld:
+            # Enforcement withheld a redaction: identifying text is still in place.
+            deidentified = False
+            reasons.append("redaction_failed")
+        elif validation.decision == "withhold_release":
+            # Shadow mode: the validator would have withheld, but shadow changes
+            # nothing — the result ships with a review flag, not a block.
+            reasons.append("redaction_unverified")
+    facts = getattr(result, "fact_check", None)
+    if facts is not None:
+        if facts.status == "alert":
+            reasons.append("clinical_alert")
+        elif facts.status == "review":
+            reasons.append("rule_removed_values")
+    if validation is not None:
+        if validation.rejected:
+            reasons.append("edits_retained")
+        elif validation.decision == "retain_original":
+            reasons.append("harmful_edits_shipped")  # shadow mode: advisory only
+        status = validation.coverage.status
+        if status != "complete":
+            reasons.append(f"coverage_{status}")
+        if "budget_exhausted" in validation.coverage.reasons:
+            reasons.append("budget_exhausted")
+    if output_text != getattr(result, "text", output_text):
+        reasons.append("edited_output")
+        if source is not None:
+            from .validation import validate_candidate
+            try:
+                again = validate_candidate(source, output_text, {}, mode="enforce", stage_id="edited_output")
+            except Exception:
+                reasons.append("coverage_failed")
+            else:
+                if again.decision != "accept":
+                    reasons.append("edited_output_issues")
+    key = acknowledgement_key(result, output_text)
+    if not deidentified:
+        status = "blocked"
+    elif any(r in _REVIEW_REASONS for r in reasons):
+        status = "ready" if acknowledgement == key else "review"
+    else:
+        status = "ready"
+    return ReleaseDecision(status, tuple(dict.fromkeys(reasons)), key, deidentified)
+
+
+def support_text(result) -> str:
+    """Processing and relation coverage in words — never a score for unchecked text."""
+    validation = getattr(result, "validation", None)
+    if validation is None:
+        return "Validation not run."
+    cov = validation.coverage
+    if cov.status == "unavailable":
+        return "Validation off — edits were not checked."
+    processed = f"{cov.processed_chars:,} of {cov.input_chars:,} characters processed"
+    if cov.recognized_statements == 0:
+        return f"{processed}; no clinical statements recognized in the edited text — its meaning is unchecked."
+    text = (f"{processed}; {cov.checked_statements} of {cov.recognized_statements} recognized "
+            f"statement(s) checked")
+    if cov.unresolved_spans:
+        text += f"; {len(cov.unresolved_spans)} region(s) unresolved"
+    if cov.status == "failed":
+        text += "; a check failed"
+    return text + "."

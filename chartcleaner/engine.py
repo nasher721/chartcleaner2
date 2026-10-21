@@ -365,6 +365,10 @@ class RunResult:
     ledger: Any = None
     # validation.ValidationReport for the run (history keeps summary() only)
     validation: Any = None
+    # digests the release acknowledgement is keyed on (never the texts themselves)
+    source_digest: str = ""
+    config_digest: str = ""
+    validator_version: str = ""
 
     @property
     def chars_after(self) -> int:
@@ -613,6 +617,7 @@ class Pipeline:
         unavailable coverage; enforce lets the validator decide each edit.
         """
         started = time.perf_counter()
+        source_text = text
         mode = validation or self.validation_mode()
         ledger = session = context = None
         if mode != "off" or provenance:
@@ -661,6 +666,8 @@ class Pipeline:
         else:
             from .validation import off_report
             validation_report = off_report(chars_before)
+        from .validation import _digest as _cfg_digest, _sha as _text_digest, validator_version as _vv
+        validator_version = context.validator_version if context is not None else _vv()
 
         return RunResult(
             text=text,
@@ -675,6 +682,9 @@ class Pipeline:
             fact_check=report,
             ledger=ledger,
             validation=validation_report,
+            source_digest=context.source_digest if context is not None else _text_digest(source_text),
+            config_digest=context.config_digest if context is not None else _cfg_digest(self.config),
+            validator_version=f"{mode}:{validator_version}",
         )
 
     def validation_mode(self) -> str:

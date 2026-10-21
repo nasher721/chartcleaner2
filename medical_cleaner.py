@@ -174,9 +174,31 @@ def _run_pipe(args, cleaner: "MedicalCleaner") -> None:
         out = render_note(args.template, result.text, cleaner.config)
     if args.daily_note or args.tag:
         out = _daily_note(args, text, result.text, cleaner) or out
+    _release_or_exit(result, out)
     _emit(args, out)
     print(f"{result.summary()}", file=sys.stderr)
     _print_fact_check(result)
+    _print_release(result, out)
+
+
+def _release_or_exit(result, out: str) -> None:
+    """Nothing leaves the CLI when release is withheld (a redaction failed)."""
+    from chartcleaner.review_state import release_decision
+    decision = release_decision(result, output_text=out)
+    if decision.releasable:
+        return
+    print("Release withheld — the cleaned text was not written: " + ", ".join(decision.reasons),
+          file=sys.stderr)
+    print("Open the chart in Chart Cleaner to review the blocked redaction.", file=sys.stderr)
+    sys.exit(3)
+
+
+def _print_release(result, out: str) -> None:
+    from chartcleaner.review_state import release_decision, support_text
+    decision = release_decision(result, output_text=out)
+    if decision.status == "review":
+        print(f"  ! Review before sharing: {', '.join(decision.reasons)}", file=sys.stderr)
+    print(f"  {support_text(result)}", file=sys.stderr)
 
 
 def _emit(args, out: str) -> None:

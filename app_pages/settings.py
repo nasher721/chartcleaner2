@@ -406,6 +406,34 @@ def settings_page():
                      on_change=lambda e: (common.PREFS.update(notes_folder=e.value.strip()), save_prefs())) \
                 .classes("w-full cc-mono")
 
+        # ---- cleaning validation ---------------------------------------------------------
+        with ui.card().classes("w-full gap-2").mark("validation-card"):
+            ui.label("Cleaning validation").classes("cc-section")
+            ui.label("Every cleaning edit is checked against the chart's own clinical statements "
+                     "before it ships. Shadow checks and records (the text is unchanged); enforce "
+                     "also keeps passages a rule would harm, and withholds release when a required "
+                     "redaction cannot be verified.").classes("text-xs opacity-60 -mt-1")
+            cur_mode = ((load_config(common.CONFIG_PATH).get("cleaning_validation") or {})
+                        .get("mode", "shadow"))
+
+            def set_mode(mode: str) -> None:
+                cfg = load_config(common.CONFIG_PATH)
+                group = dict(cfg.get("cleaning_validation") or {})
+                group["mode"] = mode
+                group.setdefault("schema_version", 1)
+                cfg["cleaning_validation"] = group
+                save_config_with_backup(cfg, source="settings")
+                ui.notify({"off": "Validation off — edits are not checked.",
+                           "shadow": "Shadow mode — checks run, the text is unchanged.",
+                           "enforce": "Enforce mode — harmful edits are kept as written."}[mode],
+                          type="info")
+
+            ui.select({"shadow": "Shadow (default) — check and record, change nothing",
+                       "enforce": "Enforce — keep passages a rule would harm",
+                       "off": "Off — do not check edits"},
+                      value=cur_mode, on_change=lambda e: set_mode(e.value)) \
+                .classes("min-w-[360px]").mark("validation-mode")
+
         # ---- local AI (Ollama) ----------------------------------------------------------
         with ui.card().classes("w-full gap-2").mark("local-ai-card"):
             ui.label("Local AI (Ollama)").classes("cc-section")

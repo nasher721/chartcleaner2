@@ -22,7 +22,25 @@ from datetime import date as _date
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-__all__ = ["to_docx", "to_markdown", "save_to_vault", "to_smartphrase"]
+__all__ = ["ReleaseBlocked", "release_or_raise", "to_docx", "to_markdown", "save_to_vault",
+           "to_smartphrase"]
+
+
+class ReleaseBlocked(RuntimeError):
+    """The result may not leave the app: a mandatory redaction failed."""
+
+
+def release_or_raise(result, text: str, *, acknowledgement: str | None = None, source: str | None = None):
+    """Exporters' gate: the shared release decision, raising when blocked.
+
+    Returns the :class:`~chartcleaner.review_state.ReleaseDecision` so callers
+    can show a review prompt for ``review`` results.
+    """
+    from .review_state import release_decision
+    decision = release_decision(result, output_text=text, acknowledgement=acknowledgement, source=source)
+    if not decision.releasable:
+        raise ReleaseBlocked("Release withheld: " + ", ".join(decision.reasons))
+    return decision
 
 _HEADING = re.compile(r"^(?:#{1,6}\s+(?P<md>.+)|(?P<hdr>[A-Z][A-Za-z /&()-]{2,40}):\s*)$")
 _WRAPPER = re.compile(r"^</?[A-Za-z_][\w-]*>$")

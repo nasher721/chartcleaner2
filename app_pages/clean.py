@@ -148,7 +148,7 @@ async def clean_page():
                                overnight=extras.get("overnight"), pending=extras.get("pending"),
                                bundle=extras.get("bundle"), safety=extras.get("safety"),
                                stale=extras.get("stale"), conflicts=extras.get("conflicts"),
-                               fact_ack=False)
+                               fact_ack=False, release_ack=None)
             AUTO_LAST["text"] = text
             store.append_run(result.to_history_dict(
                 f"{source}:{mode}" if mode != "clean" else source))
@@ -307,7 +307,7 @@ async def clean_page():
             refs["groups"] = groups
             with ui.tabs().props("dense align=left") as tabs:
                 t_out = ui.tab("Output", icon="description")
-                t_review = ui.tab("Review", icon="rule")
+                t_review = ui.tab("Review", icon="rule").mark("review-tab")
                 issue_count = len(review_findings(result.fact_check, CLEAN_STATE.get("audit")))
                 if issue_count:
                     with t_review:
@@ -337,9 +337,15 @@ async def clean_page():
         title = {"blocked": "Blocked · review before copying", "review": "Review needed",
                  "clean": "Checks passed · review before sharing"}[status]
         with ui.column().classes("w-full gap-1").mark("trust-strip"):
-            ui.button(title, icon="report" if status == "blocked" else "rule",
-                      on_click=lambda: show_tab(1)).props(f"outline no-caps color={color}") \
-                .mark("fact-check")
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.button(title, icon="report" if status == "blocked" else "rule",
+                          on_click=lambda: show_tab(1)).props(f"outline no-caps color={color}") \
+                    .mark("fact-check")
+                decision = release_for_copy(result)
+                pill = {"blocked": ("Release blocked", "red"),
+                        "review": ("Release: review first", "orange"),
+                        "ready": ("Release: ready", "grey")}[decision.status]
+                ui.badge(pill[0], color=pill[1]).mark("release-status")
             ui.label("Pattern checks cannot guarantee de-identification.").classes("text-sm")
             render_findings(result, limit=3)
 
@@ -495,33 +501,57 @@ async def clean_page():
                 copy_to_clipboard(*got)
         guarded_copy(go)
 
-    def guarded_copy(action) -> None:
-        """Run ``action`` (a copy), first asking when the fact check raised an alert.
+    def release_for_copy(result):
+        """The shared release decision for what is about to be copied."""
+        from chartcleaner.review_state import release_decision
+        text = CLEAN_STATE.get("result_text") or (result.text if result else "")
+        source = CLEAN_STATE["input"] if CLEAN_STATE.get("result_mode") in (None, "clean") else None
+        return release_decision(result, output_text=text,
+                                acknowledgement=CLEAN_STATE.get("release_ack"), source=source)
 
-        Lost clinical values, changed meaning or values new to the chart must be
-        seen before the text leaves the app. Acknowledging
-        once covers every copy of this result; a new clean asks again.
+    def guarded_copy(action) -> None:
+        """Run ``action`` (a copy), first asking when release is not ready.
+
+        A blocked result (a mandatory redaction could not be verified) is never
+        copied: the only way forward is fixing the rule or the text. A review
+        result asks once; acknowledging stores the key this exact output,
+        config and validator version produced — a new clean, an edit or a
+        config change asks again.
         """
         commit_edit()
         result = CLEAN_STATE.get("result")
-        report = getattr(result, "fact_check", None)
-        if (CLEAN_STATE.get("fact_ack")
-                or report is None or report.status != "alert"
+        if result is None:
+            action()
+            return
+        decision = release_for_copy(result)
+        if decision.status == "blocked":
+            _release_blocked_dialog(result, decision)
+            return
+        if (decision.status != "review"
                 or CLEAN_STATE.get("result_mode") not in (None, "clean")):
             action()
             return
+        report = getattr(result, "fact_check", None)
         with results_col.client, ui.dialog() as dlg, ui.card().classes("w-[560px] max-w-full gap-2").mark("copy-guard"):
             with ui.row().classes("items-center gap-2 no-wrap"):
-                ui.icon("report", color="red").classes("text-2xl")
+                ui.icon("report", color="orange").classes("text-2xl")
                 ui.label("Check before copying").classes("cc-section")
-            ui.label(report.headline()).classes("text-sm text-red-600")
-            for x in [x for x in report.losses if x.category == "unexpected"][:6]:
-                ui.label(f"Lost: {x.display} — {x.stage_label}: {x.lines[0][:160] if x.lines else ''}") \
-                    .classes("text-xs cc-mono break-all")
-            for m in [m for m in report.meaning if m.category == "unexpected"][:4]:
-                ui.label(f"{m.message}: {m.before[:160]}").classes("text-xs cc-mono break-all")
-            ui.label("The cleaned text may be missing or changing a clinical value. Review it, "
-                     "or copy anyway if you've checked.").classes("text-xs cc-muted")
+            if report is not None and report.status == "alert":
+                ui.label(report.headline()).classes("text-sm text-red-600")
+                for x in [x for x in report.losses if x.category == "unexpected"][:6]:
+                    ui.label(f"Lost: {x.display} — {x.stage_label}: {x.lines[0][:160] if x.lines else ''}") \
+                        .classes("text-xs cc-mono break-all")
+                for m in [m for m in report.meaning if m.category == "unexpected"][:4]:
+                    ui.label(f"{m.message}: {m.before[:160]}").classes("text-xs cc-mono break-all")
+            else:
+                ui.label("Validation flagged this result: " + ", ".join(decision.reasons)) \
+                    .classes("text-sm text-orange-600")
+            if report is not None and report.status == "alert":
+                ui.label("The cleaned text may be missing or changing a clinical value. Review it, "
+                         "or copy anyway if you've checked.").classes("text-xs cc-muted")
+            else:
+                ui.label("Acknowledging covers this exact result; a new clean, an edit or a "
+                         "settings change asks again.").classes("text-xs cc-muted")
 
             def review() -> None:
                 dlg.close()
@@ -529,6 +559,7 @@ async def clean_page():
 
             def anyway() -> None:
                 CLEAN_STATE["fact_ack"] = True
+                CLEAN_STATE["release_ack"] = decision.acknowledgement_key
                 dlg.close()
                 action()
 
@@ -537,6 +568,25 @@ async def clean_page():
                     .mark("copy-guard-review")
                 ui.button("Copy anyway", icon="content_copy", on_click=anyway).props("flat") \
                     .mark("copy-anyway")
+        dlg.open()
+
+    def _release_blocked_dialog(result, decision) -> None:
+        """A withheld redaction: show the raw text locally, copy nothing."""
+        text = CLEAN_STATE.get("result_text") or result.text
+        with results_col.client, ui.dialog() as dlg, ui.card().classes("w-[720px] max-w-full gap-2") \
+                .mark("release-blocked-dialog"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.icon("gpp_bad", color="red").classes("text-2xl")
+                ui.label("Release blocked").classes("cc-section")
+            ui.label("A required redaction could not be verified (" + ", ".join(decision.reasons)
+                     + "), so this text was not de-identified. It stays here for review — it is "
+                       "not copied or exported.").classes("text-sm text-red-600")
+            with ui.expansion("Show raw, unverified text", icon="visibility").classes("w-full"):
+                ui.label(text).classes("text-xs cc-mono break-all")
+            with ui.row().classes("justify-end gap-2"):
+                ui.button("Review the rule", icon="rule", on_click=lambda: (dlg.close(), show_tab(1))) \
+                    .props("unelevated color=primary")
+                ui.button("Close", on_click=dlg.close).props("flat")
         dlg.open()
 
     def toggle_edit() -> None:
@@ -562,6 +612,7 @@ async def clean_page():
             return
         CLEAN_STATE["result_text"] = value
         CLEAN_STATE["fact_ack"] = False
+        CLEAN_STATE["release_ack"] = None  # an edited output is a different result
         from chartcleaner.fact_check import FactTracker
         result = CLEAN_STATE.get("result")
         if result is not None:
@@ -810,6 +861,8 @@ async def clean_page():
 
     # ---- Review tab -----------------------------------------------------------
     def render_review(result, groups: list[dict], single_pass: bool) -> None:
+        if not single_pass:
+            render_validation(result)
         if result.fact_check is not None and not single_pass:
             render_findings(result)
             render_fact_check(result.fact_check)
@@ -2379,6 +2432,81 @@ async def clean_page():
                             .props("flat dense").mark("never-remove")
                 if len(seen) > 12:
                     ui.label(f"… {len(seen) - 12} more").classes("text-xs opacity-60")
+
+    def render_validation(result) -> None:
+        """The validator's own account: coverage, rejected edits and grouped issues.
+
+        Text-free on purpose — codes, counts and links into the source; the
+        struck-through diff below is where the text lives.
+        """
+        from chartcleaner.review_state import support_text
+        val = getattr(result, "validation", None)
+        if val is None:
+            return
+        stage_label = {s.id: s.label for s in result.stages}
+        with ui.card().classes("w-full cc-panel gap-2").mark("validation-panel"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.icon("verified_user").classes("text-lg")
+                ui.label("Cleaning validation").classes("cc-section")
+                decision = release_for_copy(result)
+                ui.badge(decision.status, color={"ready": "grey", "review": "orange",
+                                                 "blocked": "red"}[decision.status])
+                ui.badge(val.coverage.status, color={"complete": "grey", "partial": "orange",
+                                                     "unavailable": "orange", "failed": "red"}[
+                                                     val.coverage.status]).mark("validation-coverage-status")
+            ui.label(support_text(result)).classes("text-xs cc-muted").mark("validation-coverage")
+
+            rejected = [p for p in (result.ledger.proposals if result.ledger else [])
+                        if p.decision == "retain_original"]
+            if rejected:
+                by_rule: dict[tuple, list] = {}
+                for p in rejected:
+                    by_rule.setdefault((p.stage_id, p.rule_key, p.mapping), []).append(p)
+                with ui.expansion(f"Edits kept as original ({len(rejected)})", icon="undo") \
+                        .classes("w-full"):
+                    ui.label("The validator kept these passages unchanged — the rule would have "
+                             "removed or rewritten them.").classes("text-xs cc-muted")
+                    for (sid, rule, mapping), props in sorted(by_rule.items(), key=lambda kv: str(kv[0])):
+                        with ui.row().classes("w-full items-center gap-2").mark("validation-group"):
+                            ui.badge(f"{len(props)} kept", color="orange")
+                            ui.label(f"{stage_label.get(sid, sid)} — {len(props)} passage(s) kept as "
+                                     f"written ({mapping} source link)").classes("text-sm") \
+                                .mark("validation-group-label")
+                            ui.button("Locate", icon="my_location",
+                                      on_click=lambda ps=props: locate_finding(dict(
+                                          severity="review", title="Kept as original",
+                                          detail=stage_label.get(ps[0].stage_id, ps[0].stage_id),
+                                          before=ps[0].before[:300], after=""))) \
+                                .props("flat no-caps dense")
+
+            blocking = [i for i in val.issues if i.blocking]
+            if blocking:
+                by_group: dict[tuple, list] = {}
+                for issue in blocking:
+                    by_group.setdefault((issue.stage_id, issue.rule_key, issue.code), []).append(issue)
+                with ui.expansion(f"Blocked findings ({len(blocking)})", icon="report") \
+                        .classes("w-full").mark("validation-issues"):
+                    for (sid, rule, code), items in sorted(by_group.items(), key=lambda kv: str(kv[0])):
+                        with ui.row().classes("w-full items-center gap-2").mark("validation-group"):
+                            ui.badge(f"{len(items)}", color="red")
+                            ui.label(f"{code.replace('_', ' ')} — {stage_label.get(sid, sid)}") \
+                                .classes("text-sm").mark("validation-group-label")
+                            spans = [s for i in items for s in i.source_spans if s.end > s.start]
+                            if spans:
+                                ui.button("Locate", icon="my_location",
+                                          on_click=lambda sp=spans: locate_finding(dict(
+                                              severity="review", title=code.replace('_', ' '),
+                                              detail=stage_label.get(sid, sid),
+                                              before=CLEAN_STATE["input"][sp[0].start:sp[0].end][:300],
+                                              after=""))).props("flat no-caps dense")
+
+            intentional = [i for i in val.issues if i.code == "intentional_loss"]
+            if intentional:
+                with ui.expansion(f"Intentional reductions ({len(intentional)})", icon="compress") \
+                        .classes("w-full"):
+                    ui.label("Disclosed separately from unexpected loss: these reductions are the "
+                             "point of the stage that made them (section filters, summaries, "
+                             "latest-only views).").classes("text-xs cc-muted")
 
     def render_fact_check(report) -> None:
         """Details behind the trust badge: which clinical values went, and where."""

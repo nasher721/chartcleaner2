@@ -93,7 +93,8 @@ _FALLBACK_EXPANSIONS = {
     "w/o": "without", "h/o": "history of", "hx": "history", "r/o": "rule out", "s/p": "status post",
     "b/l": "bilateral", "bilat": "bilateral", "c/o": "complains of", "nad": "no acute distress",
     "sob": "shortness of breath", "cp": "chest pain", "pod": "postoperative day", "hd": "hospital day",
-    "prn": "as needed", "fh": "family history", "nkda": "no known drug allergies",
+    "prn": "as needed", "fh": "family history", "nkda": "no known drug allergies", "y/o": "year-old",
+    "yo": "year-old", "tmrw": "tomorrow", "reg": "regimen",
 }
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z/'-]*")
 
@@ -142,7 +143,14 @@ def _expand(text: str) -> str:
     return _TOKEN.sub(repl, text)
 
 
-_ARTICLES = re.compile(r"\b(?:the|a|an|is|are|was|were|has|have|had|with|for|patient|pt)\b")
+_ARTICLES = re.compile(r"\b(?:the|a|an|is|are|was|were|has|have|had|with|w|w/|for|patient|pt)\b")
+_AGE = re.compile(r"\b\d{1,3}\s*[- ]?\s*(?:year[- ]old|years[- ]old|y/?o|yo|yrs?)\b", re.IGNORECASE)
+_REDACTION = re.compile(r"\[REDACTED_[A-Z_]+\]|\[\[[A-Za-z_]+\d+\]\]")
+
+
+def _mask_tokens(text: str) -> str:
+    """Blank redaction/tokenization placeholders (same length, so spans hold)."""
+    return _REDACTION.sub(lambda m: " " * len(m.group(0)), text) if "[" in text else text
 _PUNCT = re.compile(r"[^\w\s/.-]")
 _WS = re.compile(r"\s+")
 
@@ -205,7 +213,9 @@ def _temporality(text: str, line_prefix: str = "") -> str | None:
     date = normalize_date(text) or normalize_date(line_prefix)
     if date:
         return date
-    day = _DAY.search(text) or _DAY.search(line_prefix)
+    # A day marker only dates the line when it is the line's label ("HD 3:");
+    # inside a sentence it belongs to its own comma item (see _nearest_date).
+    day = _DAY.search(line_prefix)
     if day:
         return f"day:{int(day.group(1))}"
     if _CURRENT.search(text):
@@ -339,26 +349,33 @@ def _label_canon() -> dict[str, str]:
                 "heart rate": "hr", "pulse": "hr", "hr": "hr", "respiratory rate": "rr", "rr": "rr",
                 "oxygen saturation": "spo2", "sat": "spo2", "sats": "spo2", "spo2": "spo2", "o2 sat": "spo2",
                 "pupil": "pupil", "pupils": "pupil", "date": None})
+    # A point-of-care glucose is the same measurement as the lab glucose.
+    out["poc glucose"] = out.get("glucose", "glucose")
+    out["glu"] = out.get("glucose", "glucose")
+    out["gluc"] = out.get("glucose", "glucose")
     return {k: v for k, v in out.items() if v is not None}
 
 
 def _nearest_date(segment: str, pos: int, fallback: str | None) -> str | None:
-    """The date closest to the number at ``pos`` within its comma-delimited item."""
+    """The date (or day marker) closest to the number at ``pos`` within its comma item."""
     end = len(segment)
     for i in range(pos, len(segment)):
         if segment[i] in ",;":
             end = i
             break
-    after = normalize_date(segment[pos:end])
-    if after:
-        return after
     start = 0
     for i in range(pos - 1, -1, -1):
         if segment[i] in ",;":
             start = i + 1
             break
-    before = normalize_date(segment[start:pos])
-    return before or fallback
+    item_after, item_before = segment[pos:end], segment[start:pos]
+    found = normalize_date(item_after) or normalize_date(item_before)
+    if found:
+        return found
+    day = _DAY.search(item_before) or _DAY.search(item_after)
+    if day:
+        return f"day:{int(day.group(1))}"
+    return fallback
 
 
 def _nearest_side(segment: str, pos: int) -> str | None:
@@ -371,7 +388,9 @@ def _nearest_side(segment: str, pos: int) -> str | None:
     return _laterality(segment[start:pos])
 
 
-_OWN_LABELS = {"pupil": "pupil", "pupils": "pupil", "pupillary": "pupil"}
+_OWN_LABELS = {"pupil": "pupil", "pupils": "pupil", "pupillary": "pupil",
+               "glu": "glucose", "gluc": "glucose",  # the abbreviation stage's short form
+               "poc glu": "poc glucose", "poc gluc": "poc glucose"}
 _QUALIFIERS = frozenset({"grade", "score", "scale", "class", "stage", "level", "of"})
 
 
@@ -383,14 +402,23 @@ def _own_label(before: str) -> str | None:
         words.pop()
     if not words:
         return None
+    for n in (2, 1):
+        if len(words) >= n:
+            cand = " ".join(words[-n:]).lower()
+            if cand in _OWN_LABELS:
+                return _OWN_LABELS[cand]
     last = words[-1].lower()
-    if last in _OWN_LABELS:
-        return _OWN_LABELS[last]
+    canon = _label_canon()
     for n in (2, 1):
         if len(words) >= n:
             cand = " ".join(words[-n:])
             if cand.lower() in fc._LABELS:
                 return cand
+            # The abbreviation stage may have shortened the label ("Hunt-Hess" →
+            # "HH"): its dictionary expansion is the label to look up.
+            expanded = canonical_subject(cand)
+            if expanded in fc._LABELS or expanded in canon:
+                return expanded
     return None
 
 
@@ -500,6 +528,10 @@ pupil pupils reactive nonreactive sluggish brisk fixed dilated pinpoint anisocor
 _SUFFIX = re.compile(r"\w{3,}(?:itis|emia|osis|pathy|oma|algia|plegia|paresis|penia|megaly|ectomy|ostomy|"
                      r"otomy|uria|pnea|rrhage|rrhagic|rrhea|iasis|trophy|edema|infarct\w*|ischemi\w*|"
                      r"fractures?|spasm|stenosis|sclerosis)\b", re.IGNORECASE)
+# Words the suffix patterns catch that are not findings.
+_NOT_FINDINGS = frozenset({"diagnosis", "diagnoses", "prognosis", "analysis", "analyses", "basis", "emphasis",
+                           "hypothesis", "synthesis", "dose", "doses", "osteopathy", "aroma", "coma",
+                           "diploma", "glaucoma", "soma", "comma", "atrophy", "hypertrophy"})
 _LIST_SPLIT = re.compile(r",\s*|\s+and\s+|\s*/\s*(?![0-9])", re.IGNORECASE)
 _CUE_STRIP = re.compile(
     r"(?<![A-Za-z])(?:no|not|denies|denied|deny|without|negative for|neg for|absent|none|never|free of|"
@@ -532,7 +564,10 @@ def _is_clinical(subject: str, *, cued: bool) -> bool:
     vocab = _clinical_vocab() if cued else _FINDING_TERMS
     if any(w in vocab or w.rstrip("s") in vocab for w in words):
         return True
-    return _SUFFIX.search(subject) is not None
+    for m in _SUFFIX.finditer(subject):
+        if m.group(0).lower() not in _NOT_FINDINGS and m.group(0).lower() not in {"coma", "glaucoma"} - {"glaucoma"}:
+            return True
+    return False
 
 
 @lru_cache(maxsize=4096)
@@ -558,8 +593,10 @@ def _clean_subject(text: str) -> str:
     text = _SIDE_WORDS.sub(" ", text)
     text = _SIDE_LETTER.sub(" ", text)
     text = _CUE_STRIP.sub(" ", text)
+    text = re.sub(r"\([^)]*\)", " ", text)  # "(SAH)" echo of the phrase in front of it
     text = _GRADE.sub(" ", text)
     text = _DATE.sub(" ", text)
+    text = _AGE.sub(" ", text)
     text = re.sub(r"(?<![\d/])(?:19|20)\d{2}(?![\d/])", " ", text)
     text = re.sub(r"\d+(?:\.\d+)?\s*%?", " ", text)  # values belong to measurements, not subjects
     return canonical_subject(text)
@@ -656,6 +693,7 @@ def extract_statements(text: str, *, source_offset: int = 0, note_id: str = "",
     unresolved: list[tuple[int, int]] = []
     if not text or not text.strip():
         return StatementExtraction((), ())
+    text = _mask_tokens(text)  # "[REDACTED_ID]" must not read as "infectious diseases"
     section_at = _section_lookup(text) if not section else (lambda _pos: section)
     # Group consecutive pipe-delimited lines: two or more form a table (header
     # row of labels, rows of values); a lone one is ordinary text whose pipes

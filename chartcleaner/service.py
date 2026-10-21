@@ -16,7 +16,7 @@ from . import store
 from .engine import Pipeline, RunResult, load_config
 
 __all__ = ["FORMATS", "INSIGHTS", "INSIGHT_ORDER", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
-           "expand", "prompt", "ask", "restore", "timeline", "result_cache", "insights", "insights_text",
+           "expand", "prompt", "ask", "release", "restore", "timeline", "result_cache", "insights", "insights_text",
            "daily_note", "split_patients", "clean_patients", "note", "census", "add_rules", "list_rules",
            "export_rules"]
 
@@ -256,7 +256,36 @@ def _payload(result: RunResult, text: str) -> dict:
         "warnings": list(result.warnings),
         "stages": _slim_stages(result),
         **({"fact_check": result.fact_check.to_dict()} if result.fact_check else {}),
+        **({"validation": result.validation.to_dict()} if result.validation else {}),
     }
+
+
+def release(result: RunResult, output_text: str, *, acknowledgement: str | None = None,
+            source: str | None = None):
+    """The shared :func:`~chartcleaner.review_state.release_decision` for a result."""
+    from .review_state import release_decision
+    return release_decision(result, output_text=output_text, acknowledgement=acknowledgement,
+                            source=source)
+
+
+def _gate(payload: dict, result: RunResult, out: str, *, include_raw: bool) -> dict:
+    """Attach the release decision; a blocked result ships no text.
+
+    The raw text is available only on explicit request (``include_raw``) and
+    is marked raw/unverified — a local review aid, never an ordinary output.
+    """
+    decision = release(result, out)
+    payload["release"] = decision.to_dict()
+    if decision.status == "blocked":
+        payload["text"] = ""
+        payload["blocked"] = True
+        # Even the fact report's context lines are chart text: keep counts only.
+        if result.fact_check is not None:
+            payload["fact_check"] = result.fact_check.summary()
+        if include_raw:
+            payload["raw"] = {"text": out, "raw": True, "unverified": True,
+                              "reasons": list(decision.reasons)}
+    return payload
 
 
 def clean(
@@ -272,8 +301,14 @@ def clean(
     record: bool = True,
     config: dict | None = None,
     custom_dir: str | Path | None = None,
+    include_raw: bool = False,
 ) -> dict:
-    """Full clean, exactly as the Clean page runs it."""
+    """Full clean, exactly as the Clean page runs it.
+
+    The payload carries ``release`` (see :func:`release`); when release is
+    blocked the ``text`` is empty and the raw, unverified text is included
+    only with ``include_raw`` — for local review, never for ordinary callers.
+    """
     cfg = _config(config, preset)
     _check_format(fmt)  # before the (slow) run, not after it
     result = Pipeline(cfg, custom_dir=custom_dir or store.CUSTOM_RULES_DIR).run(text, wrap=wrap)
@@ -281,7 +316,7 @@ def clean(
     report = _trends_report(result.text, cfg) if trends else None
     out, delta_res = _compose(result.text, fmt, delta, report.to_text() if report else "", False)
     _record(result, source, record)
-    payload = _payload(result, out)
+    payload = _gate(_payload(result, out), result, out, include_raw=include_raw)
     if trends:
         payload["trends"] = report.to_dict() if report else None
     if delta_res is not None:

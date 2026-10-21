@@ -62,6 +62,13 @@ def _digest(value: Any) -> str:
     return _sha(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str))
 
 
+def validator_version(check_versions: dict[str, int] | None = None) -> str:
+    """``"<validator>:<check>=<version>,…"`` — part of every acknowledgement key."""
+    versions = CHECK_VERSIONS if check_versions is None else check_versions
+    parts = ",".join(f"{k}={v}" for k, v in sorted(versions.items()))
+    return f"{VALIDATOR_VERSION}:{parts}"
+
+
 # --- records -----------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -211,8 +218,7 @@ class ValidationContext:
 
     @property
     def validator_version(self) -> str:
-        parts = ",".join(f"{k}={v}" for k, v in sorted(self.check_versions.items()))
-        return f"{VALIDATOR_VERSION}:{parts}"
+        return validator_version(self.check_versions)
 
     # -- section / note-type context (cached per ledger epoch) -------------------
 
@@ -285,14 +291,19 @@ def _issue(code: str, severity: str, proposal: EditProposal, message: str) -> Va
                            proposal.source_spans, message)
 
 
+_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
 def _check_content_preserved(proposal: EditProposal, contract: RuleContract,
                              context: ValidationContext, lines: _Lines) -> _Check:
+    """Formatting may move whitespace, change case and swap bullet/heading
+    marks; it may not change a letter or a digit."""
     out = _Check()
-    if lines.before.split() == lines.after.split():
+    if _ALNUM.sub("", lines.before.lower()) == _ALNUM.sub("", lines.after.lower()):
         out.reasons.append("content_preserved")
     else:
         out.issues.append(_issue("content_changed", "error", proposal,
-                                 "A formatting rule changed more than whitespace"))
+                                 "A formatting rule changed letters or digits, not just layout"))
     return out
 
 

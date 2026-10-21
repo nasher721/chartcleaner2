@@ -120,11 +120,17 @@ class ClipboardWatcher:
                                len(text))
         else:
             out = service.clean(text, config=cfg, wrap=False, source="clipboard")
-            self._original = text
-            self._last_output = _digest(out["text"])
-            self.copy(out["text"])
-            event = WatchEvent(time.time(), f"Chart cleaned on the clipboard ({out['summary']}). "
-                               "Undo in Chart Cleaner → Settings.", len(text), len(out["text"]))
+            if out.get("blocked"):
+                # Release withheld: the clipboard keeps the original; nothing is written.
+                event = WatchEvent(time.time(), "Chart not cleaned: release blocked — a required "
+                                   "redaction could not be verified. Open Chart Cleaner to review.",
+                                   len(text))
+            else:
+                self._original = text
+                self._last_output = _digest(out["text"])
+                self.copy(out["text"])
+                event = WatchEvent(time.time(), f"Chart cleaned on the clipboard ({out['summary']}). "
+                                   "Undo in Chart Cleaner → Settings.", len(text), len(out["text"]))
         self.events = (self.events + [event])[-20:]
         self.notify("Chart Cleaner", event.message)
         return event

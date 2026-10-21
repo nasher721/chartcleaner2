@@ -145,6 +145,8 @@ _CHECK_OVERRIDES: dict[str, tuple[str, ...]] = {
     "hospital_day": ("facts", "meaning"),
     "wrapper": ("facts",),
     "note_order": ("facts", "meaning"),
+    # µ → u and ° removal change letters on purpose; judge the clinical content instead
+    "unicode_normalize": ("facts", "meaning", "statements"),
 }
 
 
