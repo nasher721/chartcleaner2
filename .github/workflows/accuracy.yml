@@ -1,0 +1,85 @@
+name: Cleaning accuracy
+# Scheduled/manual only: the held-out split and large performance runs are
+# checkpoint measurements, not per-PR assertions (the deterministic accuracy
+# tests run in tests.yml with the rest of pytest).
+on:
+  schedule:
+    - cron: "23 4 * * 1" # Mondays, after the weekend's work
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: "Benchmark sizes (chars)"
+        default: "100000 1000000 5000000"
+permissions:
+  contents: read
+concurrency:
+  group: accuracy
+  cancel-in-progress: true
+jobs:
+  evaluate:
+    name: accuracy (${{ matrix.split }}, ${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        split: [development, held-out]
+        mode: [off, shadow, enforce]
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Evaluate
+        run: >
+          python scripts/evaluate_cleaning_accuracy.py
+          --split ${{ matrix.split }} --mode ${{ matrix.mode }}
+          --report artifacts/${{ matrix.split }}-${{ matrix.mode }}.json
+      - name: Release gate (recorded; labels are provisional)
+        if: matrix.mode == 'enforce'
+        run: >
+          python scripts/check_accuracy_release.py
+          --report artifacts/${{ matrix.split }}-enforce.json
+          --baseline tests/accuracy/baseline-${{ matrix.split }}.json
+          --out artifacts/gate-${{ matrix.split }}.json
+        continue-on-error: true
+      - name: No new critical escapes (hard gate)
+        if: matrix.mode == 'enforce'
+        run: >
+          python scripts/check_accuracy_release.py
+          --report artifacts/${{ matrix.split }}-enforce.json
+          --baseline tests/accuracy/baseline-${{ matrix.split }}.json
+          --require no_new_critical_escapes --out artifacts/gate-hard-${{ matrix.split }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-${{ matrix.split }}-${{ matrix.mode }}
+          path: artifacts/
+
+  performance:
+    name: validation benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Benchmark (cold/warm, all modes, synthetic charts)
+        run: >
+          python scripts/benchmark_validation.py
+          --sizes ${{ inputs.sizes || '100000 1000000 5000000' }}
+          --report artifacts/benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-benchmark
+          path: artifacts/

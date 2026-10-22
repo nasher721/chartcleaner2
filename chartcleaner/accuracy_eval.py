@@ -44,12 +44,22 @@ from typing import Any, Callable, NamedTuple, Sequence
 
 __all__ = [
     "AccuracyCase", "AccuracyReport", "CaseOutcome", "CATEGORIES", "DISPOSITIONS",
-    "Decision", "EVALUATOR_VERSION", "LABEL_STATUSES", "MODES", "default_decider",
-    "evaluate_accuracy", "load_cases", "load_splits", "minimal_config", "normalize",
-    "present",
+    "Decision", "EVALUATOR_VERSION", "GATE_VERSION", "LABEL_STATUSES", "MODES", "THRESHOLDS",
+    "check_release", "default_decider", "evaluate_accuracy", "load_cases", "load_splits",
+    "minimal_config", "normalize", "present",
 ]
 
 EVALUATOR_VERSION = 1
+GATE_VERSION = 1
+
+# The design's release targets. Changes need a recorded rationale and review;
+# any override passed to check_release is echoed in the result, never silent.
+THRESHOLDS = {
+    "no_new_critical_escapes": 0,
+    "escape_reduction": 0.5,          # vs the recorded baseline, when it was nonzero
+    "valid_edit_rejection": 0.05,
+    "clutter_removal_ratio": 0.95,    # of the baseline's authorized clutter removal
+}
 
 CATEGORIES = (
     "clutter_removal",
@@ -463,6 +473,65 @@ def _evaluate_case(case: AccuracyCase, cfg: dict, mode: str, decide: Decider) ->
         output_digest=hashlib.sha256(output.encode("utf-8", "surrogatepass")).hexdigest()[:16],
         error=error, withheld=withheld,
     )
+
+
+def check_release(report: AccuracyReport, baseline: AccuracyReport, *,
+                  labels: dict | None = None,
+                  thresholds: dict | None = None) -> dict:
+    """The machine-readable release gate; ``ok`` is False when any check fails.
+
+    Compares a candidate ``report`` against the frozen ``baseline`` of the same
+    split: no new critical escapes (and none at all when the baseline had
+    zero), at least the design's escape reduction, valid-edit rejection and
+    clutter-removal ratios within target — and labels that a clinician has
+    actually reviewed. Unreviewed labels fail certification no matter how good
+    the numbers are. Counters and digests only; no chart text.
+    """
+    used = dict(THRESHOLDS)
+    if thresholds:
+        used.update(thresholds)
+    t, b = report.totals, baseline.totals
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, observed, threshold) -> None:
+        checks.append({"name": name, "ok": bool(ok), "observed": observed, "threshold": threshold})
+
+    add("no_new_critical_escapes", t["escapes"] - b["escapes"] <= used["no_new_critical_escapes"],
+        t["escapes"] - b["escapes"], used["no_new_critical_escapes"])
+    if b["escapes"] > 0:
+        reduction = 1 - (t["escapes"] / b["escapes"]) if b["escapes"] else 1.0
+        add("escape_reduction", reduction >= used["escape_reduction"],
+            round(reduction, 4), used["escape_reduction"])
+    else:
+        add("no_escapes", t["escapes"] == 0, t["escapes"], 0)
+    vr = t["valid_rejection_rate"]
+    add("valid_edit_rejection", vr is None or vr <= used["valid_edit_rejection"],
+        vr, used["valid_edit_rejection"])
+    reviewed = bool(labels) and labels.get("status") == "reviewed"
+    add("labels_clinician_reviewed", reviewed, (labels or {}).get("status", "unprovided"), "reviewed")
+    # Clutter removal is judged on the *valid* cases only: a correctly rejected
+    # harmful edit keeps the clutter it would have removed, by design.
+    def _valid_clutter(outcomes) -> tuple[int, int]:
+        auth = sum(o.authorized for o in outcomes if not o.harmful)
+        rem = sum(o.removed for o in outcomes if not o.harmful)
+        return auth, rem
+    v_auth, v_rem = _valid_clutter(report.outcomes)
+    b_auth, b_rem = _valid_clutter(baseline.outcomes)
+    if v_auth and b_auth:
+        ratio = (v_rem / v_auth) / (b_rem / b_auth)
+    elif v_auth == b_auth == 0:
+        ratio = 1.0
+    else:
+        ratio = 0.0
+    return {
+        "ok": all(c["ok"] for c in checks), "gate_version": GATE_VERSION,
+        "checks": checks, "thresholds_used": used,
+        "split": report.split, "mode": report.mode,
+        "fixture_digest": report.fixture_digest, "config_digest": report.config_digest,
+        "baseline_fixture_digest": baseline.fixture_digest,
+        "totals": report.totals, "baseline_totals": baseline.totals,
+        "labels": labels or {"status": "provisional"},
+    }
 
 
 def evaluate_accuracy(cases: Sequence[AccuracyCase], cfg: dict, *, mode: str = "off",

@@ -417,6 +417,8 @@ def _check_meaning(proposal: EditProposal, contract: RuleContract, context: Vali
         return out
     if lines.before.split() == lines.after.split():
         return out  # whitespace-only: no word moved, no meaning changed
+    if _only_duplicate_segments_folded(lines):
+        return out  # "No fever. No fever." → "No fever." keeps every distinct sentence
     for change in fc.meaning_changes(lines.before, lines.after, proposal.stage_id):
         code = "negation_lost" if change.kind == "negation" else "laterality_changed"
         severity = "critical"
@@ -619,6 +621,23 @@ def _do_not_use_entries() -> tuple[tuple[re.Pattern, re.Pattern | None, str], ..
     return tuple(out)
 
 
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
+
+
+def _only_duplicate_segments_folded(lines: _Lines) -> bool:
+    """True when the after-text keeps every distinct sentence of the before-text."""
+    def _norm(segment: str) -> str:
+        text = _LABEL_PREFIX.sub("", segment.strip(), count=1)
+        return text.strip().casefold()
+
+    seen = [_norm(s) for s in _SENTENCE_SPLIT.split(lines.before) if s.strip()]
+    kept = {_norm(s) for s in _SENTENCE_SPLIT.split(lines.after) if s.strip()}
+    return bool(kept) and all(s in kept for s in seen)
+
+
+_LABEL_PREFIX = re.compile(r"^\s*[A-Za-z][A-Za-z /&()-]{0,30}:\s*")
+
+
 def _check_do_not_use(proposal: EditProposal, contract: RuleContract, context: ValidationContext,
                       lines: _Lines) -> _Check:
     """An edit must not write a Do Not Use abbreviation for a term the line spelled out.
@@ -636,7 +655,66 @@ def _check_do_not_use(proposal: EditProposal, contract: RuleContract, context: V
             continue
         out.issues.append(_issue("do_not_use_abbreviation", "error", proposal,
                                  f"A Do Not Use abbreviation was written where the chart said '{use or 'the full term'}'"))
+    out.issues.extend(_unendorsed_abbreviations(proposal, lines))
     return out
+
+
+@lru_cache(maxsize=1)
+def _abbreviation_meanings() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Every dictionary abbreviation with its distinct meanings."""
+    try:
+        from .abbreviations import _source_rows, display_term
+        meanings: dict[str, list[str]] = {}
+        for row in _source_rows():
+            abbr = (row.get("Abbreviation") or "").strip()
+            term = (row.get("Expanded version") or "").strip()
+            if not abbr or not term or "not expanded in source" in term.casefold():
+                continue
+            forms = meanings.setdefault(abbr, [])
+            found = display_term(term).lower()
+            if found not in forms:
+                forms.append(found)
+        return tuple((a, tuple(fs)) for a, fs in sorted(meanings.items()) if fs)
+    except Exception:
+        return ()
+
+
+def _unendorsed_abbreviations(proposal: EditProposal, lines: _Lines) -> list[ValidationIssue]:
+    """Flag a newly written abbreviation the tool would not have chosen.
+
+    ``Mental status`` → ``MS`` passes (the abbreviation matcher endorses it for
+    that meaning); ``Physical exam`` → ``PE`` and ``Chest pain`` → ``CP`` do
+    not — the dictionary reads them as pulmonary embolism and cerebral palsy,
+    so the shorthand the edit invented points at the wrong thing.
+    """
+    from .abbreviations import lookup
+    from .clinical_statements import _expand
+    issues: list[ValidationIssue] = []
+    table = dict(_abbreviation_meanings())
+    expanded_before = _expand(lines.before).casefold()
+    before_tokens = set(re.findall(r"[A-Za-z0-9]+", lines.before))
+    for m in re.finditer(r"(?<![A-Za-z0-9])[A-Za-z]{2,6}(?![A-Za-z0-9])", lines.after):
+        abbr = m.group(0)
+        if abbr not in table or abbr in before_tokens:
+            continue  # not a known abbreviation, or it was already there
+        forms = table[abbr]
+
+        def _said(meaning: str) -> bool:
+            # The term itself, or its words' stems in a variant spelling
+            # ("CT angiogram" for "computed tomography angiography").
+            if meaning in lines.before.casefold():
+                return True
+            stems = [w[:5] for w in meaning.split() if len(w) > 4]
+            return bool(stems) and all(s in expanded_before for s in stems)
+
+        matched = next((f for f in forms if _said(f)), None)
+        if matched is not None and lookup(matched) == abbr:
+            continue  # exactly what the matcher writes for that term
+        issues.append(_issue("ambiguous_abbreviation", "error", proposal,
+                             f"'{abbr}' was written for text the dictionary does not read that way"
+                             if matched is None else
+                             f"'{abbr}' was written where the matcher keeps the term spelled out"))
+    return issues
 
 
 CheckFn = Callable[[EditProposal, RuleContract, ValidationContext, _Lines], _Check]

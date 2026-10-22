@@ -319,6 +319,21 @@ The Clean page upload, batch folders, and `-f` all accept `.txt`, `.md`, `.docx`
 
 ---
 
+## Cleaning validation (v2.4)
+
+Every cleaning edit is now checked against the chart's own clinical statements
+before it ships. **Shadow** (the default) checks and records without changing
+a single character; **enforce** (Settings → Cleaning validation) also keeps a
+passage a rule would harm — a swapped dose, a dropped negation, a held med
+read as active — and withholds release entirely when a required redaction
+cannot be verified, on every output path (copy, export, clipboard watcher,
+CLI, API, MCP, batch). The Review tab shows coverage in words, edits kept as
+original with links to the source, and blocked findings grouped by rule. The
+measurements and the staged rollout plan live in
+[docs/validation/cleaning-accuracy-release.md](docs/validation/cleaning-accuracy-release.md).
+
+---
+
 ## The post-run review (audit)
 
 Cleaning rules remove what they match; the review tells you what *survived*. After each

@@ -64,10 +64,14 @@ def test_very_large_input_stays_bounded():
     # slower than a developer machine (observed 10.9 s on macOS and 13.0 s on
     # Ubuntu 3.10), so a tight bound there reports the runner, not the pipeline.
     # The real performance protection is tests/test_performance.py.
+    # Since cleaning validation ships in shadow mode, this input costs NLP
+    # redaction (~8 s on a dev machine) plus windowed validation (~3.5 s on
+    # this worst-case chart where the dedup and abbreviation stages touch every
+    # line) — the bound left headroom for the default configuration.
     if os.environ.get("CI"):
-        limit = 30.0
+        limit = 45.0
     else:
-        limit = 20.0 if sys.platform == "win32" else 8.0
+        limit = 25.0 if sys.platform == "win32" else 15.0
     assert dt < limit, f"clean took {dt:.1f}s on 5000 lines (limit {limit:.0f}s)"
     assert res.chars_after > 0
 

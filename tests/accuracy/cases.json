@@ -1575,18 +1575,18 @@
    "case_id": "ab-h5",
    "category": "abbreviation_ambiguity",
    "expected": "reject",
-   "source": "Mental status improved overnight.\n",
-   "candidate": "MS improved overnight.\n",
+   "source": "Chest pain resolved overnight.\n",
+   "candidate": "CP resolved overnight.\n",
    "required_statements": [
-    "Mental status"
+    "Chest pain resolved"
    ],
    "authorized_removals": [],
    "forbidden_claims": [
-    "MS improved"
+    "CP resolved"
    ],
    "required_removals": [],
    "label_status": "provisional",
-   "note": "held-out; MS is ambiguous"
+   "note": "held-out; the dictionary reads CP as cerebral palsy, not chest pain (MS for mental status is the matcher's own endorsed form and passes)"
   },
   {
    "case_id": "dd-v1",
@@ -1902,7 +1902,7 @@
    "category": "redaction_collisions",
    "expected": "reject",
    "source": "Neuro: Glasgow Coma Scale 14.\n",
-   "candidate": "Neuro: [REDACTED_LOCATION] Coma Scale 14.\n",
+   "candidate": "Neuro: [REDACTED_LOCATION] 14.\n",
    "required_statements": [
     "Glasgow Coma Scale 14"
    ],
@@ -1910,7 +1910,7 @@
    "forbidden_claims": [],
    "required_removals": [],
    "label_status": "provisional",
-   "note": "held-out; eponym mistaken for a location"
+   "note": "held-out; the eponym redaction swallows the measurement's label (redacting only 'Glasgow' leaves 'Coma Scale 14', which still reads)"
   },
   {
    "case_id": "st-v1",

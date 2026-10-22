@@ -295,7 +295,7 @@
   "unavailable": 24
  },
  "evaluator_version": 1,
- "fixture_digest": "9ee9e5a0c2a3ed9af7b2f43fc54794d5f9c8b052ad4313d6f6e69c794a4c336b",
+ "fixture_digest": "e968505add391f6f2cd68b8b5f959c5fc7fe2788d6d8e674ef79a9bbefd225fd",
  "label_status": {
   "provisional": 24
  },
@@ -707,7 +707,7 @@
    "harmful": true,
    "label_inconsistent": false,
    "label_status": "provisional",
-   "output_digest": "62cd6410c544a741",
+   "output_digest": "d3a719ddbe89f1aa",
    "removed": 0,
    "required": 1,
    "required_removals": 0,
@@ -799,7 +799,7 @@
    "harmful": true,
    "label_inconsistent": false,
    "label_status": "provisional",
-   "output_digest": "99c27690fb65bb29",
+   "output_digest": "630d1b6b7b02974a",
    "removed": 0,
    "required": 1,
    "required_removals": 0,
@@ -854,8 +854,8 @@
    "withheld": false
   }
  ],
- "peak_memory_bytes": 3131308,
- "runtime_ms": 245.8,
+ "peak_memory_bytes": 3174945,
+ "runtime_ms": 252.5,
  "split": "held-out",
  "totals": {
   "authorized": 3,

@@ -95,7 +95,7 @@ _FALLBACK_EXPANSIONS = {
     "b/l": "bilateral", "bilat": "bilateral", "c/o": "complains of", "nad": "no acute distress",
     "sob": "shortness of breath", "cp": "chest pain", "pod": "postoperative day", "hd": "hospital day",
     "prn": "as needed", "fh": "family history", "nkda": "no known drug allergies", "y/o": "year-old",
-    "yo": "year-old", "tmrw": "tomorrow", "reg": "regimen",
+    "yo": "year-old", "tmrw": "tomorrow", "reg": "regimen", "ct": "computed tomography",
 }
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z/'-]*")
 
@@ -349,7 +349,8 @@ def _label_canon() -> dict[str, str]:
     out.update({"blood pressure": "bp", "bp": "bp", "temperature": "t", "temp": "t", "t": "t",
                 "heart rate": "hr", "pulse": "hr", "hr": "hr", "respiratory rate": "rr", "rr": "rr",
                 "oxygen saturation": "spo2", "sat": "spo2", "sats": "spo2", "spo2": "spo2", "o2 sat": "spo2",
-                "pupil": "pupil", "pupils": "pupil", "date": None})
+                "pupil": "pupil", "pupils": "pupil", "date": None,
+                "glasgow coma scale": "gcs", "coma scale": "gcs"})
     # A point-of-care glucose is the same measurement as the lab glucose.
     out["poc glucose"] = out.get("glucose", "glucose")
     out["glu"] = out.get("glucose", "glucose")
@@ -399,18 +400,26 @@ def _own_label(before: str) -> str | None:
     """Labels fact_check does not know, plus "Hunt-Hess grade 3" → hunt-hess."""
     words = re.split(r"[^A-Za-z0-9-]+", before.strip().rstrip(":=#"))
     words = [w for w in words if w]
-    while words and words[-1].lower() in _QUALIFIERS:
-        words.pop()
     if not words:
         return None
-    for n in (2, 1):
+    found = _label_from_words(words)
+    if found is not None:
+        return found
+    # "Hunt-Hess grade 3" → hunt-hess: drop trailing qualifier words and retry.
+    while words and words[-1].lower() in _QUALIFIERS:
+        words.pop()
+    return _label_from_words(words) if words else None
+
+
+def _label_from_words(words: list[str]) -> str | None:
+    canon = _label_canon()
+    for n in (3, 2, 1):
         if len(words) >= n:
             cand = " ".join(words[-n:]).lower()
             if cand in _OWN_LABELS:
                 return _OWN_LABELS[cand]
-    last = words[-1].lower()
     canon = _label_canon()
-    for n in (2, 1):
+    for n in (3, 2, 1):
         if len(words) >= n:
             cand = " ".join(words[-n:])
             if cand.lower() in fc._LABELS:
@@ -469,42 +478,51 @@ def _measurements(segment: str, span: SourceSpan, line_prefix: str, consumed: li
 
 
 
-def _cells(line: str) -> list[str]:
+def _cells(line: str, sep: str = "|") -> list[str]:
     inner = line.strip()
-    if inner.startswith("|"):
+    if sep == "|" and inner.startswith("|"):
         inner = inner[1:]
-    if inner.endswith("|"):
+    if sep == "|" and inner.endswith("|"):
         inner = inner[:-1]
-    return [c.strip() for c in inner.split("|")]
+    return [c.strip() for c in inner.split(sep)]
 
 
 def _table_statements(lines: list[tuple[int, str]], note_id: str, section_at) -> list[ClinicalStatement]:
     """Measurements from a header row of labels and rows of values.
 
-    ``lines`` are ``(offset, text)`` for consecutive pipe-table lines; a date
-    cell in a row dates every value on that row.
+    ``lines`` are ``(offset, text)`` for consecutive table lines (pipe or
+    comma delimited); a date cell in a row dates every value on that row.
     """
     if len(lines) < 2:
         return []
-    header = [canonical_subject(c) for c in _cells(lines[0][1])]
-    canon = _label_canon()
-    labels = [canon.get(h) for h in header]
-    if not any(labels):
-        return []
-    out: list[ClinicalStatement] = []
-    for offset, text in lines[1:]:
-        cells = _cells(text)
-        if set("".join(cells)) <= set("-: "):
-            continue  # markdown separator row
-        date = next((normalize_date(c) for c in cells if normalize_date(c)), None)
-        span = SourceSpan(offset, offset + len(text))
-        for label, cell in zip(labels, cells):
-            if not label or not re.fullmatch(r"[<>]?\d+(?:\.\d+)?(?:/\d+)?", cell):
-                continue
-            out.append(ClinicalStatement("measurement", label, fc._norm_number(cell) if "/" not in cell else cell,
-                                         None, "positive", "stated", date, "patient", note_id=note_id,
-                                         section=section_at(offset), source_spans=(span,)))
-    return out
+    for sep in ("|", ","):
+        header = [canonical_subject(c) for c in _cells(lines[0][1], sep)]
+        canon = _label_canon()
+        labels = [canon.get(h) for h in header]
+        if not any(labels):
+            continue
+        rows = [_cells(text, sep) for _off, text in lines[1:]]
+        if any(len(r) != len(header) for r in rows):
+            continue
+        if not any(re.fullmatch(r"[<>]?\d+(?:\.\d+)?(?:/\d+)?", cell) for r in rows for cell in r):
+            continue
+        out: list[ClinicalStatement] = []
+        for (offset, text), cells in zip(lines[1:], rows):
+            if set("".join(cells)) <= set("-: "):
+                continue  # markdown separator row
+            date = next((normalize_date(c) for c in cells if normalize_date(c)), None)
+            span = SourceSpan(offset, offset + len(text))
+            for label, cell in zip(labels, cells):
+                if not label or not re.fullmatch(r"[<>]?\d+(?:\.\d+)?(?:/\d+)?", cell):
+                    continue
+                out.append(ClinicalStatement("measurement", label,
+                                             cell if "/" in cell else fc._norm_number(cell),
+                                             None, "positive", "stated", date, "patient",
+                                             note_id=note_id, section=section_at(offset),
+                                             source_spans=(span,)))
+        if out:
+            return out
+    return []
 
 
 # --- findings -----------------------------------------------------------------------
@@ -714,22 +732,31 @@ def extract_statements(text: str, *, source_offset: int = 0, note_id: str = "",
         return StatementExtraction((), ())
     text = _mask_tokens(text)  # "[REDACTED_ID]" must not read as "infectious diseases"
     section_at = _section_lookup(text) if not section else (lambda _pos: section)
-    # Group consecutive pipe-delimited lines: two or more form a table (header
-    # row of labels, rows of values); a lone one is ordinary text whose pipes
-    # just separate segments.
+    # Group consecutive table-like lines: two or more pipe rows form a table,
+    # and so do comma rows with a label header (the de-tabularizer's output);
+    # a lone pipe line is ordinary text whose pipes just separate segments.
+    def _table_line(line: str) -> str | None:
+        if line.count("|") >= 2:
+            return "pipe"
+        if line.count(",") >= 2 and "," in line:
+            cells = [c.strip() for c in line.split(",")]
+            if len(cells) >= 3 and sum(1 for c in cells if c) == len(cells):
+                return "comma"
+        return None
+
     blocks: list[tuple[str, list[tuple[int, str]]]] = []
     pos = 0
     for line in text.split("\n"):
-        if line.count("|") >= 2:
-            if blocks and blocks[-1][0] == "table":
-                blocks[-1][1].append((pos, line))
-            else:
-                blocks.append(("table", [(pos, line)]))
+        kind = _table_line(line)
+        if kind is not None and blocks and blocks[-1][0] == kind:
+            blocks[-1][1].append((pos, line))
+        elif kind is not None:
+            blocks.append((kind, [(pos, line)]))
         else:
             blocks.append(("text", [(pos, line)]))
         pos += len(line) + 1
     for kind, items in blocks:
-        if kind == "table" and len(items) >= 2:
+        if kind in ("pipe", "comma") and len(items) >= 2:
             statements.extend(_table_statements([(source_offset + p, ln) for p, ln in items], note_id,
                                                 lambda p: section_at(p - source_offset)))
             continue

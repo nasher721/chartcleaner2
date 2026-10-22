@@ -150,9 +150,9 @@ def test_validation_context_is_available_to_custom_rules():
     captured = {}
     original = pipe._execute_stages
 
-    def spy(text, ctx, tracker=None, cache=None):
+    def spy(text, ctx, tracker=None, cache=None, session=None):
         captured["ctx"] = ctx
-        return original(text, ctx, tracker, cache)
+        return original(text, ctx, tracker, cache, session)
 
     pipe._execute_stages = spy
     pipe.run(SAMPLE)
