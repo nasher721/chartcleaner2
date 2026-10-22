@@ -139,12 +139,15 @@ def test_can_be_disabled(cfg):
     assert clean_text("K 3.1", cfg, mode="abbreviations").fact_check is None
 
 
-def test_very_large_input_skips_with_warning(cfg, monkeypatch):
+def test_large_input_is_checked_not_skipped(cfg, monkeypatch):
+    """No blanket size skip any more: validation is windowed, the facts check
+    is line-memoized, and any limit shows up as reported partial coverage."""
     from chartcleaner import fact_check
     monkeypatch.setattr(fact_check, "MAX_CHARS", 10)
     result = clean_text("Na 141 and K 3.9 today", cfg)
-    assert result.fact_check is None
-    assert any("Clinical-facts check skipped" in w for w in result.warnings)
+    assert result.fact_check is not None
+    assert not any("skipped" in w.lower() for w in result.warnings)
+    assert result.validation.coverage.status != "unavailable"
 
 
 def test_validator_knows_the_group(cfg):

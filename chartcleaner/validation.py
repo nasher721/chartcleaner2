@@ -183,6 +183,51 @@ class ValidationReport:
                 "checked_statements": self.coverage.checked_statements}
 
 
+class StatementSet:
+    """Statements of the evolving accepted text, indexed once and patched per edit.
+
+    The source is extracted once, windowed (:class:`~chartcleaner.validation_windows.WindowedIndex`),
+    each statement owned exactly once with source spans. An accepted proposal
+    drops the statements its source range covers and adds the statements of its
+    replacement text, anchored at that range — so validating a changed region
+    costs the region, not the chart.
+    """
+
+    def __init__(self, source: str, *, target_chars: int = 32_000):
+        from .validation_windows import WindowedIndex
+        self.source = source
+        self._windowed = WindowedIndex(source, target_chars=target_chars)
+        self._windowed.ensure_loaded()
+        self.statements: list = self._windowed.statements()
+        self.version = 0
+
+    def apply(self, proposal: EditProposal) -> None:
+        """Fold one accepted proposal into the set (source-coordinate anchored)."""
+        start, end = proposal.enclosing.start, proposal.enclosing.end
+        kept = [s for s in self.statements
+                if not any(sp.start < end and sp.end > start for sp in s.source_spans)]
+        from .clinical_statements import extract_statements
+        added = extract_statements(proposal.after, source_offset=start,
+                                   note_id=proposal.proposal_id).statements
+        self.statements = kept + list(added)
+        self.version += 1
+
+    def in_region(self, start: int, end: int) -> list:
+        return [s for s in self.statements
+                if any(sp.start < end and sp.end > start for sp in s.source_spans)]
+
+    def outside(self, start: int, end: int) -> list:
+        return [s for s in self.statements
+                if not any(sp.start < end and sp.end > start for sp in s.source_spans)]
+
+    def extraction(self):
+        from .clinical_statements import StatementExtraction
+        return StatementExtraction(tuple(self.statements), self._windowed.unresolved())
+
+    def coverage(self):
+        return self._windowed.coverage()
+
+
 @dataclass
 class ValidationContext:
     """Everything a check may read: the immutable source, digests, the run's ledger."""
@@ -193,6 +238,9 @@ class ValidationContext:
     ledger: EditLedger
     mode: str = "shadow"
     _statement_index: Any = field(default=None, init=False, repr=False, compare=False)
+    _statement_set: Any = field(default=None, init=False, repr=False, compare=False)
+    _set_version: int = field(default=-1, init=False, repr=False, compare=False)
+    _pending_accepted: list = field(default_factory=list, init=False, repr=False, compare=False)
     check_versions: dict[str, int] = field(default_factory=lambda: dict(CHECK_VERSIONS))
     stage_id: str = ""
     _sections_cache: Any = field(default=None, init=False, repr=False, compare=False)
@@ -203,11 +251,29 @@ class ValidationContext:
             raise ValueError(f"mode must be one of {MODES}")
 
     @property
+    def statement_set(self) -> "StatementSet":
+        """The accepted text's statements: extracted once, patched per edit."""
+        if self._statement_set is None:
+            self._statement_set = StatementSet(self.source)
+        pending, self._pending_accepted = self._pending_accepted, []
+        for p in pending:
+            self._statement_set.apply(p)
+        if pending:
+            self._statement_index = None
+        return self._statement_set
+
+    def sync_statements(self, accepted: list) -> None:
+        """Queue proposals accepted since the last sync; applied on next use."""
+        self._pending_accepted.extend(accepted)
+
+    @property
     def statement_index(self):
-        """The source's clinical statements, built once on first use."""
-        if self._statement_index is None:
+        """The accepted text's statements, indexed for whole-document questions."""
+        if self._statement_index is None or self._set_version != self.statement_set.version:
             from .clinical_statements import StatementIndex
-            self._statement_index = StatementIndex(self.source)
+            self._statement_index = StatementIndex(
+                self.source, extraction=self.statement_set.extraction())
+            self._set_version = self.statement_set.version
         return self._statement_index
 
     @classmethod
@@ -460,23 +526,53 @@ def _check_statements(proposal: EditProposal, contract: RuleContract,
     if lines.before.split() == lines.after.split():
         out.resolved = True
         return out
-    from .clinical_statements import extract_statements
+    from .clinical_statements import StatementExtraction, extract_statements
     from .statement_compare import compare_statements
+    from .validation_windows import CONTEXT_CHARS
     coarse = proposal.mapping == "coarse" and proposal.epoch == context.ledger.epoch
+    survivors = None
     if coarse:
-        # One proposal covers the whole change (opaque stage, whole candidate):
-        # compare the whole texts, so table headers and duplicates elsewhere
-        # count, and judge "touched" by the changed region.
+        # One proposal covers the whole change (opaque stage, whole candidate).
+        # Before: the statements the changed region owns, straight from the
+        # incrementally maintained set (no re-extraction). Survivors: statements
+        # elsewhere in the accepted text, so a folded duplicate is not a loss.
+        # After: the changed lines parsed with a line-aligned context head, so
+        # a table header or wrapped sentence above the change still labels them.
         cur = context.ledger.current
-        before = context.statement_index.extraction if cur == context.source else extract_statements(cur)
-        after = extract_statements(cur[:proposal.start] + proposal.after + cur[proposal.end:])
-        frag = (proposal.start, max(proposal.end, proposal.start + 1))
+        ls = cur.rfind("\n", 0, proposal.start) + 1
+        # The affected lines, mapped to the source coordinates the statement
+        # set uses — before and after must cover the same ground.
+        le = cur.find("\n", proposal.end - 1 if proposal.end > proposal.start and
+                      cur[proposal.end - 1:proposal.end] == "\n" else proposal.end)
+        le = len(cur) if le == -1 else le
+        line_spans, _quality = context.ledger.spans_for(ls, le)
+        line_spans = list(line_spans) or [context.ledger.spans_for(ls, max(le, ls + 1))[0][0]]
+
+        def _overlaps(statement) -> bool:
+            return any(a.start < s.end and s.start < a.end
+                       for s in statement.source_spans for a in line_spans)
+
+        before = StatementExtraction(
+            tuple(s for s in context.statement_set.statements if _overlaps(s)), ())
+        head_start = (cur.rfind("\n", 0, max(0, ls - CONTEXT_CHARS)) + 1) if ls > 0 else 0
+        head = cur[head_start:ls]
+        after_all = extract_statements(head + cur[ls:proposal.start] + proposal.after + cur[proposal.end:le])
+        own = len(head)
+        after = StatementExtraction(
+            tuple(s for s in after_all.statements if any(sp.end > own for sp in s.source_spans)),
+            tuple(sp for sp in after_all.unresolved_spans if sp.end > own))
+        before_unresolved = [sp for sp in context.statement_set._windowed.unresolved()
+                             if any(sp.start < a.end and a.start < sp.end for a in line_spans)]
+        before = StatementExtraction(before.statements, tuple(before_unresolved))
+        survivors = StatementExtraction(
+            tuple(s for s in context.statement_set.statements if not _overlaps(s)), ())
+        touched = list(before.statements)
     else:
         before = extract_statements(lines.before)
         after = extract_statements(lines.after)
         frag = (lines.fragment_start, lines.fragment_start + max(len(lines.fragment_before), 1))
-    touched = [s for s in before.statements
-               if any(sp.start < frag[1] and sp.end > frag[0] for sp in s.source_spans)]
+        touched = [s for s in before.statements
+                   if any(sp.start < frag[1] and sp.end > frag[0] for sp in s.source_spans)]
     out.recognized = len(touched)
     if not before.statements and not after.statements:
         if before.unresolved_spans:
@@ -485,7 +581,8 @@ def _check_statements(proposal: EditProposal, contract: RuleContract,
         return out
     report = compare_statements(before, after, operation=contract.operation,
                                 allowed_losses=contract.allowed_losses, stage_id=proposal.stage_id,
-                                rule_key=proposal.rule_key, reference=context.statement_index)
+                                rule_key=proposal.rule_key, reference=context.statement_index,
+                                survivors=survivors)
     for issue in report.issues:
         if issue.code == "claim_unverified":
             continue
@@ -494,13 +591,7 @@ def _check_statements(proposal: EditProposal, contract: RuleContract,
     # Resolved only when the edit touched something the extractor recognized;
     # a value on a neighbouring line does not vouch for the text removed.
     out.resolved = bool(touched)
-    if coarse:
-        # Whole-text unresolved spans only matter where the edit happened.
-        unresolved_here = [sp for sp in before.unresolved_spans if sp.start < frag[1] and sp.end > frag[0]]
-        if unresolved_here:
-            out.unresolved.append(tuple(proposal.enclosing))
-            out.reasons.append("statements_unparsed")
-    elif before.unresolved_spans:
+    if before.unresolved_spans:
         out.unresolved.append(tuple(proposal.enclosing))
         out.reasons.append("statements_unparsed")
     return out
@@ -650,15 +741,15 @@ def validate_candidate(source: str, candidate: str, cfg: dict, *, mode: str = "s
                        stage_id: str = "candidate") -> ValidationReport:
     """Judge a whole candidate text against ``source`` as one coarse proposal.
 
-    The benchmark and whole-document callers use this before the incremental
-    document validator exists; the window of difference is one proposal under a
-    generic ``reduce`` contract (facts, meaning, introduced numbers).
+    The benchmark, whole-document callers and edited-output checks use this.
+    The window of difference becomes one proposal under a generic legacy
+    ``reduce`` contract (facts, meaning, introduced numbers, statements).
     """
     ledger = EditLedger(source)
     context = ValidationContext.for_source(source, config=cfg, ledger=ledger, mode=mode)
     if candidate == source:
-        return ValidationReport((), Coverage.from_spans(len(source), [(0, len(source))],
-                                                        reasons=("unchanged",)), "accept")
+        cov = context.statement_set.coverage()
+        return ValidationReport((), cov, "accept" if cov.status != "failed" else "retain_original")
     limit = min(len(source), len(candidate))
     a = 0
     while a < limit and source[a] == candidate[a]:
@@ -704,6 +795,22 @@ class ValidationSession:
         self.max_proposals = max_proposals
         self.reports: list[tuple[EditProposal, ValidationReport]] = []
         self.unvalidated: list[EditProposal] = []
+        self.limits: list[str] = []
+        self._synced_reports = 0
+        self._synced_unvalidated = 0
+
+    def note_limit(self, reason: str) -> None:
+        """Record a budget another check hit (its coverage is then partial)."""
+        if reason not in self.limits:
+            self.limits.append(reason)
+
+    def sync(self) -> None:
+        """After a stage: fold the proposals accepted since last time into the statement set."""
+        judged = [p for p, _r in self.reports[self._synced_reports:]] \
+            + self.unvalidated[self._synced_unvalidated:]
+        self._synced_reports = len(self.reports)
+        self._synced_unvalidated = len(self.unvalidated)
+        self.context.sync_statements([p for p in judged if p.decision == "accept"])
 
     def contract_for(self, proposal: EditProposal) -> RuleContract:
         found = self.contracts.get(proposal.rule_key) if proposal.rule_key else None
@@ -748,6 +855,12 @@ class ValidationSession:
             failed = failed or rep.coverage.status == "failed"
         if self.unvalidated:
             reasons.append("budget_exhausted")
+        reasons.extend(self.limits)
+        if self.context._statement_set is not None:
+            # Windows that could not be split, and clinical signal nobody parsed.
+            cov = self.context.statement_set.coverage()
+            reasons.extend(cov.reasons)
+            unresolved.extend(tuple(s) for s in cov.unresolved_spans)
         coverage = Coverage.from_spans(source_len, processed, unresolved=unresolved,
                                        recognized=recognized, checked=checked, reasons=reasons,
                                        failed=failed)

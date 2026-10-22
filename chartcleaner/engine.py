@@ -638,17 +638,11 @@ class Pipeline:
         if fact_check is None:
             fact_check = self.mode == "clean" and bool(
                 (self.config.get("fact_check") or fact_check_mod.DEFAULTS).get("enabled", True))
-        if fact_check and len(text) > fact_check_mod.MAX_CHARS:
-            fact_check = False
-            size_note = (f"Clinical-facts check skipped: input over "
-                         f"{fact_check_mod.MAX_CHARS:,} characters")
-        else:
-            size_note = None
+        # No size cutoff: the facts check is line-memoized and validation is
+        # windowed, so large charts get the same checks with coverage reported.
         tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
-        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache)
-        if size_note:
-            warnings.append(size_note)
+        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache, session)
         text, wrapped, wrapper_stat = self._apply_wrapper(
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
@@ -739,7 +733,7 @@ class Pipeline:
             yield spec, before, text, st, warning
 
     def _execute_stages(
-        self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None
+        self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None, session: Any = None
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
@@ -762,8 +756,25 @@ class Pipeline:
             if warning:
                 warnings.append(warning)
             stats.append(st)
+            if ledger is not None and ledger.current != text:
+                # An opaque stage (compactor, custom script, cache hit…) moved the
+                # text without proposing edits: one coarse proposal covers the gap
+                # and is judged like any other. Under enforcement a rejected stage
+                # hands its input through unchanged.
+                accepted = self._reconcile(ledger, ctx, spec.id, text)
+                if accepted != text:
+                    st.details["validation"] = "retained_original"
+                    st.matches = 0
+            if session is not None:
+                session.sync()
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
+        if session is not None:
+            session.sync()
+            if tracker is not None and tracker.limits():
+                # The meaning guard hit its line budget somewhere: say so
+                # instead of silently checking less.
+                session.note_limit("meaning_check_limited")
         return text, stats, warnings
 
     def _execute_single_stage(

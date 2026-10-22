@@ -147,6 +147,11 @@ _CHECK_OVERRIDES: dict[str, tuple[str, ...]] = {
     "note_order": ("facts", "meaning"),
     # µ → u and ° removal change letters on purpose; judge the clinical content instead
     "unicode_normalize": ("facts", "meaning", "statements"),
+    # Duplicate folding is by design (same as the facts check's dedup rules):
+    # it may drop whole statements, so only facts-by-policy and new values apply.
+    "duplicate_notes": ("facts", "introduced"),
+    "fuzzy_dedup": ("facts", "introduced"),
+    "fuzzy_line_dedup": ("facts", "introduced"),
 }
 
 

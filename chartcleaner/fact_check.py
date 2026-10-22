@@ -47,7 +47,9 @@ __all__ = ["DEFAULTS", "FactLoss", "FactReport", "FactTracker", "fact_counts",
            "UnsupportedFact", "OutputCheck", "verify_output", "claims_report"]
 
 DEFAULTS: dict[str, Any] = {"enabled": True}
-# Above this the per-stage snapshots cost seconds; the check is skipped with a warning.
+# Kept as the documented size where the *meaning* guard's line budget can bite
+# (see MAX_MEANING_LINES); since validation windows landed, no check is skipped
+# outright for size — coverage says what ran.
 MAX_CHARS = 1_000_000
 
 # Stage → category for losses it causes (see the module docstring).
@@ -306,6 +308,8 @@ class FactReport:
     implausible: list[Any] = field(default_factory=list)
     # keys of implausible items that the input already had (not caused by cleaning)
     implausible_in_source: set = field(default_factory=set)
+    # meaning checks skipped on very long outputs (line budget): reported, never silent
+    meaning_limited: int = 0
 
     def lost(self, category: str | None = None) -> int:
         return sum(x.count for x in self.losses if category in (None, x.category))
@@ -637,6 +641,7 @@ class FactTracker:
         self.previous = text
         self.drops: list[tuple[str, str, Counter]] = []  # (stage id, label, decreases)
         self.meaning: list[MeaningChange] = []
+        self.limited: list[str] = []  # stages whose meaning check hit a work limit
         self.added: list[tuple[str, str, Counter]] = []  # values new to the chart, per stage
 
     def after_stage(self, stage_id: str, label: str, text: str) -> None:
@@ -649,17 +654,25 @@ class FactTracker:
         if new:
             self.added.append((stage_id, label, new))
         if stage_id not in BY_DESIGN_STAGES and stage_id not in DEDUP_STAGES:
-            try:
-                self.meaning.extend(meaning_changes(self.previous, text, stage_id, label))
-            except Exception:
-                pass  # the guard must never break a clean
+            a, b = self.previous.split("\n"), text.split("\n")
+            if len(a) > MAX_MEANING_LINES or len(b) > MAX_MEANING_LINES:
+                self.limited.append(stage_id)
+            else:
+                try:
+                    self.meaning.extend(meaning_changes(self.previous, text, stage_id, label))
+                except Exception:
+                    pass  # the guard must never break a clean
         self.current = now
         self.previous = text
+
+    def limits(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(self.limited))
 
     def report(self, final_text: str) -> FactReport:
         end = self.current if final_text == self.previous else self._counts(final_text)
         rep = check(self.text, final_text, self.drops, facts=self.facts, start=self.start, end=end)
         rep.meaning = self.meaning
+        rep.meaning_limited = len(self.limited)
         rep.introduced = self._introduced(final_text, end)
         self._plausibility(rep, final_text)
         return rep

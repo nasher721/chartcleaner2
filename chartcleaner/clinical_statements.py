@@ -19,6 +19,7 @@ dictionary before parsing (``SOB`` → ``shortness of breath``, ``NAD`` →
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -553,6 +554,15 @@ def _clinical_vocab() -> frozenset[str]:
         return _FINDING_TERMS
 
 
+@lru_cache(maxsize=1)
+def _clinical_fast() -> "re.Pattern":
+    """One alternation of finding terms plus the suffix shapes — the cheap
+    pre-check that decides whether a segment can be a finding at all."""
+    terms = sorted(_FINDING_TERMS, key=len, reverse=True)
+    body = "|".join(re.escape(t) for t in terms).replace("\\ ", r"\s+")
+    return re.compile(rf"(?<![A-Za-z])(?:{body})(?![A-Za-z])|{_SUFFIX.pattern}", re.IGNORECASE)
+
+
 def _is_clinical(subject: str, *, cued: bool) -> bool:
     """Does ``subject`` name something clinical?
 
@@ -621,6 +631,8 @@ def _findings(segment: str, span: SourceSpan, line_prefix: str, owned: bool, not
     signal = has_neg or has_possible or has_confirmed or has_family or has_past
     if owned and not has_neg:
         return [], False  # the medication / measurement parser owns this segment
+    if not signal and _clinical_fast().search(expanded) is None:
+        return [], False  # nothing here can name a finding; skip the cleanup work
     laterality = _laterality(expanded)
     temporality = "past" if has_past else _temporality(expanded, line_prefix)
     certainty = "confirmed" if has_confirmed else "possible" if has_possible else "stated"
@@ -671,19 +683,26 @@ def _segments(line: str) -> list[tuple[int, int]]:
 
 
 def _section_lookup(text: str):
-    try:
-        from .stage_core import _section_spans
-        spans = _section_spans(text)
-    except Exception:
-        spans = []
+    spans = _cached_section_spans(text)
 
     def at(pos: int) -> str:
-        for start, end, domain in spans:
-            if start <= pos < end:
-                return domain
+        i = bisect_right(spans, (pos, float("inf"))) - 1 if spans else -1
+        if i >= 0 and spans[i][0] <= pos < spans[i][1]:
+            return spans[i][2]
         return ""
 
     return at
+
+
+@lru_cache(maxsize=3)
+def _cached_section_spans(text: str) -> tuple:
+    """Section spans of ``text``; cached because repeated extractions of the
+    same (large) document would otherwise re-parse it every time."""
+    try:
+        from .stage_core import _section_spans
+        return tuple(_section_spans(text))
+    except Exception:
+        return ()
 
 
 def extract_statements(text: str, *, source_offset: int = 0, note_id: str = "",
@@ -733,11 +752,15 @@ def extract_statements(text: str, *, source_offset: int = 0, note_id: str = "",
 
 
 class StatementIndex:
-    """The source's statements, indexed for whole-document questions."""
+    """The source's statements, indexed for whole-document questions.
 
-    def __init__(self, source: str):
+    ``extraction`` lets a caller supply statements it already has (the
+    incrementally maintained set); otherwise the source is extracted here.
+    """
+
+    def __init__(self, source: str, extraction: StatementExtraction | None = None):
         self.source = source
-        self.extraction = extract_statements(source)
+        self.extraction = extraction if extraction is not None else extract_statements(source)
         self._by_key = self.extraction.by_key()
         self._latest: dict[tuple[str, str], str | None] = {}
 
