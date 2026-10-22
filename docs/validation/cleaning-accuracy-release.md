@@ -67,15 +67,19 @@ recording everything above as advisories.
 |---|---|---|---|---|
 | 100k | 233 ms | 805 ms | ≈ 3.5× | 2.0 → 2.8 MB |
 | 1M | 1.96 s | 7.96 s | ≈ 4.1× | 14.6 → 27.1 MB |
+| 5M | 11.4 s | 47.6 s | ≈ 4.2× | 72.0 → 115.6 MB |
 
-Coverage is `complete`/`partial` at every size — the 1,000,000-character
-blanket skip is gone (`tests/test_large_chart_validation.py`). **Not yet
-meeting the design's targets** (≤ 1.5× warm at ≤ 100k; ≤ 2× memory at 1M/5M):
-the synthetic corpus is a worst case (hundreds of near-identical notes, so the
-dedup and abbreviation stages touch the whole document and their validation
-pays one extraction of everything they changed). Real-chart measurements from
-the scheduled job will tell whether the gap holds outside the worst case;
-until then this is recorded as a known gap, not a pass.
+(5M memory ≈ 1.6× off — inside the ≤ 2× target; runtimes ≈ 4× off and the 5M/1M
+runtime ratio ≈ 6× is inside the ≤ 7× shape target, but the absolute
+multipliers exceed the ≤ 1.5× target.) Coverage is `complete`/`partial` at
+every size — the 1,000,000-character blanket skip is gone
+(`tests/test_large_chart_validation.py`). **Not yet meeting the design's
+warm-runtime target** (≤ 1.5× at ≤ 100k): the synthetic corpus is a worst case
+(hundreds of near-identical notes, so the dedup and abbreviation stages touch
+the whole document and their validation pays one extraction of everything
+they changed). Real-chart measurements from the scheduled job will tell
+whether the gap holds outside the worst case; until then this is recorded as
+a known gap, not a pass.
 
 ## Label review status
 
