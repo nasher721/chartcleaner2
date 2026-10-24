@@ -71,6 +71,10 @@ async def test_result_has_one_release_aware_primary_action(user: User, page):
 
 
 async def test_not_ready_result_promotes_review_over_copy(user: User, page, monkeypatch):
+    from app_pages import clean as clean_mod
+
+    copied = []
+    monkeypatch.setattr(clean_mod, "copy_to_clipboard", lambda text, note="": copied.append(text))
     monkeypatch.setattr(fact_check.FactReport, "status", property(lambda self: "alert"))
     _reset_input()
     await _route(user, "/workspace-review-first", cc_app.clean_page)
@@ -84,3 +88,16 @@ async def test_not_ready_result_promotes_review_over_copy(user: User, page, monk
     user.find(marker="review-primary").click()
     tabs = next(iter(user.find(ui.tabs).elements))
     assert tabs.value.props["name"] == "Review"
+
+    user.find(marker="copy-as").click()
+    user.find(marker="copy-text").click()
+    await user.should_see(marker="copy-anyway")
+    assert not copied
+    user.find(marker="copy-anyway").click()
+    assert copied
+    await user.should_not_see(marker="review-primary")
+    copy_button = next(iter(user.find(marker="copy-as").elements))
+    assert copy_button.props["unelevated"] is True
+    assert not copy_button.props.get("outline")
+    flow = next(iter(user.find(marker="clean-task-flow").elements))
+    assert flow.props["data-current-step"] == "3"

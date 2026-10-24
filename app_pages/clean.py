@@ -576,7 +576,7 @@ async def clean_page():
             def anyway() -> None:
                 CLEAN_STATE["fact_ack"] = True
                 CLEAN_STATE["release_ack"] = decision.acknowledgement_key
-                sync_task_flow()
+                render_results()
                 dlg.close()
                 action()
 
