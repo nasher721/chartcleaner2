@@ -156,7 +156,7 @@ async def clean_page():
             # here, off the event loop, so the page stays responsive.
             review = await run.io_bound(review_html, text, result, audit)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               review_html=(result, text, result.text, review),
+                               review_html=(result, text, result.text, review[0], review[1]),
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
                                timeline=extras.get("timeline"), problems=extras.get("problems"),
@@ -251,8 +251,11 @@ async def clean_page():
     def flagged_lines(audit) -> set[int]:
         return {f.line for f in audit.findings} if audit is not None and not audit.skipped else set()
 
-    def review_html(before: str, result, audit) -> str:
-        return review_diff_html(before, result.text, flagged_lines(audit), change_groups(result))
+    def review_html(before: str, result, audit) -> tuple[str, int]:
+        metadata = {}
+        html = review_diff_html(before, result.text, flagged_lines(audit),
+                                change_groups(result), metadata)
+        return html, metadata["change_count"]
 
     def sync_task_flow() -> None:
         result = CLEAN_STATE.get("result")
@@ -906,18 +909,22 @@ async def clean_page():
     # ---- Review tab -----------------------------------------------------------
     def render_review(result, groups: list[dict], single_pass: bool) -> None:
         audit = CLEAN_STATE.get("audit")
+        cached = CLEAN_STATE.get("review_html")
+        if (cached and len(cached) >= 5 and cached[0] is result
+                and cached[1] == CLEAN_STATE["input"] and cached[2] == result.text):
+            html, change_count = cached[3], cached[4]
+        else:
+            metadata = {}
+            html = common.review_diff_html(CLEAN_STATE["input"], result.text,
+                                          flagged_lines(audit), groups, metadata)
+            change_count = metadata["change_count"]
+            CLEAN_STATE["review_html"] = (
+                result, CLEAN_STATE["input"], result.text, html, change_count)
 
         def render_diff() -> None:
             ui.label("Click struck-through or highlighted text to see which rule changed it — and "
                      "keep it, change it or switch the rule off.").classes("text-xs cc-muted")
             with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
-                cached = CLEAN_STATE.get("review_html")
-                if (cached and cached[0] is result and cached[1] == CLEAN_STATE["input"]
-                        and cached[2] == result.text):
-                    html = cached[3]
-                else:
-                    html = common.review_diff_html(CLEAN_STATE["input"], result.text,
-                                                  flagged_lines(audit), groups)
                 diff = ui.html(html)
                 diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
                 diff.on("keydown", lambda e: inspect_change(e.args), js_handler=REVIEW_KEY_JS)
@@ -967,7 +974,8 @@ async def clean_page():
             review_workspace.render_review_workspace(
                 result=result, audit=audit, source=CLEAN_STATE["input"],
                 output=CLEAN_STATE.get("result_text") or result.text,
-                decision=release_for_copy(result), sections=sections, locate=locate_finding)
+                decision=release_for_copy(result), sections=sections, locate=locate_finding,
+                change_count=change_count)
         except Exception as exc:
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             logging_setup.write_traceback("Review workspace failed", tb)

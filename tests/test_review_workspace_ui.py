@@ -1,6 +1,7 @@
 """Unified Review workspace: findings, changes, diagnostics and safe fallback."""
 
 import asyncio
+import difflib
 from types import SimpleNamespace as NS
 
 import pytest
@@ -8,7 +9,7 @@ from nicegui import ui
 from nicegui.testing import User
 
 import app as cc_app
-from app_pages import review_workspace
+from app_pages import common, review_workspace
 from app_pages.review_model import FindingRow
 from app_pages.review_workspace import collapse_context_ranges
 from chartcleaner.appstate import CLEAN_STATE
@@ -114,3 +115,33 @@ async def test_change_navigation_has_position_and_controls(user: User, page):
     await user.should_see(marker="change-next")
     position = next(iter(user.find(marker="change-position").elements)).text
     assert "/" in position
+
+
+async def test_oversized_diff_has_no_navigable_rows(user: User, page, monkeypatch):
+    before = "x" * 600_001 + "\nPlan: aspirin 81 mg daily.\n"
+    after = "x" * 600_001 + "\n"
+    monkeypatch.setattr(review_workspace, "build_finding_rows", lambda *a, **kw: [])
+    sections = review_workspace.ReviewSections(
+        diff=lambda: ui.html(common.review_diff_html(before, after, None, [])),
+        removed=lambda: None, abbreviations=lambda: None, diagnostics=lambda: None)
+
+    def fixture_page():
+        review_workspace.render_review_workspace(
+            result=NS(), audit=None, source=before, output=after,
+            decision=NS(status="ready"), sections=sections, locate=lambda _item: None)
+
+    await _route(user, "/workspace-oversized-diff", fixture_page)
+    await user.should_see("Diff too large to display")
+    position = next(iter(user.find(marker="change-position").elements)).text
+    assert position == "0 / 0"
+
+
+async def test_workspace_does_not_recompute_diff_on_ui_thread(
+        user: User, page, monkeypatch):
+    def unexpected_diff(*_args, **_kwargs):
+        raise AssertionError("Review UI recomputed the complete diff")
+
+    monkeypatch.setattr(difflib, "SequenceMatcher", unexpected_diff)
+    await _render_rows(user, "/workspace-no-recount", [], monkeypatch)
+    position = next(iter(user.find(marker="change-position").elements)).text
+    assert position == "0 / 0"

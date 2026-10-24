@@ -34,7 +34,7 @@ class ReviewSections:
 
 
 def render_review_workspace(*, result, audit, source, output, decision,
-                            sections: ReviewSections, locate) -> None:
+                            sections: ReviewSections, locate, change_count: int = 0) -> None:
     rows = build_finding_rows(result, audit, source=source, output=output)
     if decision.status == "blocked":
         with ui.row().classes("w-full items-center gap-2 cc-tint cc-tint--danger p-3") \
@@ -83,11 +83,6 @@ def render_review_workspace(*, result, audit, source, output, decision,
                 abbreviated = ui.tab("Abbreviations")
             with ui.tab_panels(change_tabs, value=changed).props("keep-alive").classes("w-full"):
                 with ui.tab_panel(changed):
-                    from difflib import SequenceMatcher
-                    matcher = SequenceMatcher(a=source.splitlines(), b=output.splitlines(), autojunk=False)
-                    change_count = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2
-                                       in matcher.get_opcodes() if tag != "equal")
-
                     def navigate_changes(direction: int) -> None:
                         ui.run_javascript(f"""
 (() => {{

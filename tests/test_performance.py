@@ -183,6 +183,7 @@ async def test_review_diff_is_built_once_off_the_event_loop(user: User, page, mo
                        result=None, result_text="", audit=None, summary=None, qa=[])
 
     @ui.page("/perf-review")
+    @ui.page("/perf-review-reload")
     async def fixture_page():
         await cc_app.clean_page()
 
@@ -194,4 +195,11 @@ async def test_review_diff_is_built_once_off_the_event_loop(user: User, page, mo
         await asyncio.sleep(0.02)
     await user.should_see(marker="review-diff")
     assert len(calls) == 1
-    assert CLEAN_STATE["review_html"][0] is CLEAN_STATE["result"]
+    cached = CLEAN_STATE["review_html"]
+    assert cached[0] is CLEAN_STATE["result"]
+    assert cached[4] == cached[3].count("class='cc-diff-change'")
+
+    await user.open("/perf-review-reload")
+    await user.should_see(marker="review-diff")
+    assert CLEAN_STATE["review_html"] is cached
+    assert len(calls) == 1

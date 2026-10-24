@@ -386,13 +386,15 @@ def _wrap_fragments(line: str, fragments: list[tuple[str, str, str]]) -> str:
 
 
 def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
-                     groups: list[dict]) -> str:
+                     groups: list[dict], metadata: dict[str, int] | None = None) -> str:
     """Side-by-side diff where every tracked change is clickable.
 
     ``groups`` (built by the Clean page) are ``{"kind": "removal"|"replace"|"abbr",
     "before", "after", ...}``; removed/replaced text on the left and applied
     abbreviations on the right carry ``data-cc="g<index>"``.
     """
+    if metadata is not None:
+        metadata["change_count"] = 0
     if len(before) + len(after) > 600_000:
         return "<p>Diff too large to display (use a smaller input).</p>"
     flagged = flag_lines or set()
@@ -478,6 +480,8 @@ def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
         cursor = end
     parts.extend(rows[cursor:])
     parts.append("</tbody></table>")
+    if metadata is not None:
+        metadata["change_count"] = len(changed_lines)
     return "".join(parts)
 
 
