@@ -1,7 +1,7 @@
 # Task-centered UI redesign
 
 Date: 2026-10-24
-Status: Approved design; awaiting written-spec review
+Status: Implemented and verified
 
 ## Summary
 

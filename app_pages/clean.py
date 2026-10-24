@@ -75,6 +75,15 @@ COPY_FORMATS = {
     "safety": ("Text with safety header on top", "health_and_safety"),
     "ai": ("Tokenized, for an external AI", "smart_toy"),
 }
+COPY_ITEM_MARKERS = {
+    "text": "copy-text",
+    "epic": "copy-epic",
+    "markdown": "copy-markdown",
+    "stats": "copy-stats",
+    "trends": "copy-trends",
+    "safety": "copy-safety",
+    "ai": "copy-ai",
+}
 AUTO_CLEAN_PAUSE = 1.5  # seconds of no typing before auto-clean runs
 UNDO_DEPTH = 30  # Clean-page edits Undo can step back through
 
@@ -741,7 +750,7 @@ async def clean_page():
                                     on_click=lambda: copy_as()) \
                     .props(f"{copy_style} color=primary no-caps").mark("copy-as"):
                 for key, (label, icon) in COPY_FORMATS.items():
-                    with ui.item(on_click=lambda k=key: copy_as(k)).mark(f"copy-{key}"):
+                    with ui.item(on_click=lambda k=key: copy_as(k)).mark(COPY_ITEM_MARKERS[key]):
                         with ui.item_section().props("avatar"):
                             ui.icon(icon)
                         with ui.item_section():
@@ -3027,15 +3036,15 @@ async def clean_page():
 
     def restore_ai_invoker_focus(e) -> None:
         if not e.value:
-            ui.run_javascript(
-                "document.querySelector('[data-marker=\"ai-assistant-button\"]')?.focus()")
+            ui.run_javascript("document.querySelector('.cc-ai-assistant-button')?.focus()")
 
     ai_drawer.on_value_change(restore_ai_invoker_focus)
 
     def header_actions() -> None:
         nonlocal inbox_btn
         ui.button("AI assistant", icon="psychology", on_click=lambda: toggle_ai()) \
-            .props("flat no-caps aria-label='Local AI panel'").classes("cc-headbtn cc-narrow-icon") \
+            .props("flat no-caps aria-label='Local AI panel'") \
+            .classes("cc-headbtn cc-narrow-icon cc-ai-assistant-button") \
             .mark("ai-assistant-button").tooltip("Local AI panel (Alt+A)")
         inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
             .props("flat no-caps color=grey aria-label='Suggestions'") \

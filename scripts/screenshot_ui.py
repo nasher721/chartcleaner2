@@ -36,10 +36,17 @@ async def main() -> None:
             page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(BASE + "/", wait_until="networkidle")
-            if light:
-                await page.wait_for_timeout(1200)
+            await page.wait_for_timeout(1200)
+            close_ai = page.locator("button[aria-label='Close Local AI panel']")
+            if await close_ai.is_visible():
+                await close_ai.click()
+            desired_dark = not light
+            is_dark = await page.evaluate("document.body.classList.contains('body--dark')")
+            if is_dark != desired_dark:
                 await page.click(".cc-headbtn[aria-label='Toggle light or dark mode']")
-                await page.wait_for_timeout(700)
+            await page.wait_for_function(
+                "dark => document.body.classList.contains('body--dark') === dark", arg=desired_dark)
+            await page.wait_for_timeout(700)
             suffix = "-light" if light else ""
             for path, name in PAGES:
                 if only and name not in only:

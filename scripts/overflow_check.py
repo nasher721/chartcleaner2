@@ -50,6 +50,8 @@ async def check_clean_split_transitions(browser) -> None:
         if width == 767:
             assert await page.locator(".cc-result-pane").is_visible()
             await page.locator(".cc-mobile-workspace-switch").get_by_text("Input", exact=True).click()
+            await page.wait_for_selector(".cc-clean-workspace.cc-mobile-show-input")
+            assert not await page.locator(".cc-result-pane").is_visible()
         for selector in (".cc-input-pane", ".cc-result-pane"):
             pane = page.locator(selector)
             if await pane.is_visible():

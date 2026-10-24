@@ -40,6 +40,10 @@ The source smoke harness substitutes draft release discovery because private dra
 
 Run `python -m pytest tests/test_release_tools.py -q` for offline packaging/manifest regression checks. Native signing and frozen release smoke checks require real target runners and signing credentials; source tests do not satisfy those gates.
 
+## Task-centered UI qualification
+
+The task-centered interface redesign was verified with the complete automated suite, live local-AI Summary and Ask workflows, keyboard and responsive browser checks, actual 200% Chrome zoom, and dark/light screenshots at every supported viewport. It changes presentation and navigation only: cleaning output, validation, release decisions, copy guards, acknowledgment semantics, and local-first safeguards are unchanged.
+
 ## Remaining manual release evidence
 
 Record clean Apple Silicon Gatekeeper behavior and clean Windows standard-user install/signature/SmartScreen presentation separately. Native CI signatures do not prove reputation or hospital IT policy acceptance. Exercise production update discovery, update confirmation, restart, and rollback from a previously installed signed release; record old/new versions and sentinel preservation. Uninstall removes the app/shortcut, while the per-user Chart Cleaner data directory stays intact unless the user explicitly removes it.

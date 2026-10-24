@@ -83,35 +83,39 @@ def render_review_workspace(*, result, audit, source, output, decision,
                 abbreviated = ui.tab("Abbreviations")
             with ui.tab_panels(change_tabs, value=changed).props("keep-alive").classes("w-full"):
                 with ui.tab_panel(changed):
-                    with ui.row().classes("w-full items-center gap-2 cc-diff-navigation"):
-                        ui.button("Previous", icon="chevron_left").props("flat dense no-caps") \
-                            .mark("change-previous")
-                        ui.button("Next", icon="chevron_right").props("flat dense no-caps") \
-                            .mark("change-next")
-                        ui.label("0 / 0").classes("cc-muted text-xs") \
+                    from difflib import SequenceMatcher
+                    matcher = SequenceMatcher(a=source.splitlines(), b=output.splitlines(), autojunk=False)
+                    change_count = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2
+                                       in matcher.get_opcodes() if tag != "equal")
+
+                    def navigate_changes(direction: int) -> None:
+                        ui.run_javascript(f"""
+(() => {{
+  const nav = document.querySelector('.cc-diff-navigation');
+  const rows = Array.from(document.querySelectorAll('.cc-diff-change[data-diff-line]'));
+  const label = nav?.querySelector('.cc-change-position');
+  if (!nav || !label) return;
+  if (!rows.length) {{ label.textContent = '0 / 0'; return; }}
+  const current = Number(nav.dataset.changeIndex || 0);
+  const index = (current + {direction} + rows.length) % rows.length;
+  nav.dataset.changeIndex = String(index);
+  rows[index].scrollIntoView({{block: 'center', behavior: 'instant'}});
+  rows[index].setAttribute('tabindex', '-1');
+  rows[index].focus({{preventScroll: true}});
+  label.textContent = `${{index + 1}} / ${{rows.length}}`;
+}})();
+""")
+
+                    with ui.row().classes("w-full items-center gap-2 cc-diff-navigation") as navigation:
+                        navigation.props(f"data-change-index={0 if change_count else -1}")
+                        ui.button("Previous", icon="chevron_left", on_click=lambda: navigate_changes(-1)) \
+                            .props("flat dense no-caps").classes("cc-change-previous").mark("change-previous")
+                        ui.button("Next", icon="chevron_right", on_click=lambda: navigate_changes(1)) \
+                            .props("flat dense no-caps").classes("cc-change-next").mark("change-next")
+                        ui.label(f"{1 if change_count else 0} / {change_count}") \
+                            .classes("cc-muted text-xs cc-change-position") \
                             .props("aria-live=polite aria-label='Change position'").mark("change-position")
                     sections.diff()
-                    ui.run_javascript("""
-(() => {
-  const rows = Array.from(document.querySelectorAll('.cc-diff-change[data-diff-line]'));
-  let index = -1;
-  const label = document.querySelector('[data-marker="change-position"]');
-  const show = next => {
-    if (!rows.length) {
-      if (label) label.textContent = '0 / 0';
-      return;
-    }
-    index = (next + rows.length) % rows.length;
-    rows[index].scrollIntoView({block: 'center', behavior: 'instant'});
-    rows[index].setAttribute('tabindex', '-1');
-    rows[index].focus({preventScroll: true});
-    if (label) label.textContent = `${index + 1} / ${rows.length}`;
-  };
-  document.querySelector('[data-marker="change-previous"]')?.addEventListener('click', () => show(index - 1));
-  document.querySelector('[data-marker="change-next"]')?.addEventListener('click', () => show(index + 1));
-  show(0);
-})();
-""")
                 with ui.tab_panel(removed):
                     sections.removed()
                 with ui.tab_panel(abbreviated):
