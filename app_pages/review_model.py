@@ -68,7 +68,7 @@ def build_finding_rows(result, audit, *, source: str, output: str) -> list[Findi
                           detail=labels.get(proposal.stage_id, proposal.stage_id),
                           stage_id=proposal.stage_id, rule_key=proposal.rule_key,
                           source_spans=proposal.source_spans, mapping=proposal.mapping,
-                          before=proposal.before, after=""))
+                          before=proposal.before, after=proposal.after))
     coverage = validation.coverage
     if coverage.status != "complete":
         items.append(dict(kind=f"coverage_{coverage.status}", severity="review",
