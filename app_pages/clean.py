@@ -15,6 +15,7 @@ from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages.rule_builder_ui import open_rule_builder
 from app_pages.workflow_ui import overflow_menu, workflow_section
+from app_pages.workspace_layout import bind_split_handle, set_mobile_view
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
@@ -178,6 +179,14 @@ async def clean_page():
                 pass  # history of findings must never break a run
             input_area.set_value(text)
             render_results()
+            workspace_switch.set_value("result")
+            set_mobile_view(layout, "result")
+            results_col.client.run_javascript("""
+                if (window.innerWidth >= 768 && window.innerWidth < 1200) {
+                  const pane = document.querySelector('.cc-result-pane');
+                  if (pane) pane.scrollIntoView({block: 'start', behavior: 'smooth'});
+                }
+            """)
             if mode == "clean":
                 asyncio.get_running_loop().create_task(refresh_inbox())
         except ConfigError as e:
@@ -1521,12 +1530,6 @@ async def clean_page():
         ai_drawer.set_value(value)
         common.PREFS["ai_drawer"] = value
         save_prefs()
-        sync_layout()
-
-    def sync_layout() -> None:
-        """Side by side on wide windows; with the AI drawer open, only on very wide ones."""
-        wide = "2xl:grid-cols-2" if ai_drawer.value else "xl:grid-cols-2"
-        layout.classes(remove="xl:grid-cols-2 2xl:grid-cols-2", add=wide)
 
     def save_llm_pref(key: str, value) -> None:
         try:
@@ -1746,6 +1749,8 @@ async def clean_page():
         input_area.set_value("")
         hide_selection_bar()
         render_results()
+        workspace_switch.set_value("input")
+        set_mobile_view(layout, "input")
 
     def load_sample() -> None:
         sample = BASE_DIR / "sample_chart.txt"
@@ -2924,6 +2929,8 @@ async def clean_page():
                            summary=None, qa=[], result_mode=None)
         AUTO_LAST["text"] = None
         render_results()
+        workspace_switch.set_value("input")
+        set_mobile_view(layout, "input")
         sync_mode_controls()
 
     def sync_mode_controls() -> None:
@@ -3040,11 +3047,17 @@ async def clean_page():
             ).props("dense outlined").classes("w-60").mark("clean-destination")
         mode_note = ui.label("").classes("cc-muted")
 
-        layout = ui.element("div").classes("grid grid-cols-1 gap-4 w-full items-start")
+        workspace_switch = ui.toggle(
+            {"input": "Input", "result": "Result"}, value="input",
+            on_change=lambda e: set_mobile_view(layout, e.value)) \
+            .props("dense no-caps aria-label='Show input or result'") \
+            .classes("cc-mobile-workspace-switch").mark("mobile-workspace-switch")
+        layout = ui.element("div") \
+            .classes("cc-clean-workspace cc-mobile-show-input").mark("clean-workspace")
         with layout:
             # ---- left: the chart ----
             with workflow_section("Input") as input_section:
-                input_section.classes("min-w-0")
+                input_section.classes("min-w-0 cc-input-pane").mark("input-pane")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
@@ -3197,14 +3210,17 @@ async def clean_page():
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
+            split_handle = ui.element("div") \
+                .classes("cc-split-handle").mark("clean-split-handle")
+            bind_split_handle(layout, split_handle)
+
             # ---- right: the result ----
             with workflow_section("Review & export") as result_section:
-                result_section.classes("min-w-0")
+                result_section.classes("min-w-0 cc-result-pane").mark("result-pane")
                 results_col = ui.column().classes("w-full gap-2 cc-stagger").mark("results")
 
         preset_sel.on_value_change(on_preset_change)
         sync_mode_controls()
-        sync_layout()
         ui.timer(0.5, auto_tick)
         ui.timer(0.25, tick_streams)
         ui.timer(0.3, refresh_inbox, once=True)

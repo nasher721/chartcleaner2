@@ -16,10 +16,10 @@ CHROME = ("/Users/Nash/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm
           "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
 PAGES = [("/", "clean"), ("/batch", "batch"), ("/rules", "rules"), ("/pipeline", "pipeline"),
          ("/stats", "stats"), ("/scripts", "scripts"), ("/settings", "settings"),
-         ("/doctor", "doctor")]
+         ("/doctor", "doctor"), ("/census", "census")]
 OUT = Path(__file__).resolve().parent.parent / ".pytest_tmp" / "shots"
 BASE = "http://127.0.0.1:8899"
-VIEWPORTS = ((1512, 1000, "desktop"), (390, 844, "mobile"))
+VIEWPORTS = tuple((width, 900, str(width)) for width in (360, 768, 1199, 1200, 1440))
 
 
 async def main() -> None:
@@ -38,7 +38,7 @@ async def main() -> None:
             await page.goto(BASE + "/", wait_until="networkidle")
             if light:
                 await page.wait_for_timeout(1200)
-                await page.click(".cc-headbtn[aria-label='Toggle dark mode']")
+                await page.click(".cc-headbtn[aria-label='Toggle light or dark mode']")
                 await page.wait_for_timeout(700)
             suffix = "-light" if light else ""
             for path, name in PAGES:

@@ -16,9 +16,9 @@ CHROME = ("/Users/Nash/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm
           "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
 PAGES = [("/", "clean"), ("/batch", "batch"), ("/rules", "rules"), ("/pipeline", "pipeline"),
          ("/stats", "stats"), ("/scripts", "scripts"), ("/settings", "settings"),
-         ("/doctor", "doctor")]
+         ("/doctor", "doctor"), ("/census", "census")]
 BASE = "http://127.0.0.1:8899"
-WIDTHS = [int(w) for w in sys.argv[1:]] or [390, 414, 768, 1024]
+WIDTHS = [int(w) for w in sys.argv[1:]] or [360, 768, 1199, 1200, 1440]
 HEIGHT = 900
 
 
