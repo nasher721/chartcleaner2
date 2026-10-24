@@ -122,6 +122,7 @@ async def test_daily_note_dialog_compares_with_previous(user: User, page):
     recent_charts.remember(previous, "test", {}, tag="G20-1")
     await _open(user, "/p7-daily", CHART)
     await _clean(user)
+    user.find(marker="result-overflow").click()
     user.find(marker="daily-note").click()
     await user.should_see(marker="daily-note-dialog")
     user.find(marker="daily-note-build").click()

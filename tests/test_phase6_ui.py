@@ -115,6 +115,7 @@ async def test_restore_dialog_puts_values_back(user: User, page):
     store.save_token_map({"Jane Doe": "[[T1]]"}, "test")
     await _open(user, "/p6-restore", "Plan: recheck\n")
     await _clean(user)
+    user.find(marker="result-overflow").click()
     user.find(marker="restore-reply").click()
     await user.should_see("Restore names in an AI reply")
     reply = next(e for e in user.find(ui.textarea).elements if e.props.get("label") == "AI reply")
@@ -128,6 +129,7 @@ async def test_restore_dialog_puts_values_back(user: User, page):
 async def test_mark_known_good_saves_encrypted_chart(user: User, page):
     await _open(user, "/p6-known", "Plan: recheck\n")
     await _clean(user)
+    user.find(marker="result-overflow").click()
     user.find(marker="known-good").click()
     await user.should_see("Mark as known good")
     user.find(marker="known-good-save").click()

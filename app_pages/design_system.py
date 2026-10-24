@@ -222,6 +222,13 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   letter-spacing:.06em;text-transform:uppercase;color:var(--nd-text-secondary);}
 .cc-workflow-section{gap:var(--nd-space-sm);}
 .cc-empty-state{color:var(--nd-text-secondary);}
+.cc-task-flow{font-family:var(--nd-mono);font-size:var(--label);letter-spacing:.04em;}
+.cc-task-flow__step{color:var(--nd-text-secondary);transition:color var(--nd-dur-fast) var(--nd-ease);}
+.cc-task-flow__arrow{color:var(--nd-border-visible);}
+.cc-task-flow[data-current-step="1"] [data-step="1"],
+.cc-task-flow[data-current-step="2"] [data-step="2"],
+.cc-task-flow[data-current-step="3"] [data-step="3"]{color:var(--nd-text-display);font-weight:600;}
+.cc-result-header{padding-bottom:var(--nd-space-sm);border-bottom:1px solid var(--nd-border);}
 
 .q-drawer{background:var(--nd-black);color:var(--nd-text-primary);}
 .cc-drawer{background:var(--nd-black);}

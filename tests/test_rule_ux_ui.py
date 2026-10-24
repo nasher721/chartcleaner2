@@ -184,8 +184,10 @@ async def test_collect_saves_all_at_once_as_one_undo_step(user: User, page):
     text = "alpha beta gamma"
     await _open(user, "/ux-collect", text)
     _select(user, text, "alpha")
+    user.find(marker="selection-overflow").click()
     user.find(marker="sel-collect").click()
     _select(user, text, "gamma")
+    user.find(marker="selection-overflow").click()
     user.find(marker="sel-collect").click()
     await user.should_see("Collected (2):")
     user.find(marker="tray-save").click()
@@ -256,6 +258,7 @@ async def test_undo_history_dialog_lists_edits(user: User, page):
     await _open(user, "/ux-history", text)
     _select(user, text, "one")
     user.find(marker="sel-remove").click()
+    user.find(marker="advanced-input-tools").click()
     user.find(marker="undo-history-button").click()
     await user.should_see(marker="undo-history")
     await user.should_see("Added: Remove “one”")

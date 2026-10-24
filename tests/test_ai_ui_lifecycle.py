@@ -78,9 +78,8 @@ def _change_chart(user: User, change: str) -> None:
     if change == "mode":
         next(iter(user.find(marker="clean-mode").elements)).set_value("abbreviations")
     elif change == "clear":
-        clear_button = next(e for e in user.find(ui.button).elements
-                            if e.props.get("label") == "Clear")
-        UserInteraction(user, {clear_button}, "Clear").click()
+        user.find(marker="input-overflow").click()
+        user.find(marker="clear-input").click()
     elif change == "restore":
         restored = "Restored chart text."
         CLEAN_STATE["result"].text = restored

@@ -22,16 +22,12 @@ async def test_selection_options_are_disclosed_and_upload_is_quiet(user, monkeyp
         await cc_app.clean_page()
 
     await user.open("/clean-layout-fixture")
-    settings = next(e for e in user.find(ui.expansion).elements
-                    if e.props.get("label") == "Selection settings")
+    settings = next(iter(user.find(marker="advanced-input-tools").elements))
     assert settings.value is False
+    await user.should_not_see(marker="selection-bar")
+    user.find(marker="advanced-input-tools").click()
     toggle = next(iter(user.find(marker="selection-mode").elements))
     assert toggle.parent_slot.parent is settings
-    await user.should_not_see(marker="selection-bar")
-    # The simulated user does not execute Quasar's expansion click handler.
-    with user.client:
-        settings.set_value(True)
-    assert settings.value is True
     await user.should_see(marker="selection-mode")
     upload = next(iter(user.find(ui.upload).elements))
     assert upload.props.get("hide-upload-progress") is True

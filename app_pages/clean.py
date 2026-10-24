@@ -14,6 +14,7 @@ import time
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages.rule_builder_ui import open_rule_builder
+from app_pages.workflow_ui import overflow_menu, workflow_section
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
@@ -234,10 +235,18 @@ async def clean_page():
     def review_html(before: str, result, audit) -> str:
         return review_diff_html(before, result.text, flagged_lines(audit), change_groups(result))
 
+    def sync_task_flow() -> None:
+        result = CLEAN_STATE.get("result")
+        step = 1
+        if result is not None:
+            step = 3 if release_for_copy(result).status == "ready" else 2
+        task_flow.props(f"data-current-step={step}")
+
     def render_results() -> None:
         results_col.clear()
         refs.clear()
         result = CLEAN_STATE.get("result")
+        sync_task_flow()
         render_ai()
         if not result:
             mode = CLEAN_STATE.get("mode") or "clean"
@@ -286,20 +295,21 @@ async def clean_page():
         result_mode = CLEAN_STATE.get("result_mode")
         single_pass = result_mode in ("abbreviations", "expand")
         with results_col:
-            render_trust_strip(result, single_pass)
-            phi = result.phi_counts()
-            with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
-                ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
-                ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("cc-muted")
-                ui.label(f"{abs(result.reduction):.1f}% {'reduction' if result.reduction >= 0 else 'increase'}").classes("font-semibold")
-                if result_mode == "abbreviations":
-                    ui.label(f"{sum(s.matches for s in result.stages)} abbreviations applied")
-                elif result_mode == "expand":
-                    ui.label(f"{sum(s.matches for s in result.stages)} abbreviations expanded")
-                else:
-                    ui.label(f"{sum(phi.values())} possible identifiers redacted")
-                ui.label(f"{result.duration_ms:.0f} ms").classes("opacity-60")
-                render_note_chip(result_mode)
+            with ui.column().classes("w-full gap-2 cc-result-header").mark("result-header"):
+                render_trust_strip(result, single_pass)
+                phi = result.phi_counts()
+                with ui.row().classes("w-full items-center gap-x-4 gap-y-1 flex-wrap text-sm"):
+                    ui.label(f"{result.chars_before:,} → {result.chars_after:,} chars")
+                    ui.label(f"~{result.tokens_before:,} → ~{result.tokens_after:,} tok").classes("cc-muted")
+                    ui.label(f"{abs(result.reduction):.1f}% {'reduction' if result.reduction >= 0 else 'increase'}").classes("font-semibold")
+                    if result_mode == "abbreviations":
+                        ui.label(f"{sum(s.matches for s in result.stages)} abbreviations applied")
+                    elif result_mode == "expand":
+                        ui.label(f"{sum(s.matches for s in result.stages)} abbreviations expanded")
+                    else:
+                        ui.label(f"{sum(phi.values())} possible identifiers redacted")
+                    ui.label(f"{result.duration_ms:.0f} ms").classes("opacity-60")
+                    render_note_chip(result_mode)
             if result_mode == "abbreviations":
                 ui.label("Abbreviations only — other text and formatting preserved. "
                          "PHI has not been removed.").classes("text-xs cc-muted")
@@ -566,6 +576,7 @@ async def clean_page():
             def anyway() -> None:
                 CLEAN_STATE["fact_ack"] = True
                 CLEAN_STATE["release_ack"] = decision.acknowledgement_key
+                sync_task_flow()
                 dlg.close()
                 action()
 
@@ -708,11 +719,17 @@ async def clean_page():
                                   on_click=lambda c=candidate: inspect_redaction(c)) \
                             .props("outline no-caps").mark("redaction-chip")
         default = common.PREFS.get("copy_default") or "text"
-        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+        release_ready = release_for_copy(result).status == "ready"
+        copy_style = "unelevated" if release_ready else "outline"
+        with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("result-actions"):
+            destination = (CLEAN_STATE.get("note") or {}).get("destination")
+            ui.label(destination or "No destination override").classes("cc-muted").mark("destination-summary")
+            if not release_ready:
+                ui.button("Review findings", icon="rule", on_click=lambda: show_tab(1)).mark("review-primary")
             with ui.dropdown_button(f"Copy · {COPY_FORMATS.get(default, COPY_FORMATS['text'])[0]}",
                                     icon="content_copy", split=True, auto_close=True,
                                     on_click=lambda: copy_as()) \
-                    .props("unelevated color=primary no-caps").mark("copy-as"):
+                    .props(f"{copy_style} color=primary no-caps").mark("copy-as"):
                 for key, (label, icon) in COPY_FORMATS.items():
                     with ui.item(on_click=lambda k=key: copy_as(k)).mark(f"copy-{key}"):
                         with ui.item_section().props("avatar"):
@@ -736,19 +753,21 @@ async def clean_page():
                                 ui.item_label(f"Note: {tmpl['name']}")
                 ui.separator()
                 ui.item("Change what the main button copies…", on_click=open_copy_default_dialog)
-            with ui.dropdown_button("Save", icon="download", auto_close=True).props("flat no-caps"):
-                ui.item("Text (.txt)", on_click=download_result).mark("save-txt")
-                ui.item("Word (.docx)", on_click=lambda: guarded_copy(lambda: ui.download.content(
-                    to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))).mark("save-docx")
-                ui.item("Markdown (.md)", on_click=lambda: guarded_copy(lambda: ui.download.content(
-                    chart_markdown().encode("utf-8"), "cleaned_chart.md"))).mark("save-md")
-                if common.PREFS.get("notes_folder"):
-                    ui.item("To my notes folder", on_click=save_to_notes_folder).mark("save-notes-folder")
             ui.button("Edit result", icon="edit", on_click=toggle_edit).props("flat no-caps").mark("edit-result") \
                 .tooltip("Edit the result before copying — copies use your edits, and lines you "
                          "keep deleting become rule suggestions")
-            with ui.button(icon="more_horiz").props("flat round aria-label='More result actions'").tooltip("More"):
+            with ui.button(icon="more_horiz").props("flat round aria-label='More result actions'") \
+                    .mark("result-overflow").tooltip("More"):
                 with ui.menu():
+                    ui.menu_item("Save").props("icon=download disable")
+                    ui.item("Text (.txt)", on_click=download_result).mark("save-txt")
+                    ui.item("Word (.docx)", on_click=lambda: guarded_copy(lambda: ui.download.content(
+                        to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))).mark("save-docx")
+                    ui.item("Markdown (.md)", on_click=lambda: guarded_copy(lambda: ui.download.content(
+                        chart_markdown().encode("utf-8"), "cleaned_chart.md"))).mark("save-md")
+                    if common.PREFS.get("notes_folder"):
+                        ui.item("To my notes folder", on_click=save_to_notes_folder).mark("save-notes-folder")
+                    ui.separator()
                     ui.menu_item("Restore names in an AI reply…", on_click=open_restore_dialog) \
                         .mark("restore-reply")
                     ui.menu_item("Mark as known good (re-check after rule changes)…",
@@ -2238,6 +2257,7 @@ async def clean_page():
 
     def sync_undo() -> None:
         stack = highlight["stack"]
+        undo_btn.set_visibility(bool(stack))
         if stack:
             undo_btn.enable()
             undo_tip.set_text(f"Undo: {stack[-1]['label'][:120]}"
@@ -2991,6 +3011,14 @@ async def clean_page():
                 ui.button("Got it", on_click=finish_onboarding).props("flat no-caps")
         onboarding.set_visibility(not common.PREFS.get("onboarded"))
 
+        with ui.row().classes("w-full items-center gap-2 cc-task-flow") \
+                .props("role=status aria-label='1 Input → 2 Review → 3 Export' data-current-step=1") \
+                .mark("clean-task-flow") as task_flow:
+            for step, name in ((1, "Input"), (2, "Review"), (3, "Export")):
+                if step > 1:
+                    ui.label("→").classes("cc-task-flow__arrow").props("aria-hidden=true")
+                ui.label(f"{step} {name}").classes("cc-task-flow__step").props(f"data-step={step}")
+
         with ui.row().classes("w-full items-center gap-3 flex-wrap"):
             mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
                                   "expand": "Expand abbreviations"},
@@ -3015,7 +3043,8 @@ async def clean_page():
         layout = ui.element("div").classes("grid grid-cols-1 gap-4 w-full items-start")
         with layout:
             # ---- left: the chart ----
-            with ui.column().classes("w-full gap-2 min-w-0"):
+            with workflow_section("Input") as input_section:
+                input_section.classes("min-w-0")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
@@ -3026,13 +3055,15 @@ async def clean_page():
                         ui.label("Cleaning").classes("cc-mono text-xs cc-muted cc-pulse")
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
-                    ui.button("Sample", icon="science", on_click=load_sample).props("flat no-caps") \
-                        .tooltip("Load the sample chart")
-                    ui.button("Clear", icon="delete_sweep", on_click=clear_all).props("flat no-caps")
-                    ui.space()
-                    ui.switch("Auto-clean", value=bool(common.PREFS.get("auto_clean")),
-                              on_change=lambda e: (common.PREFS.update(auto_clean=e.value), save_prefs())) \
-                        .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
+                    overflow_menu((("Sample", "science", load_sample, "load-sample"),
+                                   ("Clear", "delete_sweep", clear_all, "clear-input")),
+                                  marker="input-overflow", label="More input actions")
+                    with ui.button(icon="autorenew").props(
+                            "flat round aria-label='Auto-clean settings'").tooltip("Auto-clean settings"):
+                        with ui.menu().classes("p-2"):
+                            ui.switch("Auto-clean", value=bool(common.PREFS.get("auto_clean")),
+                                      on_change=lambda e: (common.PREFS.update(auto_clean=e.value), save_prefs())) \
+                                .tooltip(f"Clean {AUTO_CLEAN_PAUSE:g} s after you stop typing")
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
                                       "cc-panel cc-arrive").mark("selection-bar") as sel_bar:
@@ -3044,54 +3075,77 @@ async def clean_page():
                     ui.button("Line", icon="horizontal_rule", on_click=sel_line) \
                         .props("flat dense no-caps").mark("sel-line") \
                         .tooltip("Remove every whole line containing this (Alt+Shift+L)")
-                    ui.button("Rule…", icon="tune", on_click=sel_build) \
-                        .props("flat dense no-caps").mark("sel-build") \
-                        .tooltip("Build a rule: any date/name, lines starting with, a block, "
-                                 "one section only — with a preview (Alt+Shift+B)")
                     ui.button("Replace…", icon="find_replace", on_click=sel_replace) \
                         .props("flat dense no-caps").mark("sel-replace")
                     ui.button("Abbreviate…", icon="short_text", on_click=sel_abbreviate) \
                         .props("flat dense no-caps").mark("sel-abbreviate")
-                    ui.button("Never remove", icon="shield", on_click=sel_keep) \
-                        .props("flat dense no-caps").mark("sel-keep") \
-                        .tooltip("Rules will never remove text containing this (Alt+Shift+K)")
-                    ui.button("Collect", icon="add_to_photos", on_click=sel_collect) \
-                        .props("flat dense no-caps").mark("sel-collect") \
-                        .tooltip("Add to a list and remove them all at once — one Undo step "
-                                 "(Alt+Shift+C)")
-                    ui.button("More…", icon="school", on_click=sel_more) \
-                        .props("flat dense no-caps").mark("sel-more") \
-                        .tooltip("Advanced: remove whole lines, edit the text, check your recent charts")
-                    with ui.button(icon="tune").props("flat dense round aria-label='Matching options'").tooltip("Matching options"):
-                        with ui.menu().classes("p-2"):
-                            word_check = ui.checkbox("Whole words only", value=True)
-                            case_check = ui.checkbox("Match case", value=False)
-                    ui.button(icon="close", on_click=hide_selection_bar) \
-                        .props("flat dense round aria-label='Dismiss selection actions'")
+                    ui.button("Rule…", icon="tune", on_click=sel_build) \
+                        .props("flat dense no-caps").mark("sel-build") \
+                        .tooltip("Build a rule: any date/name, lines starting with, a block, "
+                                 "one section only — with a preview (Alt+Shift+B)")
+                    with ui.button(icon="more_horiz").props(
+                            "flat dense round aria-label='More selection actions'") \
+                            .mark("selection-overflow") as selection_overflow:
+                        with ui.menu().classes("p-1"):
+                            keep_item = ui.menu_item("Never remove", on_click=sel_keep).props("icon=shield") \
+                                .mark("sel-keep")
+                            keep_item.tooltip("Rules will never remove text containing this (Alt+Shift+K)")
+                            collect_item = ui.menu_item("Collect", on_click=sel_collect) \
+                                .props("icon=add_to_photos").mark("sel-collect")
+                            collect_item.tooltip("Add to a list and remove them all at once — one Undo step "
+                                                 "(Alt+Shift+C)")
+                            more_item = ui.menu_item("More…", on_click=sel_more).props("icon=school") \
+                                .mark("sel-more")
+                            more_item.tooltip("Advanced: remove whole lines, edit the text, check your recent charts")
+                            ui.separator()
+                            word_check = ui.checkbox("Whole words only", value=True).classes("px-2")
+                            case_check = ui.checkbox("Match case", value=False).classes("px-2")
+                            ui.separator()
+                            close_item = ui.menu_item("Close", on_click=hide_selection_bar).props("icon=close")
+                    selection_overflow_items = (keep_item, collect_item, more_item,
+                                                word_check, case_check, close_item)
+                    for item in selection_overflow_items:
+                        item.set_visibility(False)
+
+                    def reveal_selection_overflow() -> None:
+                        for item in selection_overflow_items:
+                            item.set_visibility(True)
+
+                    selection_overflow.on("click", reveal_selection_overflow)
                 sel_bar.set_visibility(False)
                 tray = ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
                                         "cc-panel cc-arrive").mark("collect-tray")
                 tray.set_visibility(False)
-                with ui.expansion("Selection settings", icon="tune").classes("w-full"):
+                with ui.expansion("Advanced input tools", icon="tune").classes("w-full") \
+                        .mark("advanced-input-tools") as advanced_tools:
                     selection_mode = common.PREFS.get("selection_mode")
                     selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
-                    ui.toggle({"ask": "Ask", "remove": "Remove text", "abbreviate": "Abbreviate"},
-                              value=selection_mode,
-                              on_change=lambda e: set_selection_mode(e.value)) \
-                        .props("dense no-caps size=sm").mark("selection-mode") \
-                        .tooltip("What selecting chart text does: ask first, remove it at once, "
-                                 "or abbreviate it")
+                    selection_toggle = ui.toggle(
+                        {"ask": "Ask", "remove": "Remove text", "abbreviate": "Abbreviate"},
+                        value=selection_mode, on_change=lambda e: set_selection_mode(e.value)) \
+                        .props("dense no-caps size=sm").mark("selection-mode")
+                    selection_toggle.tooltip("What selecting chart text does: ask first, remove it at once, "
+                                             "or abbreviate it")
                     highlight_status = ui.label(SELECTION_MODE_HELP[selection_mode]) \
                         .classes("text-xs cc-muted flex-grow").props("role=status aria-live=polite")
+                    history_button = ui.button("Undo history", icon="history", on_click=open_undo_history) \
+                        .props("flat dense no-caps align=left").mark("undo-history-button")
+                advanced_controls = (selection_toggle, highlight_status, history_button)
+                for control in advanced_controls:
+                    control.set_visibility(False)
+
+                def reveal_advanced_tools() -> None:
+                    for control in advanced_controls:
+                        control.set_visibility(True)
+
+                advanced_tools.on("click", reveal_advanced_tools)
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
                         .props("flat dense no-caps")
                     undo_btn.disable()
+                    undo_btn.set_visibility(False)
                     with undo_btn:
                         undo_tip = ui.tooltip("Nothing to undo yet")
-                    ui.button(icon="history", on_click=open_undo_history) \
-                        .props("flat dense round aria-label='Undo history'").mark("undo-history-button") \
-                        .tooltip("Undo history")
 
                 if HAS_EX4:
                     # ex4nicegui gives the textarea a reactive value signal; the plain
@@ -3144,7 +3198,9 @@ async def clean_page():
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
             # ---- right: the result ----
-            results_col = ui.column().classes("w-full gap-2 min-w-0 cc-stagger").mark("results")
+            with workflow_section("Review & export") as result_section:
+                result_section.classes("min-w-0")
+                results_col = ui.column().classes("w-full gap-2 cc-stagger").mark("results")
 
         preset_sel.on_value_change(on_preset_change)
         sync_mode_controls()

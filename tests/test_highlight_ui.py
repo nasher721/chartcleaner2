@@ -47,6 +47,8 @@ def _checkbox(user, label):
 def _act(user, selection, action):
     """Select text in the chart, then press a selection-toolbar button."""
     user.find(marker="highlight-source").trigger("mouseup", selection)
+    if action in {"keep", "more"}:
+        user.find(marker="selection-overflow").click()
     user.find(marker=f"sel-{action}").click()
 
 
@@ -278,6 +280,7 @@ async def test_never_remove_saves_an_exception_for_every_regex_stage(user, clean
     cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-keep")
+    user.find(marker="advanced-input-tools").click()
     _act(user, _selection(text, "K 6.1 called"), "keep")
     await user.should_see("Saved — rules will never remove")
     options = load_config(path)["stage_options"]

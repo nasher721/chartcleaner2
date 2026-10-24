@@ -285,6 +285,7 @@ async def test_remove_text_mode_removes_on_select(user, ui_config):
                               summary=None, qa=[])
     common.PREFS["selection_mode"] = "remove"
     await _open_clean(user, "/quick-remove-mode")
+    user.find(marker="advanced-input-tools").click()
     await user.should_see("Remove text mode")
     user.find(marker="highlight-source").trigger("mouseup", _selection(text, "Printed on"))
     assert _textarea(user, "Chart text").value == "Keep  today"
@@ -300,6 +301,7 @@ async def test_remove_text_mode_ignores_select_all(user, ui_config):
                               summary=None, qa=[])
     common.PREFS["selection_mode"] = "remove"
     await _open_clean(user, "/quick-remove-all")
+    user.find(marker="advanced-input-tools").click()
     user.find(marker="highlight-source").trigger("mouseup", _selection(text, text))
     await user.should_see("That selection is long")
     assert _textarea(user, "Chart text").value == text
@@ -325,11 +327,7 @@ async def test_selection_mode_toggle_saves_pref(user, ui_config):
     cc_app.CLEAN_STATE.update(input="x", mode="clean", result=None, result_text="", audit=None,
                               summary=None, qa=[])
     await _open_clean(user, "/quick-mode-toggle")
-    from nicegui import ui
-    settings = next(e for e in user.find(ui.expansion).elements
-                    if e.props.get("label") == "Selection settings")
-    with user.client:
-        settings.set_value(True)
+    user.find(marker="advanced-input-tools").click()
     toggle = next(iter(user.find(marker="selection-mode").elements))
     with user.client:
         toggle.set_value("remove")
