@@ -430,6 +430,22 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .q-table__bottom{font-family:var(--nd-mono);font-size:var(--label);
   color:var(--nd-text-secondary);border-top:1px solid var(--nd-border);}
 
+/* Batch is a stack of shrinkable regions. In particular, the folder field's
+   desktop width must not set the flex parent's intrinsic width on a phone;
+   wide result tables scroll inside their own container instead. */
+.cc-batch-section,.cc-batch-results{width:100%;min-width:0;max-width:100%;overflow-x:hidden;
+  contain:inline-size;}
+.cc-batch-section>*,.cc-batch-results>*{min-width:0;max-width:100%;}
+.cc-batch-table{overflow:hidden;}
+.cc-batch-table .q-table__middle{max-width:100%;overflow-x:auto;}
+.cc-batch-pending,.cc-batch-detail-value{overflow-wrap:anywhere;}
+.cc-batch-detail-grid{display:grid;width:100%;margin:0;gap:var(--nd-space-xs) var(--nd-space-md);
+  grid-template-columns:minmax(120px,180px) minmax(0,1fr);}
+.cc-batch-detail-label{font-family:var(--nd-mono);font-size:var(--label);
+  letter-spacing:.06em;text-transform:uppercase;color:var(--nd-text-secondary);}
+.cc-batch-detail-value{min-width:0;margin:0;font-family:var(--nd-mono);font-size:12.5px;
+  color:var(--nd-text-primary);}
+
 /* =====================================================================
    10. TABS / SEGMENTED CONTROLS / EXPANSIONS
    ===================================================================== */

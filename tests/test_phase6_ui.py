@@ -322,13 +322,26 @@ async def test_batch_filters_and_retry(user: User, page, tmp_path):
     bad = tmp_path / "bad.txt"
     bad.write_bytes(b"\xff\xfe\x00broken")
     await _open_page(user, "/p6-batch", cc_app.batch_page)
+    await user.should_see(marker="batch-queue")
+    await user.should_see(marker="batch-run-options")
     with user.client:
         next(e for e in user.find(ui.input).elements
              if e.props.get("label", "").startswith("…or a folder")).set_value(str(tmp_path))
     user.find("Add folder files").click()
     user.find("Clean queued files").click()
     await user.should_see(marker="batch-filter", retries=100)
+    await user.should_see(marker="batch-summary")
     await user.should_see("All (")
+    await user.should_see(marker="batch-details-good")
+    await user.should_see(marker="batch-details-bad")
+    table = next(iter(user.find(ui.table).elements))
+    action_slot = table.slots["body-cell-actions"].template
+    assert "View details" in action_slot and "Download .txt" in action_slot
+    details = next(iter(user.find(marker="batch-details-good").elements))
+    with user.client:
+        details.open()
+    assert details.value is True
+    await user.should_see("Characters")
 
 
 async def test_settings_search_filters_cards(user: User, page):

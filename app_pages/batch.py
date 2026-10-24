@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from app_pages.batch_view import batch_counts, batch_rows
+from app_pages.workflow_ui import summary_counts, workflow_section
 
 
 def safe_stem(name: str) -> str:
@@ -118,7 +120,36 @@ def batch_page():
         results_col.clear()
         if not results:
             return
+        details = {}
+
+        def event_row(event) -> dict | None:
+            args = event.args
+            if isinstance(args, dict) and isinstance(args.get("row"), dict):
+                return args["row"]
+            if (isinstance(args, (list, tuple)) and len(args) > 1
+                    and isinstance(args[1], dict)):
+                return args[1]
+            return None
+
+        def open_details(event) -> None:
+            row = event_row(event)
+            name = row.get("file") if row else None
+            if isinstance(name, str):
+                expansion = details.get(safe_stem(name))
+                if expansion is not None:
+                    expansion.open()
+
+        def download_result(event) -> None:
+            row = event_row(event)
+            name = row.get("file") if row else None
+            if not isinstance(name, str) or out_dir is None:
+                return
+            out_name = f"{safe_stem(name)}_cleaned.txt"
+            download_file(f"/exports/{out_dir.name}/{out_name}", out_name)
+
         with results_col:
+            with ui.column().classes("w-full gap-2").mark("batch-summary"):
+                summary_counts(batch_counts(results))
             with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("batch-filter"):
                 ui.toggle({"all": f"All ({len(results)})", "review": f"Needs review ({len(review)})",
                            "errors": f"Errors ({len(failed)})"}, value=out_ref["filter"],
@@ -128,55 +159,64 @@ def batch_page():
                               on_click=retry_failed).props("flat")
             cols = [
                 {"name": "file", "label": "File", "field": "file", "align": "left", "sortable": True},
-                {"name": "chars", "label": "Characters", "field": "chars", "align": "left"},
                 {"name": "reduction", "label": "Reduction", "field": "reduction", "sortable": True},
-                {"name": "phi", "label": "PHI redacted", "field": "phi"},
                 {"name": "findings", "label": "Audit findings", "field": "findings"},
-                {"name": "facts", "label": "Clinical facts", "field": "facts", "align": "left"},
-                {"name": "note", "label": "Note type", "field": "note", "align": "left"},
-                {"name": "ms", "label": "Elapsed", "field": "ms", "align": "left"},
-                *([{"name": "summary", "label": "One-liner (local AI)", "field": "summary",
-                    "align": "left"}] if any(r.summary for r in shown) else []),
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                {"name": "actions", "label": "Actions", "field": "actions", "align": "left"},
             ]
-            rows = []
-            for r in shown:
-                if r.status == "ok":
-                    rows.append({"file": r.name,
-                                 "chars": f"{r.chars_before:,} → {r.chars_after:,}",
-                                 "reduction": f"{r.reduction:+.1f}%",
-                                 "phi": r.phi_total, "findings": r.findings,
-                                 "facts": ("kept" if r.facts_status == "ok" else
-                                           ("review · " if r.facts_status == "review" else "dropped · ")
-                                           + r.facts) if r.facts_status else "—",
-                                 "note": (r.note_type + (f" → {r.preset}" if r.preset else "")) or "—",
-                                 "ms": f"{r.elapsed_ms:,} ms", "status": "ok", "summary": r.summary})
-                else:
-                    rows.append({"file": r.name, "chars": "—", "reduction": "—",
-                                 "phi": "—", "findings": "—", "facts": "—", "note": "—",
-                                 "ms": f"{r.elapsed_ms:,} ms",
-                                 "status": f"error: {r.error}"})
-            ui.table(columns=cols, rows=rows, row_key="file",
-                     pagination=20).classes("w-full").props("flat dense")
+            table = ui.table(columns=cols, rows=batch_rows(shown), row_key="file",
+                             pagination=20).classes("w-full cc-batch-table").props("flat dense")
+            table.add_slot("body-cell-actions", r'''
+                <q-td :props="props">
+                    <q-btn flat dense no-caps icon="visibility" label="View details"
+                        :aria-label="'View details for ' + props.row.file"
+                        @click.stop="$parent.$emit('view-details', {row: props.row})" />
+                    <q-btn v-if="props.row.status !== 'error'" flat dense no-caps
+                        icon="download" label="Download .txt"
+                        :aria-label="'Download .txt for ' + props.row.file"
+                        @click.stop="$parent.$emit('download-result', {row: props.row})" />
+                </q-td>
+            ''')
+            table.on("rowClick", open_details)
+            table.on("view-details", open_details)
+            table.on("download-result", download_result)
             if ok and out_dir is not None:
                 with ui.row().classes("gap-2 flex-wrap items-center"):
                     ui.button("Download all (.zip)", icon="archive",
                               on_click=download_zip).props("unelevated color=primary")
                     ui.button("Open exports folder", icon="folder",
                               on_click=lambda: open_folder(out_dir)).props("flat")
-                for r in [r for r in shown if r.status == "ok"]:
-                    out_name = f"{safe_stem(r.name)}_cleaned.txt"
-                    with ui.row().classes("w-full items-center gap-2"):
-                        ui.icon("description").classes("opacity-60")
-                        ui.label(out_name).classes("text-xs cc-mono flex-grow")
-                        ui.button("Download .txt", icon="download",
-                                  on_click=lambda _, n=out_name: download_file(
-                                      f"/exports/{out_dir.name}/{n}", n)
-                                  ).props("flat dense")
-            if failed:
-                ui.label(f"{len(failed)} file(s) failed: "
-                         + "; ".join(f"{r.name} — {r.error}" for r in failed[:5])) \
-                    .classes("text-xs text-red-600")
+            for r in shown:
+                successful = r.status == "ok"
+                facts = (("kept" if r.facts_status == "ok" else
+                          ("review · " if r.facts_status == "review" else "dropped · ")
+                          + r.facts) if r.facts_status else "—") if successful else "—"
+                note = ((r.note_type + (f" → {r.preset}" if r.preset else "")) or "—") \
+                    if successful else "—"
+                status = (f"error: {r.error}" if not successful else
+                          ("review" if r.needs_review else "ok"))
+                with ui.expansion(f"{r.name} — details", icon="description") \
+                        .classes("w-full cc-batch-details") \
+                        .mark(f"batch-details-{safe_stem(r.name)}") as expansion:
+                    with ui.element("dl").classes("cc-batch-detail-grid"):
+                        values = [
+                            ("Characters", f"{r.chars_before:,} → {r.chars_after:,}"
+                             if successful else "—"),
+                            ("Reduction", f"{r.reduction:+.1f}%" if successful else "—"),
+                            ("PHI redacted", str(r.phi_total) if successful else "—"),
+                            ("Audit findings", str(r.findings) if successful else "—"),
+                            ("Clinical facts", facts),
+                            ("Note type / preset", note),
+                            ("Elapsed", f"{r.elapsed_ms:,} ms"),
+                            ("AI one-liner (local AI)", r.summary or "—"),
+                            ("Status / error", status),
+                        ]
+                        for label, value in values:
+                            with ui.element("dt").classes("cc-batch-detail-label"):
+                                ui.label(label)
+                            with ui.element("dd").classes("cc-batch-detail-value"):
+                                ui.label(value)
+                details[safe_stem(r.name)] = expansion
             ui.label("Cleaned copies also live in data/exports; run history is on the "
                      "Statistics page.").classes("text-xs opacity-60")
 
@@ -284,52 +324,61 @@ def batch_page():
         ui.label("Clean many charts in one run. Upload files or queue a folder — every "
                  "cleaned copy is saved to data/exports, and the per-file stats below show "
                  "exactly what your rules did.").classes("cc-page-sub")
-        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-            ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
-                      label="Drop .txt / .docx / .pdf") \
-                .props("accept=.txt,.md,.docx,.pdf,text/plain flat").classes("w-[320px]")
-            folder_input = ui.input("…or a folder path", placeholder="/path/to/charts") \
-                .classes("w-96 cc-mono")
-            ui.button("Add folder files", icon="create_new_folder",
-                      on_click=add_folder).props("outline")
-        with ui.row().classes("w-full items-center gap-2"):
-            pending_label = ui.label("No files queued yet.").classes("text-sm flex-grow")
-            run_btn = ui.button("Clean queued files", icon="auto_fix_high", on_click=run_now)
-            run_btn.props("unelevated color=primary")
-            run_btn.set_enabled(False)
-            clear_btn = ui.button("Clear queue", icon="delete_sweep",
-                                  on_click=clear_pending).props("flat")
-            clear_btn.set_enabled(False)
-            delta_switch = ui.switch("Only what changed between daily notes").tooltip(
-                "Copy-forward delta view: keeps the first note in full, then only new or "
-                "changed paragraphs from each later note.")
-            note_switch = ui.switch("Use note-type presets",
-                                    value=bool(common.PREFS.get("note_auto_apply"))).tooltip(
-                "Detect each file's note type and clean it with the preset mapped to that "
-                "type in Settings → Note types.").mark("batch-note-types")
-            spinner = ui.spinner("dots", size="lg")
-            spinner.set_visibility(False)
-        with ui.column().classes("w-full gap-2").mark("batch-progress") as progress_row:
-            progress_bar = SegmentedBar(progress_row, segments=32, label="Progress")
-            progress_label = ui.label("").classes("cc-segbar-note")
-        progress_row.set_visibility(False)
-        ui.timer(0.3, tick_progress)
-        with ui.expansion("…or paste a patient list (sign-out, census, rounding list)",
-                          icon="groups").classes("w-full").mark("patient-list"):
-            ui.label("Patients are split at bed labels (G20-1, Bed 4), Patient:/Name: lines, "
-                     "numbered entries or separator lines; each one is cleaned on its own.") \
-                .classes("text-xs cc-muted")
-            list_input = ui.textarea("Patient list", on_change=lambda _: preview_split()) \
-                .props("outlined input-style='min-height: 180px'").classes("w-full cc-mono") \
-                .mark("patient-list-input")
-            split_label = ui.label("Paste a list first.").classes("text-xs cc-muted") \
-                .mark("patient-split")
-            with ui.row().classes("items-center gap-2"):
-                ui.button("Split & clean", icon="call_split", on_click=run_list) \
-                    .props("unelevated color=primary").mark("patient-list-run")
-                ai_switch = ui.switch("Add a one-liner per patient (local AI)").tooltip(
-                    "Uses the on-device model (Ollama); left blank when no model answers.")
-        results_col = ui.column().classes("w-full gap-3")
+        with workflow_section("Queue", "Add individual files or every supported file in a folder.") \
+                as queue_section:
+            queue_section.classes("cc-batch-section").mark("batch-queue")
+            with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                ui.upload(on_upload=handle_upload, multiple=True, auto_upload=True,
+                          label="Drop .txt / .docx / .pdf") \
+                    .props("accept=.txt,.md,.docx,.pdf,text/plain flat") \
+                    .classes("w-[320px] max-w-full")
+                folder_input = ui.input("…or a folder path", placeholder="/path/to/charts") \
+                    .classes("w-full sm:w-96 cc-mono")
+                ui.button("Add folder files", icon="create_new_folder",
+                          on_click=add_folder).props("outline")
+            with ui.row().classes("w-full items-center gap-2"):
+                pending_label = ui.label("No files queued yet.") \
+                    .classes("text-sm flex-grow cc-batch-pending")
+        with workflow_section("Run options", "Choose how to clean, then run or clear the queue.") \
+                as options_section:
+            options_section.classes("cc-batch-section").mark("batch-run-options")
+            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                run_btn = ui.button("Clean queued files", icon="auto_fix_high", on_click=run_now)
+                run_btn.props("unelevated color=primary")
+                run_btn.set_enabled(False)
+                clear_btn = ui.button("Clear queue", icon="delete_sweep",
+                                      on_click=clear_pending).props("flat")
+                clear_btn.set_enabled(False)
+                delta_switch = ui.switch("Only what changed between daily notes").tooltip(
+                    "Copy-forward delta view: keeps the first note in full, then only new or "
+                    "changed paragraphs from each later note.")
+                note_switch = ui.switch("Use note-type presets",
+                                        value=bool(common.PREFS.get("note_auto_apply"))).tooltip(
+                    "Detect each file's note type and clean it with the preset mapped to that "
+                    "type in Settings → Note types.").mark("batch-note-types")
+                spinner = ui.spinner("dots", size="lg")
+                spinner.set_visibility(False)
+            with ui.column().classes("w-full gap-2").mark("batch-progress") as progress_row:
+                progress_bar = SegmentedBar(progress_row, segments=32, label="Progress")
+                progress_label = ui.label("").classes("cc-segbar-note")
+            progress_row.set_visibility(False)
+            ui.timer(0.3, tick_progress)
+            with ui.expansion("…or paste a patient list (sign-out, census, rounding list)",
+                              icon="groups").classes("w-full").mark("patient-list"):
+                ui.label("Patients are split at bed labels (G20-1, Bed 4), Patient:/Name: lines, "
+                         "numbered entries or separator lines; each one is cleaned on its own.") \
+                    .classes("text-xs cc-muted")
+                list_input = ui.textarea("Patient list", on_change=lambda _: preview_split()) \
+                    .props("outlined input-style='min-height: 180px'").classes("w-full cc-mono") \
+                    .mark("patient-list-input")
+                split_label = ui.label("Paste a list first.").classes("text-xs cc-muted") \
+                    .mark("patient-split")
+                with ui.row().classes("items-center gap-2 flex-wrap"):
+                    ui.button("Split & clean", icon="call_split", on_click=run_list) \
+                        .props("unelevated color=primary").mark("patient-list-run")
+                    ai_switch = ui.switch("Add a one-liner per patient (local AI)").tooltip(
+                        "Uses the on-device model (Ollama); left blank when no model answers.")
+        results_col = ui.column().classes("w-full gap-3 cc-batch-results")
 
 
 # ===========================================================================
