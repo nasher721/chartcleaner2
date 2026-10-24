@@ -147,6 +147,16 @@ def _cleaned(text: str, cfg: dict, record: bool, source: str) -> str:
     return clean(text, config=cfg, wrap=False, record=record, source=source)["text"]
 
 
+def _cleaned_or_blocked(text: str, cfg: dict, record: bool, source: str) -> tuple[str, dict | None]:
+    res = clean(text, config=cfg, wrap=False, record=record, source=source)
+    if res.get("blocked"):
+        blocked: dict[str, Any] = {"text": "", "blocked": True, "release": res["release"]}
+        if "validation" in res:
+            blocked["validation"] = res["validation"]
+        return "", blocked
+    return res["text"], None
+
+
 def daily_note(today: str, previous: str | None = None, *, tag: str | None = None,
                preset: str | None = None, config: dict | None = None, clean_first: bool = True,
                record: bool = False, source: str = "api") -> dict:
@@ -166,8 +176,12 @@ def daily_note(today: str, previous: str | None = None, *, tag: str | None = Non
         previous = found["text"]
     cfg = _config(config, preset)
     if clean_first:
-        today = _cleaned(today, cfg, record, source)
-        previous = _cleaned(previous, cfg, False, source)
+        today, blocked = _cleaned_or_blocked(today, cfg, record, source)
+        if blocked is not None:
+            return blocked
+        previous, blocked = _cleaned_or_blocked(previous, cfg, False, source)
+        if blocked is not None:
+            return blocked
     return build(today, previous, cfg).to_dict()
 
 
@@ -199,16 +213,22 @@ def clean_patients(text: str, *, preset: str | None = None, config: dict | None 
                         custom_dir=custom_dir or store.CUSTOM_RULES_DIR, summarize=one_liner)
     return [{"label": r.name, "status": r.status, "error": r.error, "text": r.cleaned,
              "summary": r.summary, "reduction": r.reduction, "facts": r.facts,
-             "facts_status": r.facts_status} for r in results]
+             "facts_status": r.facts_status, "release": r.release,
+             "release_reasons": list(r.release_reasons)} for r in results]
 
 
 def note(text: str, template: str, *, preset: str | None = None, clean_first: bool = True,
          record: bool = True, source: str = "api", config: dict | None = None) -> dict:
     """Clean ``text`` and fill note template ``template`` (see note_templates)."""
-    from .note_templates import render
+    from .note_templates import get, render
 
     cfg = _config(config, preset)
-    chart = _cleaned(text, cfg, record, source) if clean_first else text
+    if not clean_first:
+        return {"template": template, "text": render(template, text, cfg)}
+    get(template, cfg)  # validate template before the (slow) clean
+    chart, blocked = _cleaned_or_blocked(text, cfg, record, source)
+    if blocked is not None:
+        return {"template": template, **blocked}
     return {"template": template, "text": render(template, chart, cfg)}
 
 
@@ -360,10 +380,15 @@ def prompt(text: str, template: str, *, preset: str | None = None, clean_first: 
            record: bool = True, source: str = "api", config: dict | None = None,
            budget_tokens: int | None = None) -> dict:
     """Clean ``text`` (unless ``clean_first`` is False) and wrap it in a prompt template."""
-    from .prompt_templates import render
+    from .prompt_templates import get, render
 
     cfg = _config(config, preset)
-    chart = _cleaned(text, cfg, record, source) if clean_first else text
+    if not clean_first:
+        return {"template": template, "text": render(template, text, cfg, budget_tokens=budget_tokens)}
+    get(template, cfg)  # validate template before the (slow) clean
+    chart, blocked = _cleaned_or_blocked(text, cfg, record, source)
+    if blocked is not None:
+        return {"template": template, **blocked}
     return {"template": template, "text": render(template, chart, cfg, budget_tokens=budget_tokens)}
 
 

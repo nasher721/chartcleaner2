@@ -246,3 +246,62 @@ def test_review_status_result_still_ships_text_with_the_decision_attached():
     assert out["validation"]["rejected"] == 1
     results = batch.run_texts([("c", CHART)], REVIEW)
     assert results[0].status == "ok" and results[0].release == "review" and results[0].needs_review
+
+
+def test_blocked_withheld_across_templates_patients_watcher_and_cli_files(tmp_path, capsys):
+    import medical_cleaner as cli
+    from chartcleaner.watcher import FolderWatcher, WatchSpec
+
+    # 1. batch.run_texts does not invoke summarize() on a blocked chart.
+    summarized: list[str] = []
+    res = batch.run_texts([("c", CHART)], BLOCKED, summarize=lambda txt: (summarized.append(txt) or "sum"))
+    assert res[0].status == "blocked" and res[0].summary == "" and not summarized
+
+    # 2. service.prompt, service.note, service.daily_note, service.clean_patients withhold text.
+    p_out = service.prompt(CHART, "Progress note", config=BLOCKED, record=False)
+    assert p_out.get("blocked") is True and p_out["text"] == "" and p_out["release"]["status"] == "blocked"
+    n_out = service.note(CHART, "Systems note ([N] [CV] [R] …)", config=BLOCKED, record=False)
+    assert n_out.get("blocked") is True and n_out["text"] == "" and n_out["release"]["status"] == "blocked"
+    d_out = service.daily_note(CHART, CLEAN_CHART, config=BLOCKED, record=False)
+    assert d_out.get("blocked") is True and d_out["text"] == "" and d_out["release"]["status"] == "blocked"
+    patients = service.clean_patients(f"Bed 1\n{CHART}", config=BLOCKED)
+    assert patients[0]["status"] == "blocked" and patients[0]["text"] == ""
+    assert patients[0]["release"] == "blocked" and "redaction_failed" in patients[0]["release_reasons"]
+
+    # 3. FolderWatcher refuses to write a blocked file and records the error.
+    watch_in = tmp_path / "watch_in"
+    watch_out = tmp_path / "watch_out"
+    watch_in.mkdir()
+    watch_out.mkdir()
+    src_file = watch_in / "chart.txt"
+    src_file.write_text(CHART, encoding="utf-8")
+    fw = FolderWatcher(WatchSpec(watch_dir=watch_in, out_dir=watch_out), BLOCKED)
+    fw._process(src_file)
+    assert not list(watch_out.glob("*")), "blocked chart must not be written by FolderWatcher"
+    assert fw.status.processed == 0
+    assert any("Release withheld" in e for e in fw.status.errors)
+
+    # 4. CLI process_file, _run_clipboard, and _split_and_clean refuse to emit blocked text.
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(BLOCKED), encoding="utf-8")
+    cleaner = cli.MedicalCleaner(config_path=cfg_path, wrap_output=False)
+    cli_out = tmp_path / "cli_out"
+    cli_out.mkdir()
+    cli.process_file(src_file, cleaner, cli_out)
+    assert not list(cli_out.glob("*")), "blocked chart must not be written by process_file"
+    assert "withheld" in capsys.readouterr().err.lower()
+
+    with pytest.raises(SystemExit) as exc:
+        cli._split_and_clean(f"Bed 1\n{CHART}", cleaner)
+    assert exc.value.code == 3
+
+    import pyperclip
+    copied: list[str] = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pyperclip, "paste", lambda: CHART)
+        mp.setattr(pyperclip, "copy", copied.append)
+        args = types.SimpleNamespace(format="text", delta=False, trends=False, insights=False,
+                                     prompt=None, audit=False)
+        with pytest.raises(SystemExit) as exc2:
+            cli._run_clipboard(args, cleaner)
+    assert exc2.value.code == 3 and not copied

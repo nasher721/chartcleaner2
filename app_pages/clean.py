@@ -731,13 +731,13 @@ async def clean_page():
                 ui.separator()
                 ui.item("Change what the main button copies…", on_click=open_copy_default_dialog)
             with ui.dropdown_button("Save", icon="download", auto_close=True).props("flat no-caps"):
-                ui.item("Text (.txt)", on_click=download_result)
-                ui.item("Word (.docx)", on_click=lambda: ui.download.content(
-                    to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))
-                ui.item("Markdown (.md)", on_click=lambda: ui.download.content(
-                    chart_markdown().encode("utf-8"), "cleaned_chart.md"))
+                ui.item("Text (.txt)", on_click=download_result).mark("save-txt")
+                ui.item("Word (.docx)", on_click=lambda: guarded_copy(lambda: ui.download.content(
+                    to_docx(CLEAN_STATE["result_text"]), "cleaned_chart.docx"))).mark("save-docx")
+                ui.item("Markdown (.md)", on_click=lambda: guarded_copy(lambda: ui.download.content(
+                    chart_markdown().encode("utf-8"), "cleaned_chart.md"))).mark("save-md")
                 if common.PREFS.get("notes_folder"):
-                    ui.item("To my notes folder", on_click=save_to_notes_folder)
+                    ui.item("To my notes folder", on_click=save_to_notes_folder).mark("save-notes-folder")
             ui.button("Edit result", icon="edit", on_click=toggle_edit).props("flat no-caps").mark("edit-result") \
                 .tooltip("Edit the result before copying — copies use your edits, and lines you "
                          "keep deleting become rule suggestions")
@@ -1364,8 +1364,10 @@ async def clean_page():
                       on_click=use_for_ai).props("flat")
 
     def download_result() -> None:
-        name = store.save_export(CLEAN_STATE["result_text"], "cleaned_chart")
-        download_file(f"/exports/{name}", name)
+        def do_download() -> None:
+            name = store.save_export(CLEAN_STATE["result_text"], "cleaned_chart")
+            download_file(f"/exports/{name}", name)
+        guarded_copy(do_download)
 
     # ---- AI drawer: local summary + ask this chart ------------------------------
     summary_state = {"running": False, "partial": None}
@@ -2587,12 +2589,14 @@ async def clean_page():
                            if note.get("label") != "Not sure" else "")
 
     def save_to_notes_folder() -> None:
-        try:
-            path = save_to_vault(chart_markdown(), common.PREFS["notes_folder"])
-        except Exception as ex:
-            ui.notify(f"Could not save: {ex}", type="negative")
-            return
-        ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
+        def do_save() -> None:
+            try:
+                path = save_to_vault(chart_markdown(), common.PREFS["notes_folder"])
+            except Exception as ex:
+                ui.notify(f"Could not save: {ex}", type="negative")
+                return
+            ui.notify(f"Saved {path.name} to your notes folder.", type="positive")
+        guarded_copy(do_save)
 
     def copy_note(name: str) -> None:
         try:

@@ -517,12 +517,14 @@ def check_release(report: AccuracyReport, baseline: AccuracyReport, *,
         return auth, rem
     v_auth, v_rem = _valid_clutter(report.outcomes)
     b_auth, b_rem = _valid_clutter(baseline.outcomes)
-    if v_auth and b_auth:
+    if v_auth and b_auth and b_rem:
         ratio = (v_rem / v_auth) / (b_rem / b_auth)
-    elif v_auth == b_auth == 0:
+    elif (v_auth == b_auth == 0) or (b_rem == 0 and v_rem >= 0):
         ratio = 1.0
     else:
         ratio = 0.0
+    add("clutter_removal_ratio", ratio >= used["clutter_removal_ratio"],
+        round(ratio, 4), used["clutter_removal_ratio"])
     return {
         "ok": all(c["ok"] for c in checks), "gate_version": GATE_VERSION,
         "checks": checks, "thresholds_used": used,

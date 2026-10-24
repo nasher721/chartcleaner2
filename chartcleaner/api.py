@@ -133,18 +133,11 @@ def register(app) -> None:
             return denied
         try:
             # Cleans can take seconds (NLP redaction); keep the app's event loop free.
-            return await run_in_threadpool(call, data)
+            out = await run_in_threadpool(call, data)
         except KeyError as ex:
             return _deny(404, str(ex).strip("'\""))
         except (ValueError, FileNotFoundError) as ex:
             return _deny(400, str(ex))
-
-    @app.post("/api/v1/clean")
-    async def api_clean(request: Request):
-        out = await run(request, ("text",), lambda d: service.clean(
-            d["text"], preset=_str(d, "preset"), fmt=_str(d, "format") or "text",
-            delta=bool(d.get("delta")), trends=bool(d.get("trends")), wrap=_bool(d, "wrap"),
-            source="api:rest"))
         if isinstance(out, dict) and out.get("blocked"):
             # Release withheld (a mandatory redaction failed): no cleaned text
             # leaves over the API; the decision and text-free counts do.
@@ -152,6 +145,13 @@ def register(app) -> None:
                                  "text": "", "release": out["release"],
                                  "validation": out.get("validation")}, status_code=409)
         return out
+
+    @app.post("/api/v1/clean")
+    async def api_clean(request: Request):
+        return await run(request, ("text",), lambda d: service.clean(
+            d["text"], preset=_str(d, "preset"), fmt=_str(d, "format") or "text",
+            delta=bool(d.get("delta")), trends=bool(d.get("trends")), wrap=_bool(d, "wrap"),
+            source="api:rest"))
 
     @app.post("/api/v1/abbreviate")
     async def api_abbreviate(request: Request):

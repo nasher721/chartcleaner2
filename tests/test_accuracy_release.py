@@ -77,6 +77,17 @@ def test_release_fails_on_excess_valid_edit_rejection():
     assert not result["ok"] and "valid_edit_rejection" in _names(result)
     entry = next(c for c in result["checks"] if c["name"] == "valid_edit_rejection")
     assert entry["observed"] == 1.0 and entry["threshold"] == 0.05
+    clutter = next(c for c in result["checks"] if c["name"] == "clutter_removal_ratio")
+    assert clutter["ok"] is False and clutter["observed"] == 0.0 and clutter["threshold"] == 0.95
+
+
+def test_release_handles_zero_baseline_clutter_without_division_error():
+    # Baseline with valid cases whose candidate left the clutter in (b_rem == 0).
+    baseline = _report("enforce", valid=4, harmful=0, reject_valid=True)
+    good = _report("enforce", valid=4, harmful=0)
+    gate = check_release(good, baseline, labels=REVIEWED)
+    clutter = next(c for c in gate["checks"] if c["name"] == "clutter_removal_ratio")
+    assert clutter["ok"] is True and clutter["observed"] == 1.0
 
 
 def test_unreviewed_labels_cannot_certify_release():

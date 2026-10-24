@@ -152,13 +152,21 @@ class FolderWatcher:
             return
         pipeline = Pipeline(self.config, custom_dir=self.custom_dir)
         result = pipeline.run(ing.text)
+        from .review_state import release_decision
+        decision = release_decision(result, output_text=result.text)
+        store.append_run(result.to_history_dict(f"watch:{self.spec.watch_dir.name}"))
+        self.status.last_file = path.name
+        self.status.last_ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        if not decision.releasable:
+            self.status.errors.append(
+                f"{path.name}: Release withheld ({', '.join(decision.reasons)})"
+            )
+            del self.status.errors[:-20]
+            return
         out_name = f"{path.stem}{_CLEANED_SUFFIX}.txt"
         store.ensure_dir(self.spec.out_dir)
         (self.spec.out_dir / out_name).write_text(result.text, encoding="utf-8")
-        store.append_run(result.to_history_dict(f"watch:{self.spec.watch_dir.name}"))
         self.status.processed += 1
-        self.status.last_file = path.name
-        self.status.last_ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         if ing.warnings:
             self.status.errors.append(f"{path.name}: " + " | ".join(ing.warnings))
             del self.status.errors[:-20]

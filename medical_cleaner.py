@@ -217,7 +217,9 @@ def _split_and_clean(text: str, cleaner: "MedicalCleaner") -> str:
     pipe = Pipeline(cleaner.config, custom_dir=cleaner._custom_dir, mode=cleaner.mode)
     parts = []
     for c in chunks:
-        parts.append(f"=== {c.label} ===\n{pipe.run(c.text, wrap=False).text}")
+        res = pipe.run(c.text, wrap=False)
+        _release_or_exit(res, res.text)
+        parts.append(f"=== {c.label} ===\n{res.text}")
     print(f"{len(chunks)} patient(s) cleaned.", file=sys.stderr)
     return "\n\n".join(parts) + "\n"
 
@@ -376,6 +378,13 @@ def process_file(file_path: Path, cleaner: MedicalCleaner, output_dir: Path,
             print(f"  ! {w}", file=sys.stderr)
         result = cleaner.clean_detailed(ing.text)
         final_text = _format_output(result.text, delta, out_format, trends, insights)
+        from chartcleaner.review_state import release_decision
+        decision = release_decision(result, output_text=final_text)
+        if not decision.releasable:
+            print(f"Release withheld for {file_path.name} — the cleaned text was not written: "
+                  + ", ".join(decision.reasons), file=sys.stderr)
+            print("Open the chart in Chart Cleaner to review the blocked redaction.", file=sys.stderr)
+            return
 
         ext = {"json": ".json", "xml": ".xml", "markdown": ".md", "docx": ".docx"}.get(out_format, ".txt")
         out_path = output_dir / f"{file_path.stem}_cleaned{ext}"
@@ -730,9 +739,11 @@ def _run_clipboard(args, cleaner: MedicalCleaner) -> None:
         if args.prompt:
             from chartcleaner.prompt_templates import render
             final_text = render(args.prompt, result.text, cleaner.config)
+        _release_or_exit(result, final_text)
         pyperclip.copy(final_text)
 
         _print_summary(result, "Clipboard")
+        _print_release(result, final_text)
         if args.audit:
             _print_audit(run_audit(result.text, cleaner.config))
         print("Cleaned text copied back to clipboard!")

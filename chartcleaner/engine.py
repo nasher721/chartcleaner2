@@ -756,15 +756,6 @@ class Pipeline:
             if warning:
                 warnings.append(warning)
             stats.append(st)
-            if ledger is not None and ledger.current != text:
-                # An opaque stage (compactor, custom script, cache hit…) moved the
-                # text without proposing edits: one coarse proposal covers the gap
-                # and is judged like any other. Under enforcement a rejected stage
-                # hands its input through unchanged.
-                accepted = self._reconcile(ledger, ctx, spec.id, text)
-                if accepted != text:
-                    st.details["validation"] = "retained_original"
-                    st.matches = 0
             if session is not None:
                 session.sync()
             if tracker is not None and text != before:

@@ -117,7 +117,7 @@ def run_texts(
         started = time.monotonic()
         try:
             res = runner.clean(name, "", text)
-            if summarize is not None:
+            if summarize is not None and res.status == "ok" and res.cleaned:
                 try:
                     res.summary = (summarize(res.cleaned) or "").strip()
                 except Exception:

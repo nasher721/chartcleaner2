@@ -129,7 +129,8 @@ def clean_patient_list(text: str, preset: str = "") -> list[dict[str, Any]]:
     """Split a multi-patient paste (bed labels like G20-1, Patient: lines, separators)
     and clean each patient on its own. Returns label, cleaned text and status per patient."""
     out = service.clean_patients(text, preset=preset or None)
-    return [{k: p[k] for k in ("label", "status", "text", "error")} for p in out]
+    return [{k: p[k] for k in ("label", "status", "text", "error", "release", "release_reasons")
+             if k in p} for p in out]
 
 
 TOOLS = (clean_chart, abbreviate, expand_abbreviations, render_prompt, list_presets,
