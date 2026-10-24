@@ -360,11 +360,13 @@ async def test_batch_same_stem_files_have_distinct_detail_routing(user: User, pa
     txt = expansions["one.txt — details"]
     pdf = expansions["one.pdf — details"]
 
-    user.find(ui.table).trigger("viewDetails", {"row": {"file": "one.pdf"}})
+    table = next(iter(user.find(ui.table).elements))
+    rows = {row["file"]: row for row in table.rows}
+    user.find(ui.table).trigger("viewDetails", {"row": rows["one.pdf"]})
     assert pdf.value is True and txt.value is False
     with user.client:
         pdf.close()
-    user.find(ui.table).trigger("viewDetails", {"row": {"file": "one.txt"}})
+    user.find(ui.table).trigger("viewDetails", {"row": rows["one.txt"]})
     assert txt.value is True and pdf.value is False
 
     txt_markers = set(getattr(txt, "_markers", set()))
@@ -372,6 +374,61 @@ async def test_batch_same_stem_files_have_distinct_detail_routing(user: User, pa
     assert any(marker.startswith("batch-details-one") for marker in txt_markers)
     assert any(marker.startswith("batch-details-one") for marker in pdf_markers)
     assert txt_markers.isdisjoint(pdf_markers)
+
+
+async def test_batch_exact_duplicate_names_have_distinct_detail_routing(user: User, page, tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "same.txt").write_text("Plan: recheck tomorrow\n", encoding="utf-8")
+    (second / "same.txt").write_text("Plan: follow up in one week\n", encoding="utf-8")
+    await _open_page(user, "/p6-batch-duplicate-name", cc_app.batch_page)
+    folder = next(e for e in user.find(ui.input).elements
+                  if e.props.get("label", "").startswith("…or a folder"))
+    for path in (first, second):
+        with user.client:
+            folder.set_value(str(path))
+        user.find("Add folder files").click()
+    user.find("Clean queued files").click()
+    await user.should_see(marker="batch-filter", retries=100)
+    first_expansion = next(iter(user.find(marker="batch-details-same").elements))
+    second_expansion = next(iter(user.find(marker="batch-details-same-2").elements))
+    table = next(iter(user.find(ui.table).elements))
+    duplicate_rows = [row for row in table.rows if row["file"] == "same.txt"]
+    assert len(duplicate_rows) == 2
+
+    user.find(ui.table).trigger("viewDetails", {"row": duplicate_rows[0]})
+    assert first_expansion.value is True and second_expansion.value is False
+    first_text = " ".join(getattr(e, "text", "") for e in first_expansion.descendants())
+    with user.client:
+        first_expansion.close()
+    user.find(ui.table).trigger("viewDetails", {"row": duplicate_rows[1]})
+    assert first_expansion.value is False and second_expansion.value is True
+    second_text = " ".join(getattr(e, "text", "") for e in second_expansion.descendants())
+    assert first_text != second_text
+
+
+async def test_stats_detailed_content_is_constructed_inside_disclosure(user: User, page, monkeypatch):
+    from chartcleaner.engine import Pipeline
+    from app_pages import stats as stats_mod
+    cfg = load_config(page)
+    run = Pipeline(cfg).run("Plan: recheck\n").to_history_dict("editor")
+    monkeypatch.setattr(store, "load_runs", lambda: [run])
+    parents = []
+    real_table = stats_mod.ui.table
+
+    def record_parent(*args, **kwargs):
+        table = real_table(*args, **kwargs)
+        if kwargs.get("row_key") == "ts":
+            parents.append(table.parent_slot.parent)
+        return table
+
+    monkeypatch.setattr(stats_mod.ui, "table", record_parent)
+    await _open_page(user, "/p6-stats-disclosure", cc_app.stats_page)
+    details = next(iter(user.find(marker="stats-details").elements))
+    assert parents
+    assert all(parent is details for parent in parents)
 
 
 async def test_settings_search_filters_cards(user: User, page):

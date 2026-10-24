@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages.workflow_ui import empty_state, workflow_section
@@ -156,9 +158,10 @@ def stats_page():
 
             render_rule_health(runs, s)
 
-        details = ui.expansion("Detailed activity", icon="insights", value=False) \
-            .classes("w-full cc-secondary-details").mark("stats-details")
-        details_parent = details.parent_slot.parent
+        detail_scope = ExitStack()
+        details = detail_scope.enter_context(
+            ui.expansion("Detailed activity", icon="insights", value=False)
+            .classes("w-full cc-secondary-details").mark("stats-details"))
 
         if s["days"]:
             days = s["days"]
@@ -319,11 +322,7 @@ def stats_page():
 
             eval_btn.on("click", lambda: asyncio.get_running_loop().create_task(run_eval()))
 
-        # Keep the established renderers and callbacks intact, then place every
-        # element they created below the summary inside the closed disclosure.
-        siblings = list(details_parent.default_slot.children)
-        for element in siblings[siblings.index(details) + 1:]:
-            element.move(details)
+        detail_scope.close()
 
 
 # ===========================================================================

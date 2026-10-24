@@ -15,7 +15,9 @@ def test_counts_and_default_rows_keep_review_and_error_distinct():
                _result("bad.txt", status="error", error="decode failed")]
     assert batch_counts(results) == [("Processed", 3), ("Needs review", 1), ("Errors", 1)]
     rows = batch_rows(results)
-    assert list(rows[0]) == ["file", "reduction", "findings", "status", "actions"]
+    assert list(rows[0]) == ["result_id", "file", "reduction", "findings", "status", "actions"]
+    assert rows[0]["result_id"] == str(id(results[0]))
+    assert rows[1]["result_id"] != rows[2]["result_id"]
     assert rows[0]["reduction"] == "+40.0%"
     assert rows[2]["status"] == "error"
     assert rows[2]["findings"] == "—"

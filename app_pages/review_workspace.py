@@ -5,7 +5,9 @@ from dataclasses import dataclass
 
 from nicegui import ui
 
-from app_pages.review_model import build_finding_rows, default_review_view, filter_findings
+from app_pages.review_model import (
+    build_finding_rows, default_review_view, filter_findings, finding_count,
+)
 
 
 def collapse_context_ranges(line_count: int, changed_lines: set[int], context: int = 3) -> list[tuple[int, int]]:
@@ -34,17 +36,19 @@ class ReviewSections:
 
 
 def render_review_workspace(*, result, audit, source, output, decision,
-                            sections: ReviewSections, locate, change_count: int = 0) -> None:
-    rows = build_finding_rows(result, audit, source=source, output=output)
+                            sections: ReviewSections, locate, change_count: int = 0,
+                            finding_rows=None) -> None:
+    rows = (build_finding_rows(result, audit, source=source, output=output)
+            if finding_rows is None else finding_rows)
     if decision.status == "blocked":
         with ui.row().classes("w-full items-center gap-2 cc-tint cc-tint--danger p-3") \
                 .mark("blocking-banner"):
             ui.icon("report")
             ui.label("Release blocked — resolve the blocking findings before copying.")
 
-    finding_count = sum(row.count for row in rows)
+    count = finding_count(rows)
     with ui.tabs().props("dense align=left") as tabs:
-        findings_tab = ui.tab(f"Findings ({finding_count})", icon="rule").mark("review-findings-tab")
+        findings_tab = ui.tab(f"Findings ({count})", icon="rule").mark("review-findings-tab")
         changes_tab = ui.tab("Changes", icon="difference").mark("review-changes-tab")
         diagnostics_tab = ui.tab("Diagnostics", icon="account_tree").mark("review-diagnostics-tab")
     initial = findings_tab if default_review_view(rows) == "findings" else changes_tab

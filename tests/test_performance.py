@@ -17,7 +17,7 @@ from app_pages import clean as clean_page_mod
 from app_pages import common
 from chartcleaner import benchmark, doctor, fact_check, stage_nlp, store, store_history
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
-from chartcleaner.engine import CleanContext, load_default_config, save_config
+from chartcleaner.engine import CleanContext, Pipeline, load_default_config, save_config
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -203,3 +203,37 @@ async def test_review_diff_is_built_once_off_the_event_loop(user: User, page, mo
     await user.should_see(marker="review-diff")
     assert CLEAN_STATE["review_html"] is cached
     assert len(calls) == 1
+
+
+@pytestmark_ui
+@pytest.mark.parametrize("cache_kind", ["legacy", "stale-source", "stale-output"])
+async def test_review_reload_rebuilds_legacy_or_stale_cache(
+        user: User, page, monkeypatch, cache_kind):
+    calls = []
+    real = common.review_diff_html
+    monkeypatch.setattr(common, "review_diff_html",
+                        lambda *a, **kw: calls.append(a) or real(*a, **kw))
+    source = "Printed by Dr. Lee\nNa 141\nPlan: recheck\n"
+    result = Pipeline(load_default_config()).run(source)
+    cached = [result, source, result.text, "<table>stale</table>", 99]
+    if cache_kind == "legacy":
+        cached = cached[:4]
+    elif cache_kind == "stale-source":
+        cached[1] = "different source"
+    else:
+        cached[2] = "different output"
+    CLEAN_STATE.update(input=source, result=result, result_text=result.text,
+                       mode="clean", result_mode="clean", audit=None, summary=None, qa=[],
+                       review_html=tuple(cached))
+
+    @ui.page(f"/perf-review-{cache_kind}")
+    async def fixture_page():
+        await cc_app.clean_page()
+
+    await user.open(f"/perf-review-{cache_kind}")
+    await user.should_see(marker="review-diff")
+    assert len(calls) == 1
+    rebuilt = CLEAN_STATE["review_html"]
+    assert len(rebuilt) == 5
+    assert rebuilt[:3] == (result, source, result.text)
+    assert rebuilt[4] == rebuilt[3].count("class='cc-diff-change'")

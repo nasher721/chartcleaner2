@@ -65,6 +65,7 @@ async def test_census_attention_filter_preserves_safety_and_open(user: User, pag
     await user.should_see(marker="census-copy")
     await user.should_see(marker="census-dl-md")
     user.find(marker="census-open-G20-1").click()
+    assert CLEAN_STATE["input"] == CHART
     assert CLEAN_STATE["tag"] == "G20-1"
 
 

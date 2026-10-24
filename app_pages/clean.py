@@ -341,10 +341,13 @@ async def clean_page():
 
             groups = change_groups(result)
             refs["groups"] = groups
+            finding_rows = review_workspace.build_finding_rows(
+                result, CLEAN_STATE.get("audit"), source=CLEAN_STATE["input"],
+                output=CLEAN_STATE.get("result_text") or result.text)
+            issue_count = review_workspace.finding_count(finding_rows)
             with ui.tabs().props("dense align=left") as tabs:
                 t_out = ui.tab("Output", icon="description")
                 t_review = ui.tab("Review", icon="rule").mark("review-tab")
-                issue_count = len(review_findings(result.fact_check, CLEAN_STATE.get("audit")))
                 if issue_count:
                     with t_review:
                         ui.badge(str(issue_count), color="orange").props("floating").mark("review-count")
@@ -355,7 +358,7 @@ async def clean_page():
                 with ui.tab_panel(t_out).classes("px-0"):
                     render_output(result, single_pass)
                 with ui.tab_panel(t_review).classes("px-0"):
-                    render_review(result, groups, single_pass)
+                    render_review(result, groups, single_pass, finding_rows)
                 if t_insights is not None:
                     with ui.tab_panel(t_insights).classes("px-0"):
                         render_insights()
@@ -405,9 +408,12 @@ async def clean_page():
         before = CLEAN_STATE["input"]
         after = CLEAN_STATE.get("result_text") or ""
         source = finding["before"]
-        output = finding["after"]
+        retained = finding.get("kind") == "edits_retained"
+        # A retained proposal's ``after`` is rejected evidence, not shipped output.
+        output = source if retained else finding["after"]
+        candidate = finding["after"] if retained else ""
         # Stage context may have been reformatted: show its source text honestly.
-        if not output and source:
+        if not retained and not output and source:
             lines = after.splitlines()
             from difflib import get_close_matches
             nearby = get_close_matches(source, lines, n=1, cutoff=0.35)
@@ -415,7 +421,10 @@ async def clean_page():
         with ui.dialog() as dlg, ui.card().classes("w-[900px] max-w-full gap-3").mark("finding-location"):
             ui.label(finding["title"]).classes("cc-section")
             ui.label("Source context and corresponding output (nearest line when reformatted).")
-            for label, text in (("Source", source), ("Output", output)):
+            contexts = [("Source", source), ("Output", output)]
+            if candidate:
+                contexts.append(("Rejected proposed edit", candidate))
+            for label, text in contexts:
                 ui.label(label).classes("cc-section")
                 ui.html("<mark>" + esc(text) + "</mark>" if text else
                         "<p>No corresponding span remains.</p>").classes("whitespace-pre-wrap break-all")
@@ -907,7 +916,7 @@ async def clean_page():
         dlg.open()
 
     # ---- Review tab -----------------------------------------------------------
-    def render_review(result, groups: list[dict], single_pass: bool) -> None:
+    def render_review(result, groups: list[dict], single_pass: bool, finding_rows) -> None:
         audit = CLEAN_STATE.get("audit")
         cached = CLEAN_STATE.get("review_html")
         if (cached and len(cached) >= 5 and cached[0] is result
@@ -970,18 +979,22 @@ async def clean_page():
         sections = review_workspace.ReviewSections(
             diff=render_diff, removed=render_removals,
             abbreviations=render_abbreviations, diagnostics=render_diagnostics)
+        workspace = ui.column().classes("w-full gap-2")
         try:
-            review_workspace.render_review_workspace(
-                result=result, audit=audit, source=CLEAN_STATE["input"],
-                output=CLEAN_STATE.get("result_text") or result.text,
-                decision=release_for_copy(result), sections=sections, locate=locate_finding,
-                change_count=change_count)
+            with workspace:
+                review_workspace.render_review_workspace(
+                    result=result, audit=audit, source=CLEAN_STATE["input"],
+                    output=CLEAN_STATE.get("result_text") or result.text,
+                    decision=release_for_copy(result), sections=sections, locate=locate_finding,
+                    change_count=change_count, finding_rows=finding_rows)
         except Exception as exc:
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             logging_setup.write_traceback("Review workspace failed", tb)
-            ui.label("Detailed findings are unavailable. Release status is unchanged; "
-                     "use the plain diff below.").mark("review-fallback")
-            render_diff()
+            workspace.clear()
+            with workspace:
+                ui.label("Detailed findings are unavailable. Release status is unchanged; "
+                         "use the plain diff below.").mark("review-fallback")
+                render_diff()
 
     def render_audit(audit) -> None:
         total = sum(audit.counts.values())

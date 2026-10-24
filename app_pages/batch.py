@@ -133,9 +133,9 @@ def batch_page():
 
         def open_details(event) -> None:
             row = event_row(event)
-            name = row.get("file") if row else None
-            if isinstance(name, str):
-                expansion = details.get(name)
+            result_id = row.get("result_id") if row else None
+            if isinstance(result_id, str):
+                expansion = details.get(result_id)
                 if expansion is not None:
                     expansion.open()
 
@@ -164,7 +164,7 @@ def batch_page():
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
                 {"name": "actions", "label": "Actions", "field": "actions", "align": "left"},
             ]
-            table = ui.table(columns=cols, rows=batch_rows(shown), row_key="file",
+            table = ui.table(columns=cols, rows=batch_rows(shown), row_key="result_id",
                              pagination=20).classes("w-full cc-batch-table").props("flat dense")
             table.add_slot("body-cell-actions", r'''
                 <q-td :props="props">
@@ -221,7 +221,7 @@ def batch_page():
                                 ui.label(label)
                             with ui.element("dd").classes("cc-batch-detail-value"):
                                 ui.label(value)
-                details[r.name] = expansion
+                details[str(id(r))] = expansion
             ui.label("Cleaned copies also live in data/exports; run history is on the "
                      "Statistics page.").classes("text-xs opacity-60")
 

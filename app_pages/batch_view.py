@@ -14,6 +14,7 @@ def batch_rows(results) -> list[dict]:
     for result in results:
         ok = result.status == "ok"
         rows.append({
+            "result_id": str(id(result)),
             "file": result.name,
             "reduction": f"{result.reduction:+.1f}%" if ok else "—",
             "findings": str(result.findings) if ok else "—",

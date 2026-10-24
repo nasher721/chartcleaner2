@@ -262,9 +262,17 @@ async def test_shell_navigation_marks_the_active_page(user: User, clean_state):
             ui.label("settings body")
 
     await user.open("/a11y-nav")
-    active = [e for e in user.find().elements
+    elements = list(user.find().elements)
+    active = [e for e in elements
               if getattr(e, "_props", {}).get("aria-current") == "page"]
     assert len(active) == 1, "exactly one visible navigation item must carry aria-current"
+    assert "cc-nav-active" in active[0]._classes
+    assert "08 Settings" in " ".join(getattr(e, "text", "") for e in active[0].descendants())
+    active_groups = [e for e in elements if "cc-navgroup--active" in e._classes]
+    assert len(active_groups) == 1
+    assert active_groups[0].text == "System"
+    assert "cc-navgroup--active" not in next(
+        e for e in elements if "cc-navgroup" in e._classes and e.text == "Customize")._classes
 
 
 async def test_shell_groups_navigation_and_keeps_all_drawer_routes(user: User, clean_state):
@@ -281,6 +289,12 @@ async def test_shell_groups_navigation_and_keeps_all_drawer_routes(user: User, c
     group_text = " ".join(getattr(e, "text", "") for e in elements
                           if "cc-navgroup" in e._classes)
     assert "Customize" in group_text and "System" in group_text
+    active = [e for e in elements if e._props.get("aria-current") == "page"]
+    assert len(active) == 1
+    assert "05 Pipeline & Rules" in " ".join(
+        getattr(e, "text", "") for e in active[0].descendants())
+    active_groups = [e for e in elements if "cc-navgroup--active" in e._classes]
+    assert len(active_groups) == 1 and active_groups[0].text == "Customize"
     drawer_routes = [e for e in elements if "cc-nav-item" in e._classes]
     assert len(drawer_routes) == 9
 

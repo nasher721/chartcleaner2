@@ -78,6 +78,11 @@ def build_finding_rows(result, audit, *, source: str, output: str) -> list[Findi
     return _group(items)
 
 
+def finding_count(rows: list[FindingRow]) -> int:
+    """The single presentation count used by both the badge and workspace."""
+    return sum(row.count for row in rows)
+
+
 def filter_findings(rows: list[FindingRow], mode: str) -> list[FindingRow]:
     if mode == "blocking":
         return [row for row in rows if row.severity == "blocked"]
