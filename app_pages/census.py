@@ -4,12 +4,24 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from app_pages.workflow_ui import empty_state, overflow_menu
 from chartcleaner import census, recent_charts
 from chartcleaner.appstate import CLEAN_STATE
 
 
+def visible_beds(beds, mode: str):
+    if mode == "attention":
+        return [bed for bed in beds if bed.attention]
+    return list(beds)
+
+
 def census_page():
-    state: dict = {"running": False, "texts": {}, "report": None}
+    state: dict = {"running": False, "texts": {}, "report": None, "filter": "all"}
+
+    def set_filter(mode: str) -> None:
+        state["filter"] = mode
+        if state["report"] is not None:
+            draw(state["report"])
 
     async def refresh() -> None:
         if state["running"]:
@@ -87,9 +99,13 @@ def census_page():
                     ui.label("On the Clean page, type a bed tag (e.g. G20-1) next to the chart before "
                              "cleaning. The newest chart for each tag shows up here.").classes("text-sm")
                 return
+            shown = visible_beds(report.beds, state["filter"])
+            if not shown:
+                empty_state("No beds need attention", "Switch to All beds to see every bed.", icon="filter_alt")
+                return
             with ui.element("div").classes(
                     "w-full grid gap-3 md:grid-cols-2 2xl:grid-cols-3 cc-stagger"):
-                for bed in report.beds:
+                for bed in shown:
                     bed_card(bed)
 
     def bed_card(bed) -> None:
@@ -122,26 +138,28 @@ def census_page():
                 ui.label("Abx: " + "; ".join(bed.antibiotics)).classes("text-xs cc-mono")
             if bed.devices_review:
                 ui.label("Review device: " + "; ".join(bed.devices_review)).classes("text-xs cc-mono")
-            with ui.row().classes("gap-2 flex-wrap"):
-                if bed.bundle_gaps:
-                    status_tag(f"{len(bed.bundle_gaps)} bundle items not mentioned", "warn",
-                               tooltip=", ".join(bed.bundle_gaps))
-                if bed.stale:
-                    status_tag(f"{bed.stale} possibly stale", "warn")
-            if bed.todo:
-                with ui.column().classes("w-full gap-0 mt-1"):
-                    for item in bed.todo:
-                        ui.checkbox(item).props("dense").classes("text-xs")
-                    if bed.todo_total > len(bed.todo):
-                        ui.label(f"… {bed.todo_total - len(bed.todo)} more").classes("text-xs opacity-60")
-            if bed.delta_total:
-                since = f" since {bed.delta_since}" if bed.delta_since else ""
-                ui.label(f"~ {bed.delta_total} new/changed line{'s' if bed.delta_total != 1 else ''}"
-                         f"{since}").classes("text-xs font-semibold")
-                for line in bed.delta:
-                    ui.label(f"+ {line}").classes("text-xs cc-mono break-words")
-                if bed.delta_total > len(bed.delta):
-                    ui.label(f"… {bed.delta_total - len(bed.delta)} more").classes("text-xs opacity-60")
+            with ui.expansion("More details", icon="expand_more") \
+                    .classes("w-full cc-census-details").mark(f"census-details-{bed.tag}"):
+                with ui.row().classes("gap-2 flex-wrap"):
+                    if bed.bundle_gaps:
+                        status_tag(f"{len(bed.bundle_gaps)} bundle items not mentioned", "warn",
+                                   tooltip=", ".join(bed.bundle_gaps))
+                    if bed.stale:
+                        status_tag(f"{bed.stale} possibly stale", "warn")
+                if bed.todo:
+                    with ui.column().classes("w-full gap-0 mt-1"):
+                        for item in bed.todo:
+                            ui.checkbox(item).props("dense").classes("text-xs")
+                        if bed.todo_total > len(bed.todo):
+                            ui.label(f"… {bed.todo_total - len(bed.todo)} more").classes("text-xs opacity-60")
+                if bed.delta_total:
+                    since = f" since {bed.delta_since}" if bed.delta_since else ""
+                    ui.label(f"~ {bed.delta_total} new/changed line{'s' if bed.delta_total != 1 else ''}"
+                             f"{since}").classes("text-xs font-semibold")
+                    for line in bed.delta:
+                        ui.label(f"+ {line}").classes("text-xs cc-mono break-words")
+                    if bed.delta_total > len(bed.delta):
+                        ui.label(f"… {bed.delta_total - len(bed.delta)} more").classes("text-xs opacity-60")
 
     with shell("Census — every bed at a glance", "/census"):
         ui.label("The newest chart for each bed tag, cleaned with your saved rules: allergies, code "
@@ -151,16 +169,16 @@ def census_page():
         with ui.row().classes("w-full items-center gap-3 flex-wrap"):
             summary = ui.label("Loading…").classes("text-lg").mark("census-summary")
             spinner = ui.spinner("dots", size="md")
+            ui.toggle({"attention": "Needs attention", "all": "All beds"}, value="all",
+                      on_change=lambda e: set_filter(e.value)).props("dense no-caps").mark("census-filter")
             ui.space()
             ui.button("Refresh", icon="refresh", on_click=lambda: refresh()).props("flat") \
                 .mark("census-refresh")
-            ui.button("Copy census", icon="content_copy", on_click=copy_all).props("flat") \
-                .mark("census-copy")
-            ui.button("Copy Markdown", icon="markdown", on_click=copy_markdown).props("flat") \
-                .mark("census-copy-md")
-            ui.button("Download .txt", icon="download",
-                      on_click=lambda: download("txt")).props("flat").mark("census-dl-txt")
-            ui.button("Download .md", icon="download",
-                      on_click=lambda: download("md")).props("flat").mark("census-dl-md")
+            overflow_menu([
+                ("Copy census", "content_copy", copy_all, "census-copy"),
+                ("Copy Markdown", "markdown", copy_markdown, "census-copy-md"),
+                ("Download .txt", "download", lambda: download("txt"), "census-dl-txt"),
+                ("Download .md", "download", lambda: download("md"), "census-dl-md"),
+            ], marker="census-export", label="Export census")
         cards = ui.column().classes("w-full gap-3")
     ui.timer(0.05, refresh, once=True)

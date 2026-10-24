@@ -222,6 +222,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
   letter-spacing:.06em;text-transform:uppercase;color:var(--nd-text-secondary);}
 .cc-workflow-section{gap:var(--nd-space-sm);}
 .cc-empty-state{color:var(--nd-text-secondary);}
+.cc-census-details{min-width:0;}
+.cc-census-details .q-expansion-item__content{min-width:0;overflow-wrap:anywhere;}
 .cc-task-flow{font-family:var(--nd-mono);font-size:var(--label);letter-spacing:.04em;}
 .cc-task-flow__step{color:var(--nd-text-secondary);transition:color var(--nd-dur-fast) var(--nd-ease);}
 .cc-task-flow__arrow{color:var(--nd-border-visible);}
