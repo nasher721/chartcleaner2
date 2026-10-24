@@ -8,6 +8,23 @@ from nicegui import ui
 from app_pages.review_model import build_finding_rows, default_review_view, filter_findings
 
 
+def collapse_context_ranges(line_count: int, changed_lines: set[int], context: int = 3) -> list[tuple[int, int]]:
+    visible = set(changed_lines)
+    for line in changed_lines:
+        visible.update(range(max(1, line - context), min(line_count, line + context) + 1))
+    ranges = []
+    start = None
+    for line in range(1, line_count + 2):
+        if line not in visible and line <= line_count:
+            start = line if start is None else start
+            continue
+        if start is not None:
+            if line - start >= 2:
+                ranges.append((start, line - 1))
+            start = None
+    return ranges
+
+
 @dataclass(frozen=True)
 class ReviewSections:
     diff: Callable[[], None]
@@ -66,7 +83,35 @@ def render_review_workspace(*, result, audit, source, output, decision,
                 abbreviated = ui.tab("Abbreviations")
             with ui.tab_panels(change_tabs, value=changed).props("keep-alive").classes("w-full"):
                 with ui.tab_panel(changed):
+                    with ui.row().classes("w-full items-center gap-2 cc-diff-navigation"):
+                        ui.button("Previous", icon="chevron_left").props("flat dense no-caps") \
+                            .mark("change-previous")
+                        ui.button("Next", icon="chevron_right").props("flat dense no-caps") \
+                            .mark("change-next")
+                        ui.label("0 / 0").classes("cc-muted text-xs") \
+                            .props("aria-live=polite aria-label='Change position'").mark("change-position")
                     sections.diff()
+                    ui.run_javascript("""
+(() => {
+  const rows = Array.from(document.querySelectorAll('.cc-diff-change[data-diff-line]'));
+  let index = -1;
+  const label = document.querySelector('[data-marker="change-position"]');
+  const show = next => {
+    if (!rows.length) {
+      if (label) label.textContent = '0 / 0';
+      return;
+    }
+    index = (next + rows.length) % rows.length;
+    rows[index].scrollIntoView({block: 'center', behavior: 'instant'});
+    rows[index].setAttribute('tabindex', '-1');
+    rows[index].focus({preventScroll: true});
+    if (label) label.textContent = `${index + 1} / ${rows.length}`;
+  };
+  document.querySelector('[data-marker="change-previous"]')?.addEventListener('click', () => show(index - 1));
+  document.querySelector('[data-marker="change-next"]')?.addEventListener('click', () => show(index + 1));
+  show(0);
+})();
+""")
                 with ui.tab_panel(removed):
                     sections.removed()
                 with ui.tab_panel(abbreviated):

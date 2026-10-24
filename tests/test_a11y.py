@@ -8,6 +8,8 @@ keyboard activation for the pills, and captioned diff tables.
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
+
 import pytest
 from nicegui import ui
 from nicegui.testing import User
@@ -127,6 +129,50 @@ def test_status_tag_without_click_is_not_a_control():
 # diff tables carry a caption and column headers
 # ---------------------------------------------------------------------------
 
+class _DiffHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.rows = []
+        self.bodies = []
+        self.buttons = []
+        self.caption_count = 0
+        self.table_count = 0
+        self.column_headers = 0
+        self._body = None
+        self._button = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "table":
+            self.table_count += 1
+        elif tag == "caption":
+            self.caption_count += 1
+        elif tag == "th" and attrs.get("scope") == "col":
+            self.column_headers += 1
+        elif tag == "tbody":
+            self._body = attrs
+            self.bodies.append(attrs)
+        elif tag == "tr":
+            self.rows.append({**attrs, "tbody": self._body})
+        elif tag == "button":
+            self.buttons.append({**attrs, "text": ""})
+            self._button = self.buttons[-1]
+
+    def handle_data(self, data):
+        if self._button is not None:
+            self._button["text"] += data
+
+    def handle_endtag(self, tag):
+        if tag == "button":
+            self._button = None
+
+
+def _parse_diff(html: str) -> _DiffHTMLParser:
+    parser = _DiffHTMLParser()
+    parser.feed(html)
+    return parser
+
+
 def test_diff_html_is_a_captioned_table():
     html = common.diff_html("keep me\ndrop me\n", "keep me\n")
     assert "<caption" in html
@@ -144,6 +190,45 @@ def test_review_diff_html_is_a_captioned_table_and_marks_spans():
     # The clickable span stays keyboard reachable.
     assert "tabindex='0'" in html
     assert "role='button'" in html
+
+
+def test_review_diff_collapses_context_without_changing_table_semantics():
+    before = "\n".join(f"line {n}" for n in range(1, 21))
+    after = before.replace("line 5", "line 5 changed").replace("line 12", "line 12 changed")
+    html = common.review_diff_html(before, after, None, [])
+    parsed = _parse_diff(html)
+    rows = {int(row["data-diff-line"]): row for row in parsed.rows if "data-diff-line" in row}
+
+    assert set(rows) == set(range(1, 21))
+    assert {n for n, row in rows.items() if "cc-diff-change" in row.get("class", "")} == {5, 12}
+    assert parsed.table_count == 1
+    assert parsed.caption_count == 1
+    assert parsed.column_headers == 2
+    assert "<details" not in html
+
+    buttons = [b for b in parsed.buttons if "cc-diff-context" in b.get("class", "")]
+    assert len(buttons) == 1
+    button = buttons[0]
+    assert button["type"] == "button"
+    assert button["aria-controls"] == "diff-context-16-20"
+    assert button["aria-expanded"] == "false"
+    assert button["aria-label"] == "Show 5 unchanged lines"
+    assert button["text"] == "Show 5 unchanged lines"
+    target = next(body for body in parsed.bodies if body.get("id") == button["aria-controls"])
+    assert "hidden" in target
+
+
+def test_review_diff_maps_flagged_output_lines_to_visible_diff_rows():
+    before_lines = [f"line {n}" for n in range(1, 31)]
+    after_lines = before_lines[:4] + before_lines[5:]
+    html = common.review_diff_html("\n".join(before_lines), "\n".join(after_lines), {25}, [])
+    parsed = _parse_diff(html)
+    rows = {int(row["data-diff-line"]): row for row in parsed.rows if "data-diff-line" in row}
+
+    assert "cc-diff-change" in rows[5].get("class", "")
+    assert rows[26]["tbody"].get("id") != "diff-context-9-22"
+    assert any(body.get("id") == "diff-context-9-22" and "hidden" in body
+               for body in parsed.bodies)
 
 
 def test_diff_html_large_input_is_refused():

@@ -10,6 +10,7 @@ from nicegui.testing import User
 import app as cc_app
 from app_pages import review_workspace
 from app_pages.review_model import FindingRow
+from app_pages.review_workspace import collapse_context_ranges
 from chartcleaner.appstate import CLEAN_STATE
 from tests.test_phase8_ui import _route, page  # noqa: F401
 from tests.test_validation_review_ui import BLOCK_CFG, BLOCK_CHART, _write_cfg
@@ -39,6 +40,14 @@ def _sections():
     return review_workspace.ReviewSections(diff=lambda: None, removed=lambda: None,
                                            abbreviations=lambda: None,
                                            diagnostics=lambda: None)
+
+
+def test_context_ranges_cover_only_long_unchanged_runs():
+    # Changed diff rows 5 and 12 keep rows 2–15 visible; only rows 16–20 collapse.
+    ranges = collapse_context_ranges(20, {5, 12}, context=3)
+    assert ranges == [(16, 20)]
+    assert all(not (start <= n <= end) for start, end in ranges for n in (5, 12))
+    assert collapse_context_ranges(6, {3}, context=3) == []
 
 
 async def _render_rows(user: User, route: str, rows: list[FindingRow], monkeypatch) -> None:
@@ -95,3 +104,13 @@ async def test_actionable_findings_default_to_needs_review(user: User, page, mon
     control = next(iter(user.find(marker="finding-filter").elements))
     assert control.value == "review"
     await user.should_see("blocked finding")
+
+
+async def test_change_navigation_has_position_and_controls(user: User, page):
+    _write_cfg(**BLOCK_CFG)
+    await _clean(user, "/workspace-diff-nav")
+    user.find(marker="review-changes-tab").click()
+    await user.should_see(marker="change-previous")
+    await user.should_see(marker="change-next")
+    position = next(iter(user.find(marker="change-position").elements)).text
+    assert "/" in position

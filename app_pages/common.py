@@ -344,8 +344,14 @@ def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> st
             + "".join(rows) + "</tbody></table>")
 
 
-REVIEW_CLICK_JS = ("(e) => { const t = e.target.closest('[data-cc]'); "
-                   "if (t) emit(t.dataset.cc); }")
+REVIEW_CLICK_JS = (
+    "(e) => { const context = e.target.closest('.cc-diff-context'); "
+    "if (context) { const target = document.getElementById(context.getAttribute('aria-controls')); "
+    "if (!target) return; target.hidden = !target.hidden; "
+    "const expanded = !target.hidden; context.setAttribute('aria-expanded', String(expanded)); "
+    "const wording = (expanded ? 'Hide' : 'Show') + ' ' + context.dataset.lineCount + ' unchanged lines'; "
+    "context.textContent = wording; context.setAttribute('aria-label', wording); return; } "
+    "const t = e.target.closest('[data-cc]'); if (t) emit(t.dataset.cc); }")
 # Same delegation for the keyboard: the spans are focusable (tabindex=0), so
 # Enter or Space on one opens the same rule popover a click does.
 REVIEW_KEY_JS = ("(e) => { if (e.key !== 'Enter' && e.key !== ' ') return; "
@@ -410,23 +416,36 @@ def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
         frags = [f for f in right_frags if f[0] in line]
         return _wrap_fragments(line, frags) if frags else esc(line)
 
+    from app_pages.review_workspace import collapse_context_ranges
+
     a_lines, b_lines = before.splitlines(), after.splitlines()
     sm = difflib.SequenceMatcher(a=a_lines, b=b_lines, autojunk=False)
     rows: list[str] = []
+    changed_lines: set[int] = set()
+    flagged_diff_lines: set[int] = set()
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             for k in range(i2 - i1):
                 jl = j1 + k
                 cls = " cc-flag" if (jl + 1) in flagged else ""
-                rows.append(f"<tr><td class='cc-diff-left'>{esc(a_lines[i1 + k])}</td>"
+                rows.append(f"<tr data-diff-line='{len(rows) + 1}'>"
+                            f"<td class='cc-diff-left'>{esc(a_lines[i1 + k])}</td>"
                             f"<td class='{cls.strip()}'>{esc(b_lines[jl])}</td></tr>")
+                if (jl + 1) in flagged:
+                    flagged_diff_lines.add(len(rows))
         elif tag == "delete":
             for k in range(i1, i2):
-                rows.append(f"<tr><td class='cc-diff-left cc-del'>{left(a_lines[k])}</td><td></td></tr>")
+                rows.append(f"<tr class='cc-diff-change' data-diff-line='{len(rows) + 1}'>"
+                            f"<td class='cc-diff-left cc-del'>{left(a_lines[k])}</td><td></td></tr>")
+                changed_lines.add(len(rows))
         elif tag == "insert":
             for k in range(j1, j2):
                 cls = "cc-ins cc-flag" if (k + 1) in flagged else "cc-ins"
-                rows.append(f"<tr><td class='cc-diff-left'></td><td class='{cls}'>{right(b_lines[k])}</td></tr>")
+                rows.append(f"<tr class='cc-diff-change' data-diff-line='{len(rows) + 1}'>"
+                            f"<td class='cc-diff-left'></td><td class='{cls}'>{right(b_lines[k])}</td></tr>")
+                changed_lines.add(len(rows))
+                if (k + 1) in flagged:
+                    flagged_diff_lines.add(len(rows))
         else:
             n = max(i2 - i1, j2 - j1)
             for k in range(n):
@@ -434,9 +453,32 @@ def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
                 rt = right(b_lines[j1 + k]) if j1 + k < j2 else ""
                 jl = j1 + k
                 cls = "cc-ins cc-flag" if (jl + 1) in flagged else "cc-ins"
-                rows.append(f"<tr><td class='cc-diff-left cc-del'>{lt}</td><td class='{cls}'>{rt}</td></tr>")
-    return (_diff_table_start("Before and after the cleaning run", "Before", "After")
-            + "".join(rows) + "</tbody></table>")
+                rows.append(f"<tr class='cc-diff-change' data-diff-line='{len(rows) + 1}'>"
+                            f"<td class='cc-diff-left cc-del'>{lt}</td><td class='{cls}'>{rt}</td></tr>")
+                changed_lines.add(len(rows))
+                if jl < j2 and (jl + 1) in flagged:
+                    flagged_diff_lines.add(len(rows))
+
+    ranges = collapse_context_ranges(len(rows), changed_lines | flagged_diff_lines)
+    parts = [_diff_table_start("Before and after the cleaning run", "Before", "After")]
+    cursor = 0
+    for start, end in ranges:
+        parts.extend(rows[cursor:start - 1])
+        context_id = f"diff-context-{start}-{end}"
+        count = end - start + 1
+        parts.append("</tbody><tbody class='cc-diff-context-summary'><tr>"
+                     "<td colspan='2' class='cc-diff-context-cell'>"
+                     "<button type='button' class='cc-diff-context' data-marker='diff-context' "
+                     f"data-line-count='{count}' aria-expanded='false' aria-controls='{context_id}' "
+                     f"aria-label='Show {count} unchanged lines'>Show {count} unchanged lines</button>"
+                     "</td></tr></tbody>"
+                     f"<tbody id='{context_id}' class='cc-diff-context-lines' hidden>")
+        parts.extend(rows[start - 1:end])
+        parts.append("</tbody><tbody>")
+        cursor = end
+    parts.extend(rows[cursor:])
+    parts.append("</tbody></table>")
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------
