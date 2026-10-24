@@ -179,7 +179,50 @@ async def test_shell_navigation_marks_the_active_page(user: User, clean_state):
     await user.open("/a11y-nav")
     active = [e for e in user.find().elements
               if getattr(e, "_props", {}).get("aria-current") == "page"]
-    assert active, "the active nav link must carry aria-current"
+    assert len(active) == 1, "exactly one visible navigation item must carry aria-current"
+
+
+async def test_shell_groups_navigation_and_keeps_all_drawer_routes(user: User, clean_state):
+    @ui.page("/a11y-grouped-nav")
+    async def fixture_page():
+        with common.shell("Accessibility grouped nav", "pipeline"):
+            ui.label("pipeline body")
+
+    await user.open("/a11y-grouped-nav")
+    elements = list(user.find().elements)
+    direct = [e for e in elements
+              if "cc-navlink" in e._classes and "cc-navgroup" not in e._classes]
+    assert {e._props.get("href") for e in direct} == {"/", "/batch", "/census"}
+    group_text = " ".join(getattr(e, "text", "") for e in elements
+                          if "cc-navgroup" in e._classes)
+    assert "Customize" in group_text and "System" in group_text
+    drawer_routes = [e for e in elements if "cc-nav-item" in e._classes]
+    assert len(drawer_routes) == 9
+
+
+async def test_status_strip_groups_local_privacy_details(user: User, clean_state):
+    @ui.page("/a11y-status-strip")
+    async def fixture_page():
+        with common.shell("Accessibility status", "clean"):
+            ui.label("page body")
+
+    await user.open("/a11y-status-strip")
+    strip = next(e for e in user.find().elements if "status-strip" in e._markers)
+    text = " ".join(getattr(e, "text", "") for e in strip.descendants())
+    assert "Current rules" in text
+    assert "Local AI" in text
+    assert "Local & private" in text
+    assert "Clipboard monitoring off" in text
+    assert "Stored data encrypted" in text
+    assert "release" not in text.casefold()
+
+
+def test_workflow_css_uses_the_shared_design_tokens():
+    for selector in (".cc-summary-count", ".cc-workflow-section", ".cc-empty-state",
+                     ".cc-navgroup--active"):
+        start = common.CSS.index(selector)
+        rule = common.CSS[start:common.CSS.index("}", start)]
+        assert "var(--nd-" in rule
 
 
 async def test_pages_declare_their_language(user: User, clean_state):

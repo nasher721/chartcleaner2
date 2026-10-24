@@ -195,15 +195,33 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-topbar{min-height:56px;gap:var(--nd-space-md);}
 .cc-navbar{display:flex;align-items:stretch;gap:0;
   overflow-x:auto;}
-.cc-navlink{display:flex;align-items:center;height:40px;padding:0 var(--nd-space-md);
+.cc-navlink,.cc-navgroup{display:flex;align-items:center;height:40px;padding:0 var(--nd-space-md);
   font-family:var(--nd-mono);font-size:12px;font-weight:400;letter-spacing:.06em;
   text-transform:uppercase;color:var(--nd-text-secondary);cursor:pointer;
   white-space:nowrap;text-decoration:none;background:none;border:0;
   transition:color var(--nd-dur-fast) var(--nd-ease);}
-.cc-navlink:hover{color:var(--nd-text-display);}
+.cc-navlink:hover,.cc-navgroup:hover{color:var(--nd-text-display);}
 .cc-navlink--active{color:var(--nd-text-display);}
 .cc-navlink--active::before{content:"[ ";color:var(--nd-text-secondary);}
 .cc-navlink--active::after{content:" ]";color:var(--nd-text-secondary);}
+.cc-navgroup{min-height:40px;padding:0 var(--nd-space-md);}
+.cc-navgroup--active{color:var(--nd-text-display);}
+.cc-navgroup--active::before{content:"[ ";color:var(--nd-text-secondary);}
+.cc-navgroup--active::after{content:" ]";color:var(--nd-text-secondary);}
+.cc-nav-group{margin:var(--nd-space-md) var(--nd-space-md) var(--nd-space-xs);}
+.cc-local-private{min-height:24px;padding:0 var(--nd-space-sm);
+  color:var(--nd-text-secondary);font-size:var(--label);}
+.cc-local-private-menu{background:var(--nd-surface-raised);}
+
+.cc-summary-count{display:flex;flex-direction:column;gap:var(--nd-space-xs);
+  min-width:112px;padding:var(--nd-space-sm) var(--nd-space-md);
+  border:1px solid var(--nd-border);background:var(--nd-surface);}
+.cc-summary-count-value{font-family:var(--nd-mono);font-size:20px;
+  color:var(--nd-text-display);}
+.cc-summary-count-label{font-family:var(--nd-mono);font-size:var(--label);
+  letter-spacing:.06em;text-transform:uppercase;color:var(--nd-text-secondary);}
+.cc-workflow-section{gap:var(--nd-space-sm);}
+.cc-empty-state{color:var(--nd-text-secondary);}
 
 .q-drawer{background:var(--nd-black);color:var(--nd-text-primary);}
 .cc-drawer{background:var(--nd-black);}

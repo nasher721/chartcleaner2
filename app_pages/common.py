@@ -153,30 +153,7 @@ def start_pending_rule(pattern: str, replacement: str | None, stage: str) -> Non
     PENDING_RULE.update(pattern=pattern, replacement=replacement, stage=stage)
     ui.navigate.to("/pipeline")
 
-NAV = [
-    ("/", "cleaning_services", "Clean"),
-    ("/batch", "layers", "Batch"),
-    ("/census", "bed", "Census"),
-    ("/rules", "highlight", "My text rules"),
-    ("/pipeline", "tune", "Pipeline & Rules"),
-    ("/stats", "insights", "Statistics"),
-    ("/scripts", "code", "Custom Scripts"),
-    ("/settings", "settings", "Settings"),
-    ("/doctor", "medical_services", "Doctor"),
-]
-
-# Section labels + numbers for the page eyebrow (shell()).
-SECTION_NUMBERS = {
-    "clean": ("01", "Clean"),
-    "batch": ("02", "Batch"),
-    "census": ("03", "Census"),
-    "rules": ("04", "My text rules"),
-    "pipeline": ("05", "Pipeline & Rules"),
-    "stats": ("06", "Statistics"),
-    "scripts": ("07", "Custom Scripts"),
-    "settings": ("08", "Settings"),
-    "doctor": ("09", "Doctor"),
-}
+from app_pages.navigation import NAV, NAV_GROUPS, SECTION_NUMBERS
 
 # Design system: Nothing-inspired tokens, components and the stylesheet.
 # Kept in one module so every screen shares a single source of truth.
@@ -615,7 +592,7 @@ def open_command_palette(extra: list[dict] | None = None) -> None:
 
 
 def _status_strip(key: str = "") -> None:
-    """Status readouts: active preset, clipboard watcher, local AI, encryption.
+    """Status readouts: active preset, local AI, and local privacy details.
 
     These readouts describe local settings, separately from header actions.
     Tooltips explain what each setting means; none indicates output safety.
@@ -625,19 +602,24 @@ def _status_strip(key: str = "") -> None:
         preset = PREFS.get("last_preset") or ""
         status_tag(f"Rules: {preset}" if preset else "Current rules", "info",
                    tooltip="Active rules. Edit them on the Pipeline page.")
-        watcher = CLIPBOARD_WATCHER.get("watcher")
-        on = bool(watcher is not None and watcher.running)
-        status_tag("Clipboard monitoring on" if on else "Clipboard monitoring off", "info",
-                   tooltip="Automatically cleans copied text when enabled in Settings.")
 
         ai_el = ui.element("div").classes("cc-pill").tooltip("Local AI (Ollama) status")
         with ai_el:
             ai_dot = ui.element("span").classes("cc-dot") \
                 .style("color: var(--nd-text-disabled)")
             ai_label = ui.label("Local AI: checking")
-        status_tag("Stored data encrypted", "info",
-                   tooltip="Stored chart data (token maps, recent charts) is encrypted "
-                           "on this computer. Review output before sharing.")
+
+        with ui.button("Local & private").props("flat no-caps dense") \
+                .classes("cc-pill cc-local-private"):
+            with ui.menu():
+                with ui.column().classes("gap-2 p-2 cc-local-private-menu"):
+                    watcher = CLIPBOARD_WATCHER.get("watcher")
+                    on = bool(watcher is not None and watcher.running)
+                    status_tag("Clipboard monitoring on" if on else "Clipboard monitoring off", "info",
+                               tooltip="Automatically cleans copied text when enabled in Settings.")
+                    status_tag("Stored data encrypted", "info",
+                               tooltip="Stored chart data (token maps, recent charts) is encrypted "
+                                       "on this computer. Review output before sharing.")
 
     async def probe() -> None:
         if os.environ.get("NICEGUI_USER_SIMULATION"):
@@ -739,26 +721,42 @@ def shell(title: str, active: str, *, measure: bool = False,
                         .props("flat round aria-label='Toggle light or dark mode'") \
                         .classes("cc-headbtn").mark("dark-toggle").tooltip("Light / dark")
 
-        # Desktop: the horizontal text nav. Mobile falls back to the drawer.
+        # Desktop: direct Work links and grouped Customize/System menus.
         with ui.element("div").classes("w-full"):
             with ui.row().classes("cc-shell cc-navbar cc-desktop-only no-wrap") \
                     .props("role=navigation aria-label='Primary'"):
-                for path, _icon, label in NAV:
-                    link = ui.element("a").classes("cc-navlink").props(f'href="{path}"')
-                    if path == active_path:
-                        link.classes("cc-navlink--active")
-                        link.props('aria-current="page"')
-                    with link:
-                        ui.label(nav_text(path, label))
+                for name, items in NAV_GROUPS:
+                    if name == "Work":
+                        for path, _icon, label in items:
+                            link = ui.element("a").classes("cc-navlink").props(f'href="{path}"')
+                            if path == active_path:
+                                link.classes("cc-navlink--active")
+                                link.props('aria-current="page"')
+                            with link:
+                                ui.label(nav_text(path, label))
+                        continue
+                    group = ui.button(name).props("flat no-caps dense") \
+                        .classes("cc-navgroup")
+                    if any(path == active_path for path, _icon, _label in items):
+                        group.classes("cc-navgroup--active")
+                    with group, ui.menu():
+                        for path, icon, label in items:
+                            item = ui.menu_item(nav_text(path, label),
+                                                on_click=lambda p=path: ui.navigate.to(p))
+                            item.props(f"icon={icon}")
+                            if path == active_path:
+                                item.classes("cc-nav-active").props('aria-current="page"')
 
     with ui.left_drawer(fixed=True, value=False).classes("cc-drawer") as drawer:
         ui.label("Navigation").classes("cc-eyebrow cc-nav-head")
-        for path, _icon, label in NAV:
-            btn = ui.button(nav_text(path, label),
-                            on_click=lambda p=path: ui.navigate.to(p))
-            btn.props("flat align=left no-caps").classes("w-full cc-nav-item")
-            if path == active_path:
-                btn.classes("cc-nav-active")
+        for name, items in NAV_GROUPS:
+            ui.label(name).classes("cc-eyebrow cc-nav-group")
+            for path, _icon, label in items:
+                btn = ui.button(nav_text(path, label),
+                                on_click=lambda p=path: ui.navigate.to(p))
+                btn.props("flat align=left no-caps").classes("w-full cc-nav-item")
+                if path == active_path:
+                    btn.classes("cc-nav-active")
         ui.element("div").classes("cc-rule").style("margin: 24px 16px 0")
         with ui.column().classes("p-4 gap-2 items-start"):
             _status_strip("drawer")
