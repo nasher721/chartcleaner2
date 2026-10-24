@@ -63,7 +63,7 @@ Use a compact, informational **1 Input → 2 Review → 3 Export** indicator. It
 
 The primary toolbar contains Clean, Paste, and an overflow menu for Sample, Clear, and Auto-clean. Clean remains the dominant action and retains its existing shortcut and running state.
 
-Rule preset and destination stay visible in a compact run-configuration row. The current explanatory mode note remains, with destination-specific descriptions taking precedence exactly as they do now.
+The Full clean / Abbreviations only / Expand abbreviations mode selector, rule preset, and destination stay visible in a compact run-configuration row. The current explanatory mode note remains, with destination-specific descriptions taking precedence exactly as they do now.
 
 Move Selection settings and rule-history controls into an **Advanced input tools** disclosure. The selection bar remains contextual. Its initial actions are Remove, Line, Replace, Abbreviate, and Rule…; Never remove, Collect, matching options, and More move into its overflow menu. Right-click actions and existing selection shortcuts remain intact.
 
@@ -76,7 +76,7 @@ Use one result header containing:
 - Primary state: Ready, Review needed, or Blocked
 - Cleaning summary: character/token reduction, possible identifiers redacted where applicable, and elapsed time
 - Note-type information when detected
-- One dominant next action: Review findings when required; otherwise Copy
+- One dominant next action: Review findings when required; otherwise Copy, supplied by the persistent result action bar defined in section 4 rather than a duplicate button
 
 Retain Output, Review, and Insights tabs. Display finding counts consistently. Show Insights only when the current mode supports it.
 
@@ -97,7 +97,7 @@ Review has three views: **Findings**, **Changes**, and **Diagnostics**. A persis
 
 ### Findings
 
-Findings is the default Review view when actionable issues exist. It combines user-facing findings from release and validation decisions, clinical-fact and meaning changes, introduced or implausible values, possible remaining identifiers, validator-rejected edits, and incomplete coverage.
+Findings is the default Review view when actionable issues exist; Changes is the default when none exist. Findings combines user-facing findings from release and validation decisions, clinical-fact and meaning changes, introduced or implausible values, possible remaining identifiers, validator-rejected edits, and incomplete coverage.
 
 Each row contains severity, plain-language title, source or stage, occurrence count when grouped, and applicable Locate or Edit output actions. Severity labels are Blocked, Review, and Info.
 
@@ -145,7 +145,7 @@ Display grounding, citations, and unsupported-value warnings adjacent to the gen
 
 Separate Queue, Run options, and Results. Move delta view, note-type presets, and patient-list AI into Run options.
 
-Lead results with processed, needs-review, and error counts. The default table shows File, Reduction, Findings, Status, and Actions. Preserve other metrics in expandable row details or optional columns. Consolidate per-file downloads into each row and keep Download all prominent. Retry failed, patient-list mode, progress, and export-folder access remain available.
+Lead results with processed, needs-review, and error counts. The default table shows File, Reduction, Findings, Status, and Actions. Preserve all other metrics in expandable row details. Consolidate per-file downloads into each row and keep Download all prominent. Retry failed, patient-list mode, progress, and export-folder access remain available.
 
 ### Census
 
@@ -195,7 +195,7 @@ Selected views and filters are session-local UI state. No new persisted configur
 
 ### Failure behavior
 
-A Review rendering failure must never produce a Ready state. Preserve and display the independently computed release status, retain Output and the plain diff where possible, and report that detailed findings are unavailable.
+A Review rendering failure must never produce a Ready state. Preserve and display the independently computed release status, retain Output, render the existing side-by-side diff through a separate minimal fallback path, and report that detailed findings are unavailable.
 
 Expected failures remain in their panels with actionable recovery. Unexpected page failures continue through `common.guarded`, the recovery screen, and the redacted rotating log. Empty, unavailable, and failed validation states remain distinct.
 
@@ -204,7 +204,7 @@ Expected failures remain in their panels with actionable recovery. Unexpected pa
 ### Automated tests
 
 - Unit-test finding order, grouping identity, filters, counts, empty states, and failure fallback.
-- Preserve existing test markers where practical; use compatibility aliases during migration where necessary.
+- Preserve every existing public test marker on its equivalent control; add new markers for the grouped navigation, Review views, and responsive Input/Result switch.
 - Retain NiceGUI coverage for Clean, Review, AI lifecycle, copy guards, Batch, Census, Rules, accessibility, and error boundaries.
 - Add tests for grouped navigation, responsive view switching, Review view selection, blocking-banner persistence, and focus restoration.
 - Run golden and property tests to confirm byte-identical cleaning behavior and unchanged provenance/release semantics.
