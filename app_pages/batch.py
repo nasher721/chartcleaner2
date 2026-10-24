@@ -135,7 +135,7 @@ def batch_page():
             row = event_row(event)
             name = row.get("file") if row else None
             if isinstance(name, str):
-                expansion = details.get(safe_stem(name))
+                expansion = details.get(name)
                 if expansion is not None:
                     expansion.open()
 
@@ -160,7 +160,7 @@ def batch_page():
             cols = [
                 {"name": "file", "label": "File", "field": "file", "align": "left", "sortable": True},
                 {"name": "reduction", "label": "Reduction", "field": "reduction", "sortable": True},
-                {"name": "findings", "label": "Audit findings", "field": "findings"},
+                {"name": "findings", "label": "Findings", "field": "findings"},
                 {"name": "status", "label": "Status", "field": "status", "align": "left"},
                 {"name": "actions", "label": "Actions", "field": "actions", "align": "left"},
             ]
@@ -186,6 +186,7 @@ def batch_page():
                               on_click=download_zip).props("unelevated color=primary")
                     ui.button("Open exports folder", icon="folder",
                               on_click=lambda: open_folder(out_dir)).props("flat")
+            marker_counts: dict[str, int] = {}
             for r in shown:
                 successful = r.status == "ok"
                 facts = (("kept" if r.facts_status == "ok" else
@@ -195,9 +196,13 @@ def batch_page():
                     if successful else "—"
                 status = (f"error: {r.error}" if not successful else
                           ("review" if r.needs_review else "ok"))
+                stem = safe_stem(r.name)
+                marker_counts[stem] = marker_counts.get(stem, 0) + 1
+                suffix = marker_counts[stem]
+                detail_marker = f"batch-details-{stem}" + (f"-{suffix}" if suffix > 1 else "")
                 with ui.expansion(f"{r.name} — details", icon="description") \
                         .classes("w-full cc-batch-details") \
-                        .mark(f"batch-details-{safe_stem(r.name)}") as expansion:
+                        .mark(detail_marker) as expansion:
                     with ui.element("dl").classes("cc-batch-detail-grid"):
                         values = [
                             ("Characters", f"{r.chars_before:,} → {r.chars_after:,}"
@@ -216,7 +221,7 @@ def batch_page():
                                 ui.label(label)
                             with ui.element("dd").classes("cc-batch-detail-value"):
                                 ui.label(value)
-                details[safe_stem(r.name)] = expansion
+                details[r.name] = expansion
             ui.label("Cleaned copies also live in data/exports; run history is on the "
                      "Statistics page.").classes("text-xs opacity-60")
 

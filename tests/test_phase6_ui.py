@@ -335,6 +335,8 @@ async def test_batch_filters_and_retry(user: User, page, tmp_path):
     await user.should_see(marker="batch-details-good")
     await user.should_see(marker="batch-details-bad")
     table = next(iter(user.find(ui.table).elements))
+    assert [column["label"] for column in table.columns] == [
+        "File", "Reduction", "Findings", "Status", "Actions"]
     action_slot = table.slots["body-cell-actions"].template
     assert "View details" in action_slot and "Download .txt" in action_slot
     details = next(iter(user.find(marker="batch-details-good").elements))
@@ -342,6 +344,34 @@ async def test_batch_filters_and_retry(user: User, page, tmp_path):
         details.open()
     assert details.value is True
     await user.should_see("Characters")
+
+
+async def test_batch_same_stem_files_have_distinct_detail_routing(user: User, page, tmp_path):
+    (tmp_path / "one.txt").write_text("Plan: recheck\n", encoding="utf-8")
+    (tmp_path / "one.pdf").write_bytes(b"%PDF-1.4\nbroken")
+    await _open_page(user, "/p6-batch-same-stem", cc_app.batch_page)
+    with user.client:
+        next(e for e in user.find(ui.input).elements
+             if e.props.get("label", "").startswith("…or a folder")).set_value(str(tmp_path))
+    user.find("Add folder files").click()
+    user.find("Clean queued files").click()
+    await user.should_see(marker="batch-filter", retries=100)
+    expansions = {e.props.get("label"): e for e in user.find(ui.expansion).elements}
+    txt = expansions["one.txt — details"]
+    pdf = expansions["one.pdf — details"]
+
+    user.find(ui.table).trigger("viewDetails", {"row": {"file": "one.pdf"}})
+    assert pdf.value is True and txt.value is False
+    with user.client:
+        pdf.close()
+    user.find(ui.table).trigger("viewDetails", {"row": {"file": "one.txt"}})
+    assert txt.value is True and pdf.value is False
+
+    txt_markers = set(getattr(txt, "_markers", set()))
+    pdf_markers = set(getattr(pdf, "_markers", set()))
+    assert any(marker.startswith("batch-details-one") for marker in txt_markers)
+    assert any(marker.startswith("batch-details-one") for marker in pdf_markers)
+    assert txt_markers.isdisjoint(pdf_markers)
 
 
 async def test_settings_search_filters_cards(user: User, page):
