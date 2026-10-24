@@ -250,6 +250,12 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-drawer{background:var(--nd-black);}
 .q-drawer--left{border-right:1px solid var(--nd-border);}
 .q-drawer--right{border-left:1px solid var(--nd-border);}
+/* The AI drawer overlays the workspace on narrow screens instead of squeezing
+   either chart column, and never extends beyond the viewport. */
+@media (max-width:1023px){
+  .cc-ai-drawer{width:min(440px,100vw) !important;}
+  body:has(.cc-ai-drawer) .q-page-container{padding-right:0 !important;}
+}
 .cc-nav-head{margin:var(--nd-space-lg) var(--nd-space-md) var(--nd-space-sm);}
 .cc-nav-item{display:flex;justify-content:flex-start;min-height:46px;margin:0;
   padding:0 var(--nd-space-md);border-radius:0;border-left:2px solid transparent;

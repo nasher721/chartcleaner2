@@ -143,6 +143,7 @@ async def test_stale_answer_is_discarded_after_chart_change(user: User, monkeypa
     monkeypatch.setattr(cc_app.run, "io_bound", tracked_io_bound)
     before, auto_before, _ = await _open_ai_panel(user, monkeypatch, tmp_path)
     try:
+        user.find(marker="ai-ask-tab").click()
         user.find(ui.input).type("What happened?")
         ask_button = next(e for e in user.find(ui.button).elements if e.props.get("label") == "Ask")
         UserInteraction(user, {ask_button}, "Ask").click()
@@ -169,6 +170,7 @@ async def test_current_chart_ai_response_is_published(user: User, monkeypatch, t
         else:
             monkeypatch.setattr(clean_mod, "ask_chart",
                                 lambda question, chart, cfg, history=None, **_kw: _answer(question, "CURRENT ANSWER"))
+            user.find(marker="ai-ask-tab").click()
             user.find(ui.input).type("What happened?")
             ask_button = next(e for e in user.find(ui.button).elements if e.props.get("label") == "Ask")
             UserInteraction(user, {ask_button}, "Ask").click()

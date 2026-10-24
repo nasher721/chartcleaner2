@@ -1474,7 +1474,8 @@ async def clean_page():
         with ai_col:
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Local AI").classes("cc-section")
-                ui.button(icon="close", on_click=lambda: toggle_ai(False)).props("flat round dense aria-label='Close Local AI panel'")
+                ui.button(icon="close", on_click=lambda: toggle_ai(False)) \
+                    .props("flat round dense aria-label='Close Local AI panel'").mark("ai-close")
             if not result or CLEAN_STATE.get("result_mode") in ("abbreviations", "expand"):
                 ui.label("Do a full clean, then summarize the chart or ask questions about it — "
                          "on this computer, through Ollama.").classes("cc-muted")
@@ -1499,56 +1500,69 @@ async def clean_page():
             ui.select(model_options, value=model_val or None, label="Model", new_value_mode="add",
                       on_change=lambda e: save_llm_pref("model", e.value)).classes("w-full")
 
-            ui.label("Summary").classes("text-sm font-semibold mt-2")
             preset_key = str(opts["prompt_preset"])
             if preset_key not in PRESET_LABELS:
                 preset_key = "clinical"
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.select(dict(PRESET_LABELS), value=preset_key, label="Write",
-                          on_change=lambda e: (save_llm_pref("prompt_preset", e.value),
-                                               custom_box.set_visibility(e.value == "custom"))
-                          ).classes("flex-grow")
-                summary_refs["button"] = ui.button("Summarize", icon="psychology",
-                                                   on_click=run_summarize).props("unelevated color=primary")
-                summary_refs["spinner"] = ui.spinner("dots", size="sm")
-                summary_refs["spinner"].set_visibility(False)
-            custom_box = ui.textarea("Custom prompt (replaces the preset)",
-                                     value=str(opts["custom_prompt"]),
-                                     on_change=lambda e: save_llm_pref("custom_prompt", e.value)
-                                     ).props("outlined").classes("w-full cc-mono")
-            custom_box.set_visibility(preset_key == "custom")
-            summary_refs["output"] = ui.textarea("").props(
-                "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
-            summary_refs["marked"] = ui.html("").classes("w-full").mark("ai-summary-marked")
-            summary_refs["marked"].set_visibility(False)
-            summary_refs["cites"] = ui.column().classes("w-full gap-0")
-            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
-                summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
-            ui.button("Copy summary", icon="content_copy",
-                      on_click=lambda: copy_to_clipboard(summary_refs["output"].value or "")) \
-                .props("flat dense")
-            render_summary_output()
+            with ui.tabs().props("dense align=left").classes("w-full") as ai_tabs:
+                summary_tab = ui.tab("Summary", icon="psychology").mark("ai-summary-tab")
+                ask_tab = ui.tab("Ask chart", icon="forum").mark("ai-ask-tab") \
+                    .tooltip("Ask this chart")
+            with ui.tab_panels(ai_tabs, value=summary_tab).props("keep-alive").classes("w-full"):
+                with ui.tab_panel(summary_tab):
+                    prompt_settings = ui.expansion("Prompt settings", icon="tune") \
+                        .classes("w-full").mark("ai-prompt-settings")
+                    with prompt_settings:
+                        preset_select = ui.select(
+                            dict(PRESET_LABELS), value=preset_key, label="Write",
+                            on_change=lambda e: (save_llm_pref("prompt_preset", e.value),
+                                                 custom_box.set_visibility(e.value == "custom")))
+                        preset_select.classes("w-full")
+                        custom_box = ui.textarea(
+                            "Custom prompt (replaces the preset)", value=str(opts["custom_prompt"]),
+                            on_change=lambda e: save_llm_pref("custom_prompt", e.value))
+                        custom_box.props("outlined").classes("w-full cc-mono")
+                        custom_box.set_visibility(preset_key == "custom")
+                    prompt_settings.on_value_change(
+                        lambda e: custom_box.set_visibility(e.value or preset_select.value == "custom"))
+                    prompt_settings.on(
+                        "click", lambda: None if prompt_settings.value else custom_box.set_visibility(True))
+                    with ui.row().classes("w-full items-center gap-2"):
+                        summary_refs["button"] = ui.button(
+                            "Summarize", icon="psychology", on_click=run_summarize)
+                        summary_refs["button"].props("unelevated color=primary")
+                        summary_refs["spinner"] = ui.spinner("dots", size="sm")
+                        summary_refs["spinner"].set_visibility(False)
+                    summary_refs["output"] = ui.textarea("").props(
+                        "outlined readonly autogrow input-style='min-height: 120px'").classes("w-full cc-mono")
+                    summary_refs["marked"] = ui.html("").classes("w-full").mark("ai-summary-marked")
+                    summary_refs["marked"].set_visibility(False)
+                    summary_refs["cites"] = ui.column().classes("w-full gap-0")
+                    with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                        summary_refs["grounding_row"] = ui.row().classes("items-center gap-1 flex-wrap")
+                        summary_refs["meta"] = ui.label("").classes("text-xs opacity-60")
+                    ui.button("Copy summary", icon="content_copy",
+                              on_click=lambda: copy_to_clipboard(summary_refs["output"].value or "")) \
+                        .props("flat dense")
+                    render_summary_output()
 
-            ui.separator().classes("my-2")
-            ui.label("Ask this chart").classes("text-sm font-semibold")
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                qa_refs["question"] = ui.input(
-                    "Ask about this chart",
-                    placeholder="e.g. What are the active antibiotics?").classes("flex-grow")
-                qa_refs["question"].on("keydown.enter", _ask_on_enter)
-                qa_refs["button"] = ui.button("Ask", icon="send", on_click=run_ask
-                                              ).props("unelevated color=primary")
-                qa_refs["spinner"] = ui.spinner("dots", size="sm")
-                qa_refs["spinner"].set_visibility(False)
-            if model_val:
-                ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
-                         "verified against the chart").classes("text-xs opacity-60")
-            qa_refs["stream"] = ui.label("").classes("text-sm whitespace-pre-wrap opacity-80") \
-                .mark("ai-answer-stream")
-            qa_refs["stream"].set_visibility(False)
-            qa_refs["log"] = ui.column().classes("w-full gap-2")
-            render_qa_log()
+                with ui.tab_panel(ask_tab):
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        qa_refs["question"] = ui.input(
+                            "Ask about this chart",
+                            placeholder="e.g. What are the active antibiotics?").classes("flex-grow")
+                        qa_refs["question"].on("keydown.enter", _ask_on_enter)
+                        qa_refs["button"] = ui.button("Ask", icon="send", on_click=run_ask
+                                                      ).props("unelevated color=primary")
+                        qa_refs["spinner"] = ui.spinner("dots", size="sm")
+                        qa_refs["spinner"].set_visibility(False)
+                    if model_val:
+                        ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
+                                 "verified against the chart").classes("text-xs opacity-60")
+                    qa_refs["stream"] = ui.label("").classes("text-sm whitespace-pre-wrap opacity-80") \
+                        .mark("ai-answer-stream")
+                    qa_refs["stream"].set_visibility(False)
+                    qa_refs["log"] = ui.column().classes("w-full gap-2")
+                    render_qa_log()
 
     def toggle_ai(open_: bool | None = None) -> None:
         value = (not ai_drawer.value) if open_ is None else bool(open_)
@@ -3008,14 +3022,21 @@ async def clean_page():
     ]
 
     with ui.right_drawer(value=bool(common.PREFS.get("ai_drawer")), fixed=False) \
-            .props("width=440 bordered").classes("cc-panel p-4") as ai_drawer:
+            .props("width=440 bordered breakpoint=1023").classes("cc-panel cc-ai-drawer p-4") as ai_drawer:
         ai_col = ui.column().classes("w-full gap-2").mark("ai-panel")
+
+    def restore_ai_invoker_focus(e) -> None:
+        if not e.value:
+            ui.run_javascript(
+                "document.querySelector('[data-marker=\"ai-assistant-button\"]')?.focus()")
+
+    ai_drawer.on_value_change(restore_ai_invoker_focus)
 
     def header_actions() -> None:
         nonlocal inbox_btn
-        ui.button(icon="psychology", on_click=lambda: toggle_ai()) \
-            .props("flat round aria-label='Local AI panel'").classes("cc-headbtn") \
-            .tooltip("Local AI panel (Alt+A)")
+        ui.button("AI assistant", icon="psychology", on_click=lambda: toggle_ai()) \
+            .props("flat no-caps aria-label='Local AI panel'").classes("cc-headbtn cc-narrow-icon") \
+            .mark("ai-assistant-button").tooltip("Local AI panel (Alt+A)")
         inbox_btn = ui.button("Suggestions", icon="lightbulb", on_click=open_inbox) \
             .props("flat no-caps color=grey aria-label='Suggestions'") \
             .classes("cc-headbtn cc-narrow-icon").mark("inbox") \
