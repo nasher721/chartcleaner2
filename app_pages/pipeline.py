@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from app_pages.workflow_ui import workflow_section
 from chartcleaner.service import result_cache as service_result_cache
 from chartcleaner.compactors import mar as mar_compactor
 from chartcleaner.compactors import neuro as neuro_compactor
@@ -1170,24 +1171,29 @@ def pipeline_page():
         with suggestions_holder:
             render_suggestions()
 
-        # Two rows, not one: committing changes is a different job from
-        # importing/exporting a rule set, and eight controls on one line
-        # squeezed the uploader down to an unreadable sliver.
-        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-            save_btn = ui.button("Save changes", icon="save", on_click=save_checked)
-            save_btn.props("unelevated color=primary")
-            ui.button("Revert", icon="undo", on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
-            ui.button("Test patterns on sample text", icon="science", on_click=run_tests).props("outline")
+        with workflow_section("Pipeline actions", "Save, validate, test, share or restore the advanced rule set."):
+            # Committing changes is a different job from importing/exporting a
+            # rule set; separate rows keep every action readable on narrow screens.
+            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                save_btn = ui.button("Save changes", icon="save", on_click=save_checked)
+                save_btn.props("unelevated color=primary")
+                ui.button("Revert", icon="undo", on_click=lambda: ui.navigate.to("/pipeline")).props("flat")
+                ui.button("My text rules", icon="bolt", on_click=lambda: ui.navigate.to("/rules")) \
+                    .props("flat").mark("pipeline-open-rules")
+                ui.button("Test patterns on sample text", icon="science", on_click=run_tests).props("outline")
 
-        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-            preset_dd = ui.select(options={p: p for p in store.list_presets()}, value=None,
-                                  label="Presets").classes("w-44")
-            ui.button(icon="save_as", on_click=new_preset_dialog).props("flat").tooltip("Save current rules as a preset")
-            ui.button(icon="delete", on_click=delete_preset_clicked).props("flat").tooltip("Delete selected preset")
-            ui.button(icon="file_download", on_click=export_rules).props("flat").tooltip("Export rules as JSON")
-            ui.upload(on_upload=import_rules, auto_upload=True, label="Import .json") \
-                .props("accept=.json,application/json flat").classes("w-[230px]")
-            ui.button("Factory defaults", icon="restart_alt", on_click=restore_defaults).props("flat")
+            with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                preset_dd = ui.select(options={p: p for p in store.list_presets()}, value=None,
+                                      label="Presets").classes("w-44")
+                ui.button(icon="save_as", on_click=new_preset_dialog).props("flat") \
+                    .tooltip("Save current rules as a preset")
+                ui.button(icon="delete", on_click=delete_preset_clicked).props("flat") \
+                    .tooltip("Delete selected preset")
+                ui.button(icon="file_download", on_click=export_rules).props("flat") \
+                    .tooltip("Export rules as JSON")
+                ui.upload(on_upload=import_rules, auto_upload=True, label="Import .json") \
+                    .props("accept=.json,application/json flat").classes("w-[230px]")
+                ui.button("Factory defaults", icon="restart_alt", on_click=restore_defaults).props("flat")
 
         with ui.expansion("Test text (used by the per-pattern match counters)", icon="science").classes("w-full"):
             ui.textarea("Sample chart to test patterns against", value=PIPE_TEST["text"],
@@ -1207,7 +1213,8 @@ def pipeline_page():
             with packs_holder:
                 render_packs()
 
-        stages_container = ui.column().classes("w-full gap-1")
+        with workflow_section("Stage order", "Expand a stage to edit its options and rules."):
+            stages_container = ui.column().classes("w-full gap-1 min-w-0")
 
         preset_dd.on_value_change(on_preset_load)
         refresh_stages()

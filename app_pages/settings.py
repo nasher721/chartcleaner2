@@ -9,6 +9,23 @@ from chartcleaner import git_update, model_compare, recent_charts, regression_se
 from chartcleaner.summarizer import PRESET_LABELS
 
 
+SETTINGS_CATEGORIES = ("Output & AI", "Privacy & data", "Automation", "Rules & validation", "System")
+
+
+def settings_category(title: str) -> str:
+    """Return the stable navigation category for an existing settings card."""
+    text = title.casefold()
+    if any(word in text for word in ("output", "local ai", "nlp", "converter")):
+        return "Output & AI"
+    if any(word in text for word in ("chart data", "recent charts", "known-good", "token maps", "retention")):
+        return "Privacy & data"
+    if any(word in text for word in ("watcher", "clipboard", "integration", "hotkey")):
+        return "Automation"
+    if any(word in text for word in ("rule", "validation", "abbreviation", "note type")):
+        return "Rules & validation"
+    return "System"
+
+
 def settings_page():
     def _restore_backup(path: str) -> None:
         ok, msg = store.restore_config_backup(path)
@@ -19,6 +36,7 @@ def settings_page():
     with shell("Settings", "settings", measure=True):
         draft = dict(load_config(common.CONFIG_PATH))
         page_col = ui.context.slot.parent
+        page_col.classes("cc-settings-page")
         with ui.row().classes("w-full items-center gap-2 flex-wrap").mark("settings-search-row"):
             search = ui.input(placeholder="Search settings — e.g. watcher, delete, Ollama") \
                 .props("outlined dense clearable").classes("w-96").mark("settings-search")
@@ -1053,10 +1071,18 @@ def settings_page():
                 card.set_visibility(all(w in text for w in words))
 
         search.on_value_change(filter_cards)
+        grouped = {category: [] for category in SETTINGS_CATEGORIES}
+        for card in cards:
+            title = card_title(card)
+            if title:
+                grouped[settings_category(title)].append((card, title))
         with jump_row:
-            for card in cards:
-                title = card_title(card)
-                if title:
+            for category in SETTINGS_CATEGORIES:
+                entries = grouped[category]
+                if not entries:
+                    continue
+                ui.label(category).classes("w-full cc-eyebrow mt-2")
+                for card, title in entries:
                     ui.chip(title, on_click=lambda c=card: ui.run_javascript(
                         f"document.getElementById('c{c.id}').scrollIntoView({{behavior:'smooth'}})")) \
                         .props("dense outline clickable")

@@ -33,30 +33,40 @@ def doctor_page():
 
     def draw(checks) -> None:
         summary.set_text(doctor.summary(checks))
-        rows.clear()
-        with rows:
-            for c in checks:
-                status, word = _STATUS.get(c.status, _STATUS["info"])
-                with ui.row().classes("w-full items-center gap-3 no-wrap border-b pb-2") \
-                        .mark(f"doctor-{c.id}"):
-                    status_tag(word, status, classes="shrink-0")
-                    ui.label(c.label).classes("font-medium w-60")
-                    ui.label(c.detail).classes("text-sm flex-grow break-all")
-                    if c.fix:
-                        ui.button(c.fix_label or "Fix", icon="build",
-                                  on_click=lambda c=c: fix(c)).props("outline dense") \
-                            .mark(f"doctor-fix-{c.fix}")
+        attention = [c for c in checks if c.status in ("fail", "warn")]
+        ordinary = [c for c in checks if c not in attention]
+        attention_rows.clear()
+        ordinary_rows.clear()
+
+        def render(rows, items) -> None:
+            with rows:
+                for c in items:
+                    status, word = _STATUS.get(c.status, _STATUS["info"])
+                    with ui.row().classes("w-full items-center gap-3 flex-wrap border-b pb-2") \
+                            .mark(f"doctor-{c.id}"):
+                        status_tag(word, status, classes="shrink-0")
+                        ui.label(c.label).classes("font-medium w-60 min-w-0")
+                        ui.label(c.detail).classes("text-sm flex-grow min-w-0 break-all")
+                        if c.fix:
+                            ui.button(c.fix_label or "Fix", icon="build",
+                                      on_click=lambda c=c: fix(c)).props("outline dense") \
+                                .mark(f"doctor-fix-{c.fix}")
+
+        render(attention_rows, attention)
+        render(ordinary_rows, ordinary)
 
     with shell("Doctor — is everything in place?", "/doctor", measure=True):
         ui.label("Checks Python, packages, the spaCy model, local AI, encryption, your rules, the "
                  "API token, launchers, the data folder and update signing. Problems that can be "
                  "repaired from here get a button.").classes("cc-page-sub")
-        with ui.row().classes("w-full items-center gap-3 no-wrap"):
-            summary = ui.label("Checking…").classes("text-lg").mark("doctor-summary")
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            summary = ui.label("Checking…").classes("text-lg flex-grow min-w-0").mark("doctor-summary")
             spinner = ui.spinner("dots", size="md")
-            ui.space()
             ui.button("Check again", icon="refresh", on_click=lambda: run_checks()).props("flat")
             ui.button("Deep check (load the NLP engine)", icon="psychology",
                       on_click=lambda: run_checks(deep=True)).props("flat").mark("doctor-deep")
-        rows = ui.column().classes("w-full gap-2")
+        attention_rows = ui.column().classes("w-full gap-2 min-w-0").mark("doctor-failing-checks")
+        with ui.expansion("Other checks", icon="check_circle", value=False) \
+                .classes("w-full cc-secondary-details").mark("doctor-ok-checks"):
+            ordinary_rows = ui.column().classes("w-full gap-2 min-w-0")
         ui.timer(0.1, run_checks, once=True)

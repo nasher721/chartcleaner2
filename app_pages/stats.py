@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
+from app_pages.workflow_ui import empty_state, workflow_section
 
 
 def render_rule_health(runs: list[dict], summary: dict | None = None) -> None:
@@ -133,28 +134,31 @@ def stats_page():
 
     with shell("Statistics — how much has been cleaned", "stats"):
         if not runs:
-            with ui.column().classes("w-full items-center gap-4 py-24"):
-                ui.element("div").classes("cc-dotgrid")
-                ui.label("No runs recorded yet.").classes("text-lg")
-                ui.label("Clean a chart on the Clean page — every run is tracked here, "
-                         "including per-stage detail.").classes("cc-page-sub text-center")
+            empty_state("No runs recorded yet.",
+                        "Clean a chart on the Clean page — every run is tracked here, "
+                        "including per-stage detail.", icon="insights")
             return
 
-        cards = ui.row().classes("gap-4 flex-wrap w-full items-stretch")
-        stat_chip(cards, "total runs", f"{s['runs']:,}")
-        stat_chip(cards, "characters removed", f"{s['chars_removed']:,}", "green")
-        stat_chip(cards, "avg reduction", f"{s['avg_reduction']:+.1f}%")
-        stat_chip(cards, "PHI items redacted", f"{s['phi']:,}", "red")
-        stat_chip(cards, "words removed", f"{max(0, s['words_before'] - s['words_after']):,}", "indigo")
-        stat_chip(cards, "avg time / run", f"{s['avg_duration_ms']:.0f} ms", "blue-grey")
+        with workflow_section("Summary", "Cleaning volume and rule health at a glance."):
+            cards = ui.row().classes("gap-4 flex-wrap w-full items-stretch")
+            stat_chip(cards, "total runs", f"{s['runs']:,}")
+            stat_chip(cards, "characters removed", f"{s['chars_removed']:,}", "green")
+            stat_chip(cards, "avg reduction", f"{s['avg_reduction']:+.1f}%")
+            stat_chip(cards, "PHI items redacted", f"{s['phi']:,}", "red")
+            stat_chip(cards, "words removed", f"{max(0, s['words_before'] - s['words_after']):,}", "indigo")
+            stat_chip(cards, "avg time / run", f"{s['avg_duration_ms']:.0f} ms", "blue-grey")
 
-        with ui.card().classes("w-full gap-3") as reduction_card:
-            ui.label("Average reduction across every run").classes("cc-eyebrow")
-            SegmentedBar(reduction_card, segments=32,
-                         label="share of each chart your rules removed") \
-                .set_value(max(0.0, s["avg_reduction"]) / 100.0, f"{s['avg_reduction']:+.1f}%")
+            with ui.card().classes("w-full gap-3") as reduction_card:
+                ui.label("Average reduction across every run").classes("cc-eyebrow")
+                SegmentedBar(reduction_card, segments=32,
+                             label="share of each chart your rules removed") \
+                    .set_value(max(0.0, s["avg_reduction"]) / 100.0, f"{s['avg_reduction']:+.1f}%")
 
-        render_rule_health(runs, s)
+            render_rule_health(runs, s)
+
+        details = ui.expansion("Detailed activity", icon="insights", value=False) \
+            .classes("w-full cc-secondary-details").mark("stats-details")
+        details_parent = details.parent_slot.parent
 
         if s["days"]:
             days = s["days"]
@@ -314,6 +318,12 @@ def stats_page():
                     eval_btn.set_enabled(True)
 
             eval_btn.on("click", lambda: asyncio.get_running_loop().create_task(run_eval()))
+
+        # Keep the established renderers and callbacks intact, then place every
+        # element they created below the summary inside the closed disclosure.
+        siblings = list(details_parent.default_slot.children)
+        for element in siblings[siblings.index(details) + 1:]:
+            element.move(details)
 
 
 # ===========================================================================

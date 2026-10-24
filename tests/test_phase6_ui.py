@@ -378,6 +378,7 @@ async def test_settings_search_filters_cards(user: User, page):
     await _open_page(user, "/p6-settings-search", cc_app.settings_page)
     await user.should_see("Known-good charts")
     await user.should_see("Recent charts (for rule suggestions)")
+    await user.should_see("Privacy & data")
     with user.client:
         next(iter(user.find(marker="settings-search").elements)).set_value("delete after")
     await user.should_see(marker="privacy-card")

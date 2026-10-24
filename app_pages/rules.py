@@ -5,6 +5,7 @@ from __future__ import annotations
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages.rule_builder_ui import open_rule_builder
+from app_pages.workflow_ui import workflow_section
 from chartcleaner import rule_history, rule_meta
 
 # Rule journal sources shown on Recent changes.
@@ -327,24 +328,26 @@ def text_rules_page():
     with shell("My text rules", "/rules", measure=True):
         ui.label("Manage what you remove, replace and abbreviate. Changes save immediately.") \
             .classes("cc-page-sub")
-        with ui.tabs().classes("w-full") as tabs:
-            quick = ui.tab("Quick add", icon="bolt")
-            learned = ui.tab("Remove & replace", icon="find_replace")
-            abbreviations = ui.tab("Abbreviations", icon="short_text")
-            sharing = ui.tab("Share & import", icon="import_export")
-            history = ui.tab("Recent changes", icon="history")
-        with ui.tab_panels(tabs, value=quick).classes("w-full") \
-                .props("transition-prev=fade transition-next=fade"):
-            with ui.tab_panel(quick):
-                quick_holder = ui.column().classes("w-full")
-            with ui.tab_panel(learned):
-                learned_holder = ui.column().classes("w-full")
-            with ui.tab_panel(abbreviations):
-                abbreviation_holder = ui.column().classes("w-full")
-            with ui.tab_panel(sharing):
-                sharing_holder = ui.column().classes("w-full")
-            with ui.tab_panel(history):
-                history_holder = ui.column().classes("w-full")
+        with workflow_section("Rule workspace", "Start with Quick add; use the other tabs for advanced editing, "
+                              "sharing and history."):
+            with ui.tabs().classes("w-full") as tabs:
+                quick = ui.tab("Quick add", icon="bolt")
+                learned = ui.tab("Remove & replace", icon="find_replace")
+                abbreviations = ui.tab("Abbreviations", icon="short_text")
+                sharing = ui.tab("Share & import", icon="import_export")
+                history = ui.tab("Recent changes", icon="history")
+            with ui.tab_panels(tabs, value=quick).classes("w-full") \
+                    .props("transition-prev=fade transition-next=fade"):
+                with ui.tab_panel(quick):
+                    quick_holder = ui.column().classes("w-full")
+                with ui.tab_panel(learned):
+                    learned_holder = ui.column().classes("w-full")
+                with ui.tab_panel(abbreviations):
+                    abbreviation_holder = ui.column().classes("w-full")
+                with ui.tab_panel(sharing):
+                    sharing_holder = ui.column().classes("w-full")
+                with ui.tab_panel(history):
+                    history_holder = ui.column().classes("w-full")
 
         def open_builder(row: dict, on_save) -> None:
             info = rule_meta.entry(load_current(), row["pattern"])
@@ -377,5 +380,9 @@ def text_rules_page():
 
         tabs.on_value_change(lambda e: render_tab(e.value))
         render_tab("Quick add")
-        ui.button("Full settings backup", icon="backup",
-                  on_click=lambda: ui.navigate.to("/settings")).props("flat")
+        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+            ui.button("Full settings backup", icon="backup",
+                      on_click=lambda: ui.navigate.to("/settings")).props("flat")
+            ui.button("Advanced Pipeline", icon="tune",
+                      on_click=lambda: ui.navigate.to("/pipeline")).props("flat") \
+                .mark("rules-open-pipeline")
