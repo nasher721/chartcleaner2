@@ -33,12 +33,16 @@ def bind_split_handle(layout, handle) -> None:
           const box = root.getBoundingClientRect();
           apply((e.clientX - box.left) / box.width * 100);
         };
-        const up = () => {
+        const end = () => {
           grip.removeEventListener('pointermove', move);
-          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointerup', end);
+          grip.removeEventListener('pointercancel', end);
+          grip.removeEventListener('lostpointercapture', end);
         };
         grip.addEventListener('pointermove', move);
-        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
+        grip.addEventListener('lostpointercapture', end);
       });
       grip.addEventListener('keydown', event => {
         if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
