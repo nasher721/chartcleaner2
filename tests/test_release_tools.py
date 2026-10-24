@@ -123,3 +123,14 @@ def test_local_mac_build_seals_bundle_after_embedding_updater(tmp_path, monkeypa
     staged = tmp_path / 'staged-companion'
     shutil.copytree(restored / bundle.name / 'Contents/Helpers/updater', staged, symlinks=True)
     assert (staged / 'chart-cleaner-updater').read_text() == 'synthetic companion'
+
+
+def test_sbom_is_deterministic_and_contains_application_metadata(monkeypatch):
+    from scripts import generate_sbom
+    monkeypatch.setenv('SOURCE_DATE_EPOCH', '0')
+    first = generate_sbom.sbom()
+    second = generate_sbom.sbom()
+    assert first == second
+    assert first['bomFormat'] == 'CycloneDX'
+    assert first['metadata']['component']['name'] == 'Chart Cleaner'
+    assert all(component['purl'].startswith('pkg:pypi/') for component in first['components'])

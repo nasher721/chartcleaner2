@@ -181,6 +181,7 @@ def _migrate_config_schema(cfg: dict) -> dict:
 DEFAULT_PREFS = {
     "dark": True,
     "last_preset": "",
+    "last_destination": "",
     "auto_clean": False,
     "update_auto_check": True,
     "update_last_checked": None,

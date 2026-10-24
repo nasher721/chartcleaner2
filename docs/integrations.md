@@ -84,9 +84,11 @@ TOKEN=...   # Settings → Local API → Copy
 curl -s http://127.0.0.1:8765/api/v1/clean -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" -d '{"text": "Pt w/ HTN", "wrap": false}'
 ```
+REST and MCP `clean_chart` accept destination keys `external_ai`, `personal_review`, `epic_paste`, and `archive`; these apply run-local safety policies without changing saved rules.
+
 Routes:
 - `/api/v1/health`
-- `/api/v1/clean`, with optional `format`, `delta`, `trends` and `wrap` (the response also carries `fact_check`)
+- `/api/v1/clean`, with optional `format`, `delta`, `trends`, `wrap` and `destination` (the response also carries `fact_check`)
 - `/api/v1/abbreviate`, `/api/v1/expand`
 - `/api/v1/restore` — puts real values back into text with `[[Tn]]` tokens, using the newest saved token map (REST only: the MCP server deliberately has no restore tool, so an AI client can't read the PHI back)
 - `/api/v1/prompt`, with `template`

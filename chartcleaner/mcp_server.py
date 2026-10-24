@@ -37,7 +37,7 @@ INSTRUCTIONS = (
 
 
 def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool = False,
-                trends: bool = False) -> dict[str, Any]:
+                trends: bool = False, destination: str = "") -> dict[str, Any]:
     """Clean a chart exactly like the Chart Cleaner app.
 
     Args:
@@ -46,11 +46,12 @@ def clean_chart(text: str, preset: str = "", format: str = "text", delta: bool =
         format: "text", "markdown", "json" or "xml" (sectioned for LLMs).
         delta: Keep only what changed between daily notes (copy-forward removed).
         trends: Add lab trends and medication changes across the chart's notes.
+        destination: Optional safety policy: external_ai, personal_review, epic_paste or archive.
     """
     out = service.clean(text, preset=preset or None, fmt=format, delta=delta, trends=trends,
-                        source="api:mcp")
+                        destination=destination or None, source="api:mcp")
     # ``text`` is empty when release is withheld; ``release`` says why.
-    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings", "trends", "release")
+    return {k: out[k] for k in ("text", "summary", "reduction", "phi", "warnings", "trends", "release", "destination")
             if k in out}
 
 

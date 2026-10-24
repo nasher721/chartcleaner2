@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate tag and create draft before platform gates
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,14 +55,14 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
           architecture: ${{ matrix.platform == 'macos-arm64' && 'arm64' || 'x64' }}
           cache: pip
       - name: Install existing application and build dependencies
-        run: python -m pip install -r requirements.txt pyinstaller
+        run: python -m pip install --require-hashes -r requirements-dev.lock
       - name: Full tests and syntax gate
         run: |
           python -m pytest -q
@@ -114,7 +114,9 @@ jobs:
           for name in names:
               shutil.copyfile(root / name, target / name)
           PY
-      - uses: actions/upload-artifact@v4
+      - name: Generate dependency SBOM
+        run: python scripts/generate_sbom.py --output release-candidate/sbom-${{ matrix.platform }}.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signed-${{ matrix.platform }}
           path: release-candidate/*
@@ -139,8 +141,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: signed-*
           merge-multiple: true

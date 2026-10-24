@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from chartcleaner import __version__
 from chartcleaner.audit import run_audit
+from chartcleaner.destinations import DESTINATIONS, apply_destination
 from chartcleaner.engine import (
     ConfigError,
     Pipeline,
@@ -31,7 +32,7 @@ class MedicalCleaner:
     """Backwards-compatible wrapper around the chartcleaner engine."""
 
     def __init__(self, config_path=None, wrap_output: bool = True, mode: str = "clean",
-                 preset: str | None = None):
+                 preset: str | None = None, destination: str | None = None):
         path = (_SCRIPT_DIR / "config.json") if config_path is None else Path(config_path)
         try:
             if preset:
@@ -45,6 +46,7 @@ class MedicalCleaner:
         except ConfigError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
+        self.config, self.destination = apply_destination(self.config, destination)
         errors, _warnings = validate_config(self.config)
         if errors:
             print(f"Invalid config ({path}):\n- " + "\n- ".join(errors), file=sys.stderr)
@@ -601,6 +603,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "hotkeys and scripts); messages go to standard error.")
     parser.add_argument("--preset", type=str, metavar="NAME",
                         help="Clean with a saved preset instead of config.json.")
+    parser.add_argument("--destination", choices=sorted(DESTINATIONS),
+                        help="Apply a run-local destination safety policy without changing saved rules.")
     parser.add_argument(
         "--prompt", type=str, metavar="TEMPLATE",
         help='Wrap the cleaned chart in a prompt template, e.g. "Progress note", '
@@ -784,7 +788,10 @@ def main(argv: list[str] | None = None) -> None:
         _run_evaluate(args.evaluate, cleaner)
         return
 
-    cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode, preset=args.preset)
+    cleaner = MedicalCleaner(wrap_output=not args.no_wrap, mode=args.mode, preset=args.preset,
+                             destination=args.destination)
+    if args.destination == "epic_paste" and args.format == "text":
+        args.format = "smartphrase"
 
     if (args.stdin or args.stdout or args.daily_note or args.tag or args.split_patients
             or args.template):

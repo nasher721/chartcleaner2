@@ -81,6 +81,17 @@ they changed). Real-chart measurements from the scheduled job will tell
 whether the gap holds outside the worst case; until then this is recorded as
 a known gap, not a pass.
 
+## Validation optimization checkpoint (2026-10-24)
+
+Profiling identified repeated whole-region abbreviation expansion in
+`_unendorsed_abbreviations`. The implementation now skips irrelevant proposals and computes the
+expanded/source-folded text once per proposal. An initial local run suggested a 20% warm-shadow
+improvement, but a same-environment baseline/optimized rerun did not reproduce it: baseline warm
+off/shadow/enforce times were 0.800s/2.190s/2.181s versus 0.784s/2.225s/2.194s after the change.
+Treat the difference as noise; **no reliable speedup has been demonstrated**. Shadow remains about
+2.8× off-mode runtime, so **the ≤1.5× target is still not met**. These are local synthetic
+measurements, not representative real-chart or clinical validation.
+
 ## Label review status
 
 **Provisional.** `tests/test_accuracy_release.py` makes certification fail

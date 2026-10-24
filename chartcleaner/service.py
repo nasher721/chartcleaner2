@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import store
+from .destinations import apply_destination
 from .engine import Pipeline, RunResult, load_config
 
 __all__ = ["FORMATS", "INSIGHTS", "INSIGHT_ORDER", "load_active_config", "format_output", "trends_text", "clean", "abbreviate",
@@ -322,14 +323,17 @@ def clean(
     config: dict | None = None,
     custom_dir: str | Path | None = None,
     include_raw: bool = False,
+    destination: str | None = None,
 ) -> dict:
     """Full clean, exactly as the Clean page runs it.
 
+    ``destination`` applies a run-local safety policy without saving config.
     The payload carries ``release`` (see :func:`release`); when release is
     blocked the ``text`` is empty and the raw, unverified text is included
     only with ``include_raw`` — for local review, never for ordinary callers.
     """
     cfg = _config(config, preset)
+    cfg, destination_policy = apply_destination(cfg, destination)
     _check_format(fmt)  # before the (slow) run, not after it
     result = Pipeline(cfg, custom_dir=custom_dir or store.CUSTOM_RULES_DIR).run(text, wrap=wrap)
     # One trend report feeds both the block above the chart and payload["trends"].
@@ -337,6 +341,8 @@ def clean(
     out, delta_res = _compose(result.text, fmt, delta, report.to_text() if report else "", False)
     _record(result, source, record)
     payload = _gate(_payload(result, out), result, out, include_raw=include_raw)
+    if destination_policy is not None:
+        payload["destination"] = destination_policy.public_dict()
     if trends:
         payload["trends"] = report.to_dict() if report else None
     if delta_res is not None:

@@ -1,6 +1,6 @@
 # Production readiness
 
-Status: **v2.3 — hardened local install**. This is the document a hospital IT
+Status: **v2.4 — hardened local install**. This is the document a hospital IT
 department, a security reviewer, or a new maintainer reads before deploying or
 supporting Chart Cleaner. Each item names the artifact that proves it, so a
 review is a checklist rather than an interview.
@@ -56,7 +56,8 @@ safe. `Scripts` states this in plain language above the editor.
 
 | Requirement | How it is met | Evidence |
 | --- | --- | --- |
-| Builds are reproducible and gated | pytest matrix on Ubuntu 3.10/3.12, macOS, Windows; `compileall` syntax gate; `git diff --exit-code` proves tests leave tracked files alone. | `.github/workflows/tests.yml` |
+| Builds are reproducible and gated | Hash-locked CI/release dependencies; immutable Action commit pins; pytest matrix on Ubuntu 3.10/3.12, macOS, Windows; `compileall` syntax gate; `git diff --exit-code` proves tests leave tracked files alone. | `requirements*.lock`, `.github/workflows/tests.yml`, `.github/dependabot.yml` |
+| Releases include dependency inventory | Each signed platform candidate emits a CycloneDX SBOM published with its artifacts. | `scripts/generate_sbom.py`, `.github/workflows/release.yml` |
 | Artifacts are signed and notarized | macOS codesign + notarization, Windows Authenticode, credentials imported per run and destroyed afterwards. | `.github/workflows/release.yml`, `scripts/prepare_signing.py` |
 | An upgrade is proven before it ships | Release pipeline installs the previous signed release, upgrades it with sentinels, then forces a broken startup to prove rollback. Both platforms must pass before publish. | `scripts/release_smoke.py`, `release.yml::publish` |
 | The updater cannot be pointed at arbitrary code | Update manifest is verified; the client checks platform, version and minimum supported version. | `chartcleaner/update.py`, `chartcleaner/updater.py` |

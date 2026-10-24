@@ -691,18 +691,25 @@ def _unendorsed_abbreviations(proposal: EditProposal, lines: _Lines) -> list[Val
     from .clinical_statements import _expand
     issues: list[ValidationIssue] = []
     table = dict(_abbreviation_meanings())
-    expanded_before = _expand(lines.before).casefold()
     before_tokens = set(re.findall(r"[A-Za-z0-9]+", lines.before))
-    for m in re.finditer(r"(?<![A-Za-z0-9])[A-Za-z]{2,6}(?![A-Za-z0-9])", lines.after):
-        abbr = m.group(0)
-        if abbr not in table or abbr in before_tokens:
-            continue  # not a known abbreviation, or it was already there
+    candidates = [m.group(0) for m in
+                  re.finditer(r"(?<![A-Za-z0-9])[A-Za-z]{2,6}(?![A-Za-z0-9])", lines.after)
+                  if m.group(0) in table and m.group(0) not in before_tokens]
+    if not candidates:
+        return issues
+    # These whole-line operations used to run once per possible meaning. Do
+    # them once per proposal, and skip them entirely when no new abbreviation
+    # needs semantic review (the common case for opaque stage proposals).
+    expanded_before = _expand(lines.before).casefold()
+    before_fold = lines.before.casefold()
+
+    for abbr in candidates:
         forms = table[abbr]
 
         def _said(meaning: str) -> bool:
             # The term itself, or its words' stems in a variant spelling
             # ("CT angiogram" for "computed tomography angiography").
-            if meaning in lines.before.casefold():
+            if meaning in before_fold:
                 return True
             stems = [w[:5] for w in meaning.split() if len(w) > 4]
             return bool(stems) and all(s in expanded_before for s in stems)

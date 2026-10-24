@@ -151,7 +151,7 @@ def register(app) -> None:
         return await run(request, ("text",), lambda d: service.clean(
             d["text"], preset=_str(d, "preset"), fmt=_str(d, "format") or "text",
             delta=bool(d.get("delta")), trends=bool(d.get("trends")), wrap=_bool(d, "wrap"),
-            source="api:rest"))
+            destination=_str(d, "destination") or None, source="api:rest"))
 
     @app.post("/api/v1/abbreviate")
     async def api_abbreviate(request: Request):

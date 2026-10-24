@@ -17,6 +17,7 @@ from app_pages.rule_builder_ui import open_rule_builder
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
+from chartcleaner.destinations import apply_destination, destination_options, get_destination
 from chartcleaner.review_state import review_findings, review_status, redaction_candidates
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
@@ -89,6 +90,7 @@ async def clean_page():
         state["running"] = flag
         clean_btn.set_enabled(not flag)
         mode_sel.set_enabled(not flag)
+        destination_sel.set_enabled(not flag and mode_sel.value == "clean")
         input_area.set_enabled(not flag)
         spinner.set_visibility(flag)
 
@@ -112,6 +114,8 @@ async def clean_page():
                     # This run only: applying a preset for real would overwrite config.json.
                     cfg = store.load_preset(preset)
                     note_info["preset"] = preset
+                cfg, destination_policy = apply_destination(cfg, destination_sel.value)
+                note_info["destination"] = destination_policy.label if destination_policy else None
                 # Tracked changes stay in memory for the inspect tabs; history drops them.
                 result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
                     text, track_changes=True, cache=cache)
@@ -412,6 +416,8 @@ async def clean_page():
         text = f"Detected: {note['label']}"
         if note.get("preset"):
             text += f" → preset {note['preset']}"
+        if note.get("destination"):
+            text += f" → {note['destination']}"
         ui.chip(text, icon="label", color="teal-1", text_color="teal-9",
                 on_click=open_note_type_dialog).props("dense clickable").mark("note-chip") \
             .tooltip("Click to choose which preset this note type uses")
@@ -2888,6 +2894,11 @@ async def clean_page():
             pass
 
     # ---- UI ------------------------------------------------------------------
+    def on_destination_change(e) -> None:
+        common.PREFS["last_destination"] = e.value or ""
+        save_prefs()
+        sync_mode_controls()
+
     def on_mode_change(e) -> None:
         CLEAN_STATE.update(mode=e.value, result=None, review_html=None, result_text="", audit=None,
                            summary=None, qa=[], result_mode=None)
@@ -2900,6 +2911,7 @@ async def clean_page():
         clean_btn.set_text({"abbreviations": "Apply abbreviations",
                             "expand": "Expand abbreviations"}.get(mode, "Clean"))
         preset_sel.set_enabled(mode == "clean")
+        destination_sel.set_enabled(mode == "clean")
         mode_note.set_text({
             "abbreviations": "Shortens full medical terms using your abbreviation dictionary. Other text "
                              "and formatting are preserved; PHI is not removed.",
@@ -2907,6 +2919,9 @@ async def clean_page():
                       "Abbreviations with several meanings are left as written until you choose one. "
                       "PHI is not removed.",
         }.get(mode, "Runs your cleaning pipeline, including your medical abbreviation dictionary."))
+        destination = get_destination(destination_sel.value)
+        if mode == "clean" and destination:
+            mode_note.set_text(destination.description)
 
     commands = [
         {"label": "Clean the chart", "icon": "auto_fix_high", "group": "Clean", "run": run_clean},
@@ -2988,6 +3003,13 @@ async def clean_page():
                 value=common.PREFS.get("last_preset") if common.PREFS.get("last_preset") in presets else "",
                 label="Rule preset",
             ).props("dense outlined").classes("w-60")
+            destination_sel = ui.select(
+                options={"": "No destination override", **destination_options()},
+                value=(common.PREFS.get("last_destination", "")
+                       if common.PREFS.get("last_destination", "") in destination_options() else ""),
+                label="Destination",
+                on_change=on_destination_change,
+            ).props("dense outlined").classes("w-60").mark("clean-destination")
         mode_note = ui.label("").classes("cc-muted")
 
         layout = ui.element("div").classes("grid grid-cols-1 gap-4 w-full items-start")

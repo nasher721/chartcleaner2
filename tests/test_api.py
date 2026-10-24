@@ -42,6 +42,12 @@ def test_clean_matches_service(client):
     assert out.json()["text"] == service.clean(TEXT, record=False)["text"]
 
 
+def test_clean_applies_destination_policy(client):
+    out = client.post("/api/v1/clean", json={"text": TEXT, "destination": "external_ai"})
+    assert out.status_code == 200
+    assert out.json()["destination"]["key"] == "external_ai"
+
+
 def test_abbreviate_expand_and_prompt(client):
     assert client.post("/api/v1/abbreviate", json={"text": "Hypertension"}).json()["text"] == "HTN"
     assert client.post("/api/v1/expand", json={"text": "HTN"}).json()["text"] == "Hypertension"
@@ -78,6 +84,7 @@ def test_bad_bodies(client):
     big = "x" * (api.MAX_BODY_BYTES + 1)
     assert client.post("/api/v1/clean", json={"text": big}).status_code == 413
     assert client.post("/api/v1/clean", json={"text": TEXT, "preset": "missing"}).status_code == 400
+    assert client.post("/api/v1/clean", json={"text": TEXT, "destination": "missing"}).status_code == 400
 
 
 def test_token_file_is_private_and_rotates(client):

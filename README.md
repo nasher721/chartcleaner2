@@ -103,6 +103,24 @@ Word/Markdown/Epic-safe exports: see [docs/integrations.md](docs/integrations.md
 
 ---
 
+## Destination safety policies
+
+Choose **Destination** on the Clean page, or pass `--destination` to the CLI. Policies apply only
+to that run and never rewrite your saved rules. Leaving it unset preserves the existing behavior.
+
+| Destination | Run-local policy |
+|-------------|------------------|
+| `external_ai` | Enforce edit validation, conservative abbreviations, no condensing, XML-friendly wrapper. Review remaining PHI before sharing. |
+| `personal_review` | Enforce edit validation while retaining your configured condensing stages. |
+| `epic_paste` | Enforce edit validation, conservative abbreviations, no condensing or wrapper; CLI defaults to Epic-safe output. |
+| `archive` | Detailed local archive with custom-only abbreviations and no condensing; not an unmodified legal record. |
+
+The REST `/api/v1/clean` endpoint and MCP `clean_chart` tool accept the same `destination` key.
+Every policy uses the shared release decision; a blocked result still ships no cleaned text.
+These policies do not guarantee de-identification or clinical correctness.
+
+---
+
 ## The cleaning pipeline
 
 The Clean page offers **Full clean** and **Abbreviations only**. Full clean includes
@@ -419,15 +437,17 @@ screen-reader captions and column headers. Every route declares `lang="en"`, and
 
 ---
 
-## Roadmap — further enhancements
+## Roadmap
 
-Ideas that would take this tool further (implemented ideas live in Settings → "Ideas"):
+The current priorities are evidence and release quality rather than more cleaning stages:
 
-- **Folder watcher** — auto-clean files dropped into a watched directory.
-- **.docx / .pdf input** via python-docx / pdfplumber.
-- **Rule packs** — community presets with a review workflow.
-- **Recent runs** — reopen or re-run a previous cleaned output in one click.
-- **Weekly self-report** — scheduled summary of cleaning statistics.
+1. Complete clinician review of accuracy labels and expand locally retained, multi-site validation.
+2. Measure and reduce shadow/enforce validation overhead on representative real charts.
+3. Complete the documented real-Mac, Windows standard-user, and post-publication updater checks.
+4. Expand property-based and adversarial testing of clinical preservation and release blocking.
+
+See [cleaning accuracy and release evidence](docs/validation/cleaning-accuracy-release.md)
+for current limitations. Historical implementation plans live in `docs/improvement-plan.md`.
 
 ---
 
@@ -474,4 +494,5 @@ This tool **reduces** obvious PHI and EMR noise; it is **not** a guarantee of de
 
 ## License
 
-Use and modify for your own workflow. If you share forks publicly, keep compliance and privacy warnings prominent.
+MIT — see [LICENSE](LICENSE). Keep the privacy and clinical-safety limitations prominent when
+sharing derivatives. Third-party packages and bundled clinical dictionaries retain their own licenses.

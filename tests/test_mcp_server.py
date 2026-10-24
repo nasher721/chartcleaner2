@@ -22,6 +22,19 @@ def test_tools_wrap_the_service_layer():
     assert "Progress note" in names
 
 
+def test_clean_forwards_destination(monkeypatch):
+    seen = {}
+
+    def fake_clean(text, **kwargs):
+        seen.update(kwargs)
+        return {"text": text, "destination": {"key": kwargs["destination"]}}
+
+    monkeypatch.setattr(mcp_server.service, "clean", fake_clean)
+    out = mcp_server.clean_chart("synthetic", destination="epic_paste")
+    assert seen["destination"] == "epic_paste"
+    assert out["destination"] == {"key": "epic_paste"}
+
+
 def test_server_lists_every_tool():
     server = mcp_server.build_server()
     tools = asyncio.run(server.list_tools())

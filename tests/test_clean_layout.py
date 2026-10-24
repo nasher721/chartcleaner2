@@ -37,3 +37,6 @@ async def test_selection_options_are_disclosed_and_upload_is_quiet(user, monkeyp
     assert upload.props.get("hide-upload-progress") is True
     tag = next(iter(user.find(marker="bed-tag").elements))
     assert tag.props["label"] == "Bed tag (optional)"
+    destination = next(iter(user.find(marker="clean-destination").elements))
+    assert destination.props["label"] == "Destination"
+    assert destination.value == ""
