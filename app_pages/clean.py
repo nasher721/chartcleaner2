@@ -14,6 +14,7 @@ import time
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
 from app_pages.rule_builder_ui import open_rule_builder
+from app_pages import review_workspace
 from app_pages.workflow_ui import overflow_menu, workflow_section
 from app_pages.workspace_layout import bind_split_handle, set_mobile_view
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
@@ -895,52 +896,75 @@ async def clean_page():
 
     # ---- Review tab -----------------------------------------------------------
     def render_review(result, groups: list[dict], single_pass: bool) -> None:
-        if not single_pass:
-            render_validation(result)
-        if result.fact_check is not None and not single_pass:
-            render_findings(result)
-            render_fact_check(result.fact_check)
         audit = CLEAN_STATE.get("audit")
-        flagged = flagged_lines(audit)
-        if audit is not None and not audit.skipped:
-            render_audit(audit)
-        ui.label("Click struck-through or highlighted text to see which rule changed it — and "
-                 "keep it, change it or switch the rule off.").classes("text-xs cc-muted")
-        with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
-            cached = CLEAN_STATE.get("review_html")
-            if (cached and cached[0] is result and cached[1] == CLEAN_STATE["input"]
-                    and cached[2] == result.text):
-                html = cached[3]
-            else:
-                html = review_diff_html(CLEAN_STATE["input"], result.text, flagged, groups)
-            diff = ui.html(html)
-            diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
-            diff.on("keydown", lambda e: inspect_change(e.args), js_handler=REVIEW_KEY_JS)
-            diff.mark("review-diff")
-        removed = removed_groups(result)
-        if removed:
-            with ui.expansion(f"Removed ({sum(len(g['items']) for g in removed)})", icon="delete_sweep") \
-                    .classes("w-full"):
-                render_removed(removed)
-        abbr_changes = next((st.details.get("changes") or [] for st in result.stages
-                             if st.id == "medical_abbreviations"), [])
-        if abbr_changes:
-            with ui.expansion(f"Abbreviations ({len(abbr_changes)})", icon="short_text").classes("w-full"):
-                render_abbreviation_changes(abbr_changes)
-        with ui.expansion("What each stage did", icon="account_tree").classes("w-full"):
-            cols = [
-                {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
-                {"name": "matches", "label": "Matches", "field": "matches"},
-                {"name": "delta", "label": "Δ chars", "field": "delta"},
-                {"name": "status", "label": "Status", "field": "status", "align": "left"},
-            ]
-            rows = []
-            for s in result.stages:
-                delta = s.chars_before - s.chars_after
-                status = "skipped" if s.skipped else ("error: " + s.error) if s.error else "ok"
-                rows.append({"stage": s.label, "matches": s.matches,
-                             "delta": f"{delta:+,}", "status": status})
-            ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
+
+        def render_diff() -> None:
+            ui.label("Click struck-through or highlighted text to see which rule changed it — and "
+                     "keep it, change it or switch the rule off.").classes("text-xs cc-muted")
+            with ui.scroll_area().classes("w-full border rounded h-[460px] cc-panel"):
+                cached = CLEAN_STATE.get("review_html")
+                if (cached and cached[0] is result and cached[1] == CLEAN_STATE["input"]
+                        and cached[2] == result.text):
+                    html = cached[3]
+                else:
+                    html = common.review_diff_html(CLEAN_STATE["input"], result.text,
+                                                  flagged_lines(audit), groups)
+                diff = ui.html(html)
+                diff.on("click", lambda e: inspect_change(e.args), js_handler=REVIEW_CLICK_JS)
+                diff.on("keydown", lambda e: inspect_change(e.args), js_handler=REVIEW_KEY_JS)
+                diff.mark("review-diff")
+
+        def render_removals() -> None:
+            removed = removed_groups(result)
+            if removed:
+                with ui.expansion(f"Removed ({sum(len(g['items']) for g in removed)})",
+                                  icon="delete_sweep").classes("w-full"):
+                    render_removed(removed)
+
+        def render_abbreviations() -> None:
+            abbr_changes = next((st.details.get("changes") or [] for st in result.stages
+                                 if st.id == "medical_abbreviations"), [])
+            if abbr_changes:
+                with ui.expansion(f"Abbreviations ({len(abbr_changes)})", icon="short_text") \
+                        .classes("w-full"):
+                    render_abbreviation_changes(abbr_changes)
+
+        def render_diagnostics() -> None:
+            if not single_pass:
+                render_validation(result)
+                if result.fact_check is not None:
+                    render_fact_check(result.fact_check)
+            if audit is not None and not audit.skipped:
+                render_audit(audit)
+            with ui.expansion("What each stage did", icon="account_tree").classes("w-full"):
+                cols = [
+                    {"name": "stage", "label": "Stage", "field": "stage", "align": "left"},
+                    {"name": "matches", "label": "Matches", "field": "matches"},
+                    {"name": "delta", "label": "Δ chars", "field": "delta"},
+                    {"name": "status", "label": "Status", "field": "status", "align": "left"},
+                ]
+                rows = []
+                for s in result.stages:
+                    delta = s.chars_before - s.chars_after
+                    status = "skipped" if s.skipped else ("error: " + s.error) if s.error else "ok"
+                    rows.append({"stage": s.label, "matches": s.matches,
+                                 "delta": f"{delta:+,}", "status": status})
+                ui.table(columns=cols, rows=rows, row_key="stage").classes("w-full").props("flat dense")
+
+        sections = review_workspace.ReviewSections(
+            diff=render_diff, removed=render_removals,
+            abbreviations=render_abbreviations, diagnostics=render_diagnostics)
+        try:
+            review_workspace.render_review_workspace(
+                result=result, audit=audit, source=CLEAN_STATE["input"],
+                output=CLEAN_STATE.get("result_text") or result.text,
+                decision=release_for_copy(result), sections=sections, locate=locate_finding)
+        except Exception as exc:
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logging_setup.write_traceback("Review workspace failed", tb)
+            ui.label("Detailed findings are unavailable. Release status is unchanged; "
+                     "use the plain diff below.").mark("review-fallback")
+            render_diff()
 
     def render_audit(audit) -> None:
         total = sum(audit.counts.values())
@@ -1025,7 +1049,8 @@ async def clean_page():
                 if g["sid"] in EXCEPTION_STAGES:
                     ui.button("Never remove this", icon="shield",
                               on_click=lambda: (dlg.close(), asyncio.get_running_loop().create_task(
-                                  keep_text(g["sid"], g["befores"][0])))).props("flat")
+                                  keep_text(g["sid"], g["befores"][0])))).props("flat") \
+                        .mark("change-never-remove")
                 if learned is not None:
                     ui.button("Pause this rule", icon="pause_circle",
                               on_click=lambda: (dlg.close(), pause_rule(learned))) \

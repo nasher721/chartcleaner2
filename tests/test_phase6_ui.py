@@ -66,10 +66,12 @@ async def test_review_click_opens_rule_and_never_remove_keeps_text(user: User, p
     await _open(user, "/p6-review", "Printed by Dr. Lee: K 6.1 called\nPlan: recheck\n")
     await _clean(user)
     assert "K 6.1" not in CLEAN_STATE["result_text"]
+    user.find(marker="review-tab").click()
+    user.find(marker="review-changes-tab").click()
     await user.should_see(marker="review-diff")
     user.find(marker="review-diff").trigger("click", "g0")
     await user.should_see("Removed by EMR line metadata")
-    user.find("Never remove this").click()
+    user.find(marker="change-never-remove").click()
     for _ in range(200):
         if "K 6.1" in (CLEAN_STATE.get("result_text") or ""):
             break
@@ -82,6 +84,8 @@ async def test_review_click_opens_rule_and_never_remove_keeps_text(user: User, p
 async def test_review_click_can_delete_the_rule(user: User, page):
     await _open(user, "/p6-delete", "Printed by Dr. Lee\nPlan: recheck\n")
     await _clean(user)
+    user.find(marker="review-tab").click()
+    user.find(marker="review-changes-tab").click()
     user.find(marker="review-diff").trigger("click", "g0")
     user.find("Delete this rule").click()
     user.find("Delete rule").click()

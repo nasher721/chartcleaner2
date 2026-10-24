@@ -143,7 +143,8 @@ async def test_not_ready_result_promotes_review_over_copy(user: User, page, monk
     flow = next(iter(user.find(marker="clean-task-flow").elements))
     assert flow.props["data-current-step"] == "2"
     user.find(marker="review-primary").click()
-    tabs = next(iter(user.find(ui.tabs).elements))
+    tabs = next(t for t in user.find(ui.tabs).elements
+                if t.value.props["name"] in {"Output", "Review", "Insights"})
     assert tabs.value.props["name"] == "Review"
 
     user.find(marker="copy-as").click()

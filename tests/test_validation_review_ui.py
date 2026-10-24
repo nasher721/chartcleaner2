@@ -105,6 +105,7 @@ async def test_review_tab_shows_validation_panel_with_coverage_and_groups(user: 
     _write_cfg(boilerplate=[r"^Plan: aspirin 81 mg daily\.\n"])
     await _clean(user, "/release-panel", BLOCK_CHART)
     user.find(marker="review-tab").click()
+    user.find(marker="review-diagnostics-tab").click()
     await user.should_see(marker="validation-panel")
     await user.should_see(marker="validation-coverage")
     coverage = next(iter(user.find(marker="validation-coverage").elements)).text.lower()
@@ -122,6 +123,7 @@ async def test_support_text_never_claims_full_support_for_unchecked_prose(user: 
     _write_cfg(cleaning_validation={"mode": "off", "schema_version": 1})
     await _clean(user, "/release-off", "Patient resting comfortably today.\n")
     user.find(marker="review-tab").click()
+    user.find(marker="review-diagnostics-tab").click()
     await user.should_see(marker="validation-coverage")
     text = next(iter(user.find(marker="validation-coverage").elements)).text
     assert "not checked" in text.lower() or "off" in text.lower()
