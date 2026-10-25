@@ -249,6 +249,36 @@ async def test_ai_panels_render_after_clean_run(user: User):
                            summary=None, qa=[])
 
 
+async def test_ai_model_probe_does_not_block_page_render(user: User, monkeypatch):
+    """A slow local Ollama must not freeze the websocket-serving event loop."""
+    import asyncio
+    import time
+
+    from chartcleaner.appstate import CLEAN_STATE
+    from chartcleaner.engine import Pipeline, load_default_config
+    from chartcleaner.local_llm import LocalLlmClient
+
+    result = Pipeline(load_default_config()).run("Patient is stable.\n")
+    CLEAN_STATE.update(input="Patient is stable.\n", result=result, result_text=result.text,
+                       result_mode="clean", audit=None, summary=None, qa=[])
+
+    def slow_probe(self):
+        time.sleep(0.75)
+        return False
+
+    monkeypatch.setattr(LocalLlmClient, "is_available", slow_probe)
+    started = time.monotonic()
+    try:
+        await user.open('/')
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.6, f"page render blocked on Ollama for {elapsed:.2f}s"
+        await user.should_see('Summarize')
+        await asyncio.sleep(0.8)  # let the background probe finish before teardown
+    finally:
+        CLEAN_STATE.update(input="", result=None, result_text="", audit=None,
+                           summary=None, qa=[])
+
+
 async def test_update_confirmation_requires_confirm_click(user: User):
     from nicegui import ui
 

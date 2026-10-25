@@ -1514,21 +1514,52 @@ async def clean_page():
                 opts = merge_llm_config(load_config(common.CONFIG_PATH))
             except Exception:
                 opts = merge_llm_config({})
-            try:
-                probe = LocalLlmClient(str(opts["base_url"]), timeout=2.0)
-                listed = probe.list_models() if probe.is_available() else []
-            except Exception:
-                listed = []
-            model_val = str(opts["model"] or (listed[0] if listed else ""))
-            model_options = list(listed)
-            if model_val and model_val not in model_options:
-                model_options.append(model_val)
-            if not listed:
-                ui.label(f"No local LLM detected at {opts['base_url']} — install Ollama "
-                         "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`.") \
-                    .classes("text-xs text-orange-600")
-            ui.select(model_options, value=model_val or None, label="Model", new_value_mode="add",
-                      on_change=lambda e: save_llm_pref("model", e.value)).classes("w-full")
+            # Never probe Ollama on the UI event loop: a slow local server would
+            # otherwise freeze websocket traffic and show the reconnect banner.
+            model_val = str(opts["model"] or "")
+            model_options = [model_val] if model_val else []
+            model_status = ui.label("Checking for local AI…").classes("text-xs cc-muted")
+            model_sync = {"quiet": False}
+
+            def choose_model(e) -> None:
+                if not model_sync["quiet"]:
+                    save_llm_pref("model", e.value)
+
+            model_select = ui.select(
+                model_options, value=model_val or None, label="Model", new_value_mode="add",
+                on_change=choose_model).classes("w-full")
+
+            async def refresh_models() -> None:
+                def work():
+                    try:
+                        probe = LocalLlmClient(str(opts["base_url"]), timeout=0.6)
+                        return probe.list_models() if probe.is_available() else []
+                    except Exception:
+                        return []
+
+                listed = await run.io_bound(work)
+                selected = str(opts["model"] or (listed[0] if listed else ""))
+                options = list(listed)
+                if selected and selected not in options:
+                    options.append(selected)
+                try:
+                    model_sync["quiet"] = True
+                    model_select.set_options(options)
+                    if model_select.value == (model_val or None):
+                        model_select.set_value(selected or None)
+                    model_sync["quiet"] = False
+                    model_status.set_text(
+                        "" if listed else f"No local LLM detected at {opts['base_url']} — install Ollama "
+                        "(ollama.com) and pull a model, e.g. `ollama pull llama3.1`.")
+                    model_status.classes("text-xs text-orange-600" if not listed else "text-xs cc-muted")
+                    model_status.set_visibility(not listed)
+                    if selected:
+                        model_hint.set_text(f"answers on-device via {selected} · every number/date in an "
+                                            "answer is verified against the chart")
+                except Exception:
+                    pass  # the panel may have been re-rendered or closed
+
+            asyncio.get_running_loop().create_task(refresh_models())
 
             preset_key = str(opts["prompt_preset"])
             if preset_key not in PRESET_LABELS:
@@ -1585,9 +1616,9 @@ async def clean_page():
                                                       ).props("unelevated color=primary")
                         qa_refs["spinner"] = ui.spinner("dots", size="sm")
                         qa_refs["spinner"].set_visibility(False)
-                    if model_val:
-                        ui.label(f"answers on-device via {model_val} · every number/date in an answer is "
-                                 "verified against the chart").classes("text-xs opacity-60")
+                    model_hint = ui.label(
+                        f"answers on-device via {model_val} · every number/date in an answer is "
+                        "verified against the chart" if model_val else "").classes("text-xs opacity-60")
                     qa_refs["stream"] = ui.label("").classes("text-sm whitespace-pre-wrap opacity-80") \
                         .mark("ai-answer-stream")
                     qa_refs["stream"].set_visibility(False)

@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from chartcleaner.highlight_rules import describe_rule, make_rule, replace_selection
+from chartcleaner.highlight_rules import SELECTION_HANDLER, describe_rule, make_rule, replace_selection
 
 
 @pytest.mark.parametrize("text,replacement", [
@@ -36,3 +36,12 @@ def test_selection_edits_only_selected_occurrence_and_refuses_stale_offsets():
         replace_selection(text, {**selection, "end": 12}, "")
     with pytest.raises(ValueError):
         make_rule("  ")
+
+
+def test_selection_payload_stays_compact_without_losing_stale_edit_protection():
+    text = "😀 keep remove"
+    selection = dict(start=7, end=13, text="remove")
+    assert replace_selection(text, selection, "new") == "😀 keep new"
+    with pytest.raises(ValueError, match="changed"):
+        replace_selection("prefix " + text, selection, "")
+    assert "value: ta.value" not in SELECTION_HANDLER

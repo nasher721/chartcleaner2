@@ -45,14 +45,15 @@ def replace_selection(current: str, selection: dict, replacement: str) -> str:
     start, end = selection.get("start"), selection.get("end")
     if (type(start) is not int or type(end) is not int
             or not 0 <= start < end <= len(current)
-            or current != selection.get("value")
+            or ("value" in selection and current != selection["value"])
             or current[start:end] != selection.get("text")):
         raise ValueError("The chart changed. Highlight the text again.")
     return current[:start] + replacement + current[end:]
 
 
 # Array.from converts browser UTF-16 offsets to Python Unicode code-point offsets.
-# Commit after pointer release / keyboard selection, never during a drag.
+# Commit after pointer release / keyboard selection, never during a drag. Send only
+# the selection: repeating the whole chart can stall large-chart websocket updates.
 SELECTION_HANDLER = """(event) => {
     if (event.type === 'keyup' && (event.shiftKey || event.ctrlKey || event.metaKey)) return;
     const ta = event.target;
@@ -61,5 +62,5 @@ SELECTION_HANDLER = """(event) => {
     if (start === end || !ta.value.slice(start, end).trim()) return;
     emit({start: Array.from(ta.value.slice(0, start)).length,
           end: Array.from(ta.value.slice(0, end)).length,
-          text: ta.value.slice(start, end), value: ta.value});
+          text: ta.value.slice(start, end)});
 }"""
