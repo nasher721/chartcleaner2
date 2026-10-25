@@ -1916,7 +1916,8 @@ async def clean_page():
         state["edited"] = time.monotonic()
 
     async def auto_tick() -> None:
-        if (not common.PREFS.get("auto_clean") or state["running"] or highlight["pending"]):
+        if (not common.PREFS.get("auto_clean") or state["running"]
+                or highlight["pending"] or highlight.get("saving")):
             return
         if time.monotonic() - state["edited"] < AUTO_CLEAN_PAUSE:
             return  # still typing
@@ -1989,8 +1990,9 @@ async def clean_page():
 
     def sel_remove() -> None:
         selection = current_selection()
-        if selection and apply_highlight(selection, ""):
-            hide_selection_bar()
+        if selection:
+            hide_selection_bar()  # visible feedback before any persistence work
+            apply_highlight(selection, "")
 
     def sel_replace() -> None:
         selection = current_selection()
@@ -2146,35 +2148,71 @@ async def clean_page():
     def apply_highlight(selection: dict, replacement: str) -> bool:
         if state["running"]:
             return False
+        before = input_area.value or ""
+        queued = False
         try:
-            before = input_area.value or ""
             after = replace_selection(before, selection, replacement)
             if selection["text"] == replacement:
                 ui.notify("The replacement is unchanged.", type="info")
                 return False
             pair = make_rule(selection["text"], replacement,
                              case_sensitive=case_check.value, whole_words=word_check.value)
-            cfg = load_config(common.CONFIG_PATH)
-            old_enabled = cfg.get("stage_options", {}).get("learned_rules", {}).get("enabled")
+            # Validate against the latest optimistic config too, so rapid edits
+            # see preceding rules even while their disk writes are still queued.
+            cfg = highlight.get("config") or load_config(common.CONFIG_PATH)
             try:
-                cfg, added = rule_meta.add_rule(cfg, pair, source="selection")
+                cfg, _added = rule_meta.add_rule(cfg, pair, source="selection")
             except ValueError as ex:
                 ui.notify(str(ex), type="warning")
                 return False
-            entry = save_config_with_backup(cfg, source="selection")  # validates first
-            if added:
-                remember_rule_example(pair, selection["text"], cfg)
-            push_undo(entry, before, after)
+            highlight["config"] = cfg
+
+            # The edit is the urgent part. Validation, disk backups and encrypted
+            # rule history finish in the background without freezing the websocket.
+            highlight["saving"] = highlight.get("saving", 0) + 1
+            queued = True
             input_area.set_value(after)
             invalidate_output()
-            highlight_status.set_text("Selection updated. Rule saved for future full cleans."
-                                      + (" Learned rules enabled." if old_enabled is False else ""))
-            if added:
-                asyncio.get_running_loop().create_task(report_impact("learned_rules", pair, before))
-            return True
+            highlight_status.set_text("Selection updated. Saving rule…")
         except Exception as ex:
+            if queued:
+                highlight["saving"] -= 1
             ui.notify(str(ex), type="negative")
             return False
+
+        def persist():
+            # Re-read inside the serialized writer: no rapid selection can
+            # overwrite a rule saved by the preceding selection.
+            latest = load_config(common.CONFIG_PATH)
+            old_enabled = latest.get("stage_options", {}).get("learned_rules", {}).get("enabled")
+            latest, added = rule_meta.add_rule(latest, pair, source="selection")
+            entry = save_config_with_backup(latest, source="selection")  # validates first
+            if added:
+                remember_rule_example(pair, selection["text"], latest)
+            return entry, added, old_enabled
+
+        async def finish() -> None:
+            try:
+                lock = highlight.setdefault("save_lock", asyncio.Lock())
+                async with lock:
+                    entry, added, old_enabled = await run.io_bound(persist)
+                push_undo(entry, before, after)
+                highlight_status.set_text("Selection updated. Rule saved for future full cleans."
+                                          + (" Learned rules enabled." if old_enabled is False else ""))
+                if added:
+                    asyncio.get_running_loop().create_task(report_impact("learned_rules", pair, before))
+            except Exception as ex:
+                if input_area.value == after:
+                    input_area.set_value(before)
+                    invalidate_output()
+                ui.notify(str(ex), type="negative")
+            finally:
+                highlight["saving"] -= 1
+                if not highlight["saving"]:
+                    highlight["config"] = None
+
+        asyncio.get_running_loop().create_task(finish())
+        return True
 
     async def report_impact(sid: str, entry, taught_on: str) -> None:
         """After a rule is saved: say what it does to the other recent charts."""
@@ -2374,6 +2412,9 @@ async def clean_page():
     def undo_highlight() -> None:
         """Undo the newest edit: its saved rule change, and the chart text if unchanged since."""
         if not highlight["stack"] or state["running"]:
+            return
+        if highlight.get("saving"):
+            ui.notify("Finish saving the latest edit before using Undo.", type="info")
             return
         item = highlight["stack"].pop()
         entry = item["entry"]

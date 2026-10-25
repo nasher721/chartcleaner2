@@ -89,8 +89,41 @@ async def test_remove_saves_only_selection(user, clean_fixture):
     _act(user, _selection(text, "remove"), "remove")
     assert _chart_textarea(user).value == "Keep "
     await user.should_not_see(marker="selection-bar")
+    await user.should_see("Undo last highlight", retries=50)  # appears after the background save commits
     saved = load_config(path)
     assert saved["learned_rules"] == [make_rule("remove")]
+
+
+@pytest.mark.nicegui_main_file("")
+async def test_remove_updates_chart_immediately_during_slow_rule_save(user, clean_fixture, monkeypatch):
+    """Keychain/disk work must not delay the visible edit or block the event loop."""
+    import asyncio
+    import time
+
+    from app_pages import clean as clean_mod
+
+    _cfg, path = clean_fixture
+    text = "Keep remove"
+    original_save = clean_mod.save_config_with_backup
+
+    def slow_save(cfg, source="app"):
+        time.sleep(0.75)
+        return original_save(cfg, source=source)
+
+    monkeypatch.setattr(clean_mod, "save_config_with_backup", slow_save)
+    cc_app.CLEAN_STATE.update(input=text, mode="clean", result=None, result_text="", audit=None,
+                              summary=None, qa=[])
+    await _open_clean(user, "/highlight-remove-responsive")
+    started = time.monotonic()
+    _act(user, _selection(text, "remove"), "remove")
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.6, f"Remove blocked for {elapsed:.2f}s before returning control"
+    assert _chart_textarea(user).value == "Keep "
+    for _ in range(100):
+        if load_config(path)["learned_rules"]:
+            break
+        await asyncio.sleep(0.02)
+    assert load_config(path)["learned_rules"] == [make_rule("remove")]
 
 
 @pytest.mark.nicegui_main_file("")
@@ -103,6 +136,7 @@ async def test_undo_restores_text_rule_and_previous_enabled_setting(user, clean_
                               summary=None, qa=[])
     await _open_clean(user, "/highlight-undo")
     _act(user, _selection(text, "remove"), "remove")
+    await user.should_see("Undo last highlight", retries=50)
     user.find("Undo last highlight").click()
 
     assert _chart_textarea(user).value == text
@@ -146,6 +180,7 @@ async def test_replacement_confirm_escapes_backslash(user, clean_fixture):
         replacement.set_value(r"A\B")
     user.find("Replace & remember").click()
     assert _chart_textarea(user).value == r"Keep A\B"
+    await user.should_see("Undo last highlight", retries=50)
     assert load_config(path)["learned_rules"] == [make_rule("remove", r"A\B")]
 
 

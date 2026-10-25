@@ -76,6 +76,14 @@ def _learned(path):
     return load_config(path).get("learned_rules") or []
 
 
+async def _wait_rules(path, count):
+    for _ in range(100):
+        if len(_learned(path)) == count:
+            return
+        await asyncio.sleep(0.02)
+    assert len(_learned(path)) == count
+
+
 async def test_line_removes_every_line_containing_the_selection(user: User, page):
     text = "a\nPrinted by Epic 10/1\nb\n"
     await _open(user, "/ux-line", text)
@@ -160,7 +168,7 @@ async def test_undo_steps_back_through_several_edits(user: User, page):
     after_one = _chart(user).value
     _select(user, after_one, "three")
     user.find(marker="sel-remove").click()
-    assert len(_learned(page)) == 2
+    await _wait_rules(page, 2)
     user.find("Undo last highlight").click()
     assert _chart(user).value == after_one and _learned(page) == [make_rule("one")]
     user.find("Undo last highlight").click()
@@ -173,6 +181,7 @@ async def test_undo_survives_an_unrelated_later_rule(user: User, page):
     await _open(user, "/ux-undo-later", text)
     _select(user, text, "one")
     user.find(marker="sel-remove").click()
+    await _wait_rules(page, 1)
     cfg = load_config(page)
     cfg["learned_rules"].append(make_rule("elsewhere"))
     save_config(cfg, page)  # e.g. added on the Rules page meanwhile
@@ -203,6 +212,7 @@ async def test_context_menu_acts_on_the_selection(user: User, page):
     _select(user, text, "drop")
     user.find(marker="ctx-remove").click()
     assert _chart(user).value == "keep "
+    await _wait_rules(page, 1)
     assert _learned(page) == [make_rule("drop")]
 
 

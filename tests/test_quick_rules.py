@@ -289,6 +289,7 @@ async def test_remove_text_mode_removes_on_select(user, ui_config):
     await user.should_see("Remove text mode")
     user.find(marker="highlight-source").trigger("mouseup", _selection(text, "Printed on"))
     assert _textarea(user, "Chart text").value == "Keep  today"
+    await user.should_see("Undo last highlight", retries=50)
     assert load_config(ui_config)["learned_rules"] == [make_rule("Printed on")]
     user.find("Undo last highlight").click()
     assert _textarea(user, "Chart text").value == text
