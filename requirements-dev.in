@@ -1,6 +1,7 @@
-# Reproducible CI/release environment. Regenerate both lock files with:
-#   python -m piptools compile --allow-unsafe --generate-hashes requirements.txt -o requirements.lock
-#   python -m piptools compile --allow-unsafe --generate-hashes requirements-dev.in -o requirements-dev.lock
+# Reproducible CI/release environment. Regenerate both lock files (universal:
+# every platform, Python >= 3.10 — see CONTRIBUTING.md) with:
+#   uv pip compile --universal --python-version 3.10 --generate-hashes --allow-unsafe requirements.txt -o requirements.lock
+#   uv pip compile --universal --python-version 3.10 --generate-hashes --allow-unsafe requirements-dev.in -o requirements-dev.lock
 -r requirements.txt
 hypothesis>=6.100
 pip-audit>=2.7
