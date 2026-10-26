@@ -34,6 +34,7 @@ from nicegui import app, run, ui
 from app_pages import a11y
 
 from chartcleaner import __version__
+from chartcleaner.edit_provenance import line_opcodes
 from chartcleaner import logging_setup, secure_store, store
 from chartcleaner.audit import (
     CHECK_DESCRIPTIONS,
@@ -315,9 +316,9 @@ def diff_html(before: str, after: str, flag_lines: set[int] | None = None) -> st
         return "<p>Diff too large to display (use a smaller input).</p>"
     flagged = flag_lines or set()
     a_lines, b_lines = before.splitlines(), after.splitlines()
-    sm = difflib.SequenceMatcher(a=a_lines, b=b_lines, autojunk=False)
+    opcodes = line_opcodes(a_lines, b_lines)
     rows: list[str] = []
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+    for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
             for k in range(i2 - i1):
                 jl = j1 + k
@@ -421,11 +422,11 @@ def review_diff_html(before: str, after: str, flag_lines: set[int] | None,
     from app_pages.review_workspace import collapse_context_ranges
 
     a_lines, b_lines = before.splitlines(), after.splitlines()
-    sm = difflib.SequenceMatcher(a=a_lines, b=b_lines, autojunk=False)
+    opcodes = line_opcodes(a_lines, b_lines)
     rows: list[str] = []
     changed_lines: set[int] = set()
     flagged_diff_lines: set[int] = set()
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+    for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
             for k in range(i2 - i1):
                 jl = j1 + k

@@ -118,6 +118,7 @@ def _custom_rules_fingerprint():
 
 async def clean_page():
     state = {"running": False, "edited": 0.0, "speculated": 0.0}
+    edit_lock = asyncio.Lock()
     # stack: undo entries (newest last) — {"entry": rule journal entry or None,
     # "before"/"after": chart text, "label"}; collected: selections saved together.
     highlight = {"pending": False, "stack": [], "selection": None, "collected": []}
@@ -180,15 +181,22 @@ async def clean_page():
                 result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
                     text, track_changes=True, cache=cache, stop=stop)
                 audit = run_audit(result.text, cfg)
-            if stop is not None and stop():
-                raise PipelineCancelled("after pipeline")
-            extras = extras_work(result.text, result.fact_check) if mode == "clean" else {}
-            # The Review diff is the slowest part of drawing a result; build it
-            # here, off the event loop, so the page stays responsive.
-            review = review_html(text, result, audit)
+        if stop is not None and stop():
+            raise PipelineCancelled("after pipeline")
+        lazy = len(text) >= LAZY_TABS_MIN_CHARS
+        extras = extras_work(result.text, result.fact_check, stop=stop,
+                             only={"safety", "conflicts", "timeline"} if lazy else None) if mode == "clean" else {}
+        if stop is not None and stop():
+            raise PipelineCancelled("after insights")
+        extras["redactions"] = redaction_candidates(text, result.text)
+        # The Review diff is the slowest part of drawing a result; build it
+        # here, off the event loop, so the page stays responsive.
+        review = None if lazy else review_html(text, result, audit)
+        if stop is not None and stop():
+            raise PipelineCancelled("after presentation")
         return result, audit, extras, review
 
-    def extras_work(cleaned: str, fact_report):
+    def extras_work(cleaned: str, fact_report, *, stop=None, only=None):
         out = {}
         gone = removed_lines(fact_report)
         for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
@@ -198,6 +206,10 @@ async def clean_page():
                         ("bundle", build_bundle),
                         ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale),
                         ("conflicts", build_conflicts)):
+            if stop is not None and stop():
+                raise PipelineCancelled("insights")
+            if only is not None and key not in only:
+                continue
             try:
                 out[key] = fn(cleaned)
             except Exception:
@@ -214,7 +226,7 @@ async def clean_page():
         thing (same text, mode, destination, note type and config digest); a
         click mid-run joins it instead of starting over.
         """
-        if not SPECULATE or len(text) < SPECULATE_MIN_CHARS or not text.strip():
+        if not SPECULATE or not SPECULATE_MIN_CHARS <= len(text) <= 2_000_000 or not text.strip():
             return
         inputs = clean_inputs(text)
         if spec.get("inputs") == inputs:
@@ -301,7 +313,10 @@ async def clean_page():
 
             await run.io_bound(persist)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
-                               review_html=(result, text, result.text, review[0], review[1]),
+                               review_html=(result, text, result.text, review[0], review[1]) if review else None,
+                               redactions=(text, result.text, extras["redactions"]),
+                               insights_ready=len(text) < LAZY_TABS_MIN_CHARS,
+                               result_source=text, verification_baseline=result.fact_check,
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
                                note=note_info, trends=extras.get("trends"),
                                timeline=extras.get("timeline"), problems=extras.get("problems"),
@@ -381,6 +396,47 @@ async def clean_page():
         html = review_diff_html(before, result.text, flagged_lines(audit),
                                 change_groups(result), metadata)
         return html, metadata["change_count"]
+
+    def result_source(result) -> str:
+        ledger = getattr(result, "ledger", None)
+        return ledger.source if ledger is not None else CLEAN_STATE.get("result_source", CLEAN_STATE["input"])
+
+    async def ensure_review(result) -> bool:
+        source, output = result_source(result), result.text
+        cached = CLEAN_STATE.get("review_html")
+        if cached and len(cached) >= 5 and cached[:3] == (result, source, output):
+            return True
+        audit, groups = CLEAN_STATE.get("audit"), change_groups(result)
+
+        def work():
+            metadata = {}
+            html = common.review_diff_html(source, output, flagged_lines(audit), groups, metadata)
+            return html, metadata["change_count"]
+
+        built = await run.io_bound(work)
+        if built is None or CLEAN_STATE.get("result") is not result or result.text != output:
+            return False
+        CLEAN_STATE["review_html"] = (result, source, output, *built)
+        return True
+
+    async def ensure_insights(result) -> bool:
+        if CLEAN_STATE.get("insights_ready"):
+            return True
+        output = result.text
+        extras = await run.io_bound(extras_work, output, result.fact_check)
+        if extras is None or CLEAN_STATE.get("result") is not result or result.text != output:
+            return False
+        CLEAN_STATE.update(extras, insights_ready=True)
+        return True
+
+    async def ensure_redactions(result) -> None:
+        source, output = result_source(result), result.text
+        cached = CLEAN_STATE.get("redactions")
+        if cached and cached[:2] == (source, output):
+            return
+        candidates = await run.io_bound(redaction_candidates, source, output)
+        if candidates is not None and CLEAN_STATE.get("result") is result and result.text == output:
+            CLEAN_STATE["redactions"] = (source, output, candidates)
 
     def sync_task_flow() -> None:
         result = CLEAN_STATE.get("result")
@@ -487,10 +543,31 @@ async def clean_page():
             def open_panel(value) -> None:
                 name = value._props.get("name") if hasattr(value, "_props") else value
                 job = pending.pop(name, None)
-                if job is not None:
-                    panel, draw = job
+                if job is None:
+                    return
+                panel, draw = job
+                ready = (CLEAN_STATE.get("review_html") is not None if name == "Review"
+                         else CLEAN_STATE.get("insights_ready"))
+                if ready:
                     with panel:
                         draw()
+                    return
+                with panel:
+                    loading = ui.spinner().mark("loading-result-panel")
+
+                async def load_panel():
+                    try:
+                        ready = await (ensure_review(result) if name == "Review" else ensure_insights(result))
+                        if not ready or refs.get("tabs", (None,))[0] is not tabs:
+                            return
+                        loading.delete()
+                        with panel:
+                            draw()
+                    except Exception as exc:
+                        with results_col.client:
+                            report_error("Could not load result details", exc)
+
+                asyncio.get_running_loop().create_task(load_panel())
 
             with ui.tab_panels(tabs, value=t_out).classes("w-full") \
                     .props("keep-alive transition-prev=fade transition-next=fade"):
@@ -688,6 +765,13 @@ async def clean_page():
         fmt = fmt or common.PREFS.get("copy_default") or "text"
 
         def go() -> None:
+            if fmt in ("trends", "safety") and not CLEAN_STATE.get("insights_ready"):
+                async def load_and_copy():
+                    if await ensure_insights(CLEAN_STATE["result"]):
+                        with results_col.client:
+                            guarded_copy(go)
+                asyncio.get_running_loop().create_task(load_and_copy())
+                return
             got = copy_text(fmt if fmt in COPY_FORMATS else "text")
             if got:
                 copy_to_clipboard(*got)
@@ -697,7 +781,7 @@ async def clean_page():
         """The shared release decision for what is about to be copied."""
         from chartcleaner.review_state import release_decision
         text = CLEAN_STATE.get("result_text") or (result.text if result else "")
-        source = CLEAN_STATE["input"] if CLEAN_STATE.get("result_mode") in (None, "clean") else None
+        source = result_source(result) if result and CLEAN_STATE.get("result_mode") in (None, "clean") else None
         return release_decision(result, output_text=text,
                                 acknowledgement=CLEAN_STATE.get("release_ack"), source=source)
 
@@ -710,7 +794,15 @@ async def clean_page():
         config and validator version produced — a new clean, an edit or a
         config change asks again.
         """
-        commit_edit()
+        output = refs.get("output")
+        if (edit_lock.locked() or (refs.get("editing") and output is not None
+                                  and (output.value or "") != CLEAN_STATE.get("result_text", ""))):
+            async def checked_copy():
+                if await commit_edit():
+                    with results_col.client:
+                        guarded_copy(action)
+            asyncio.get_running_loop().create_task(checked_copy())
+            return
         result = CLEAN_STATE.get("result")
         if result is None:
             action()
@@ -750,6 +842,17 @@ async def clean_page():
                 show_tab(1)
 
             def anyway() -> None:
+                output = refs.get("output")
+                if (edit_lock.locked() or (refs.get("editing") and output is not None
+                                          and output.value != CLEAN_STATE.get("result_text"))):
+                    dlg.close()
+                    guarded_copy(action)
+                    return
+                if (CLEAN_STATE.get("result") is not result
+                        or release_for_copy(result).acknowledgement_key != decision.acknowledgement_key):
+                    dlg.close()
+                    ui.notify("The result changed. Review the current output before copying.", type="warning")
+                    return
                 CLEAN_STATE["fact_ack"] = True
                 CLEAN_STATE["release_ack"] = decision.acknowledgement_key
                 render_results()
@@ -786,66 +889,88 @@ async def clean_page():
         out = refs.get("output")
         if out is None:
             return
-        refs["editing"] = not refs.get("editing")
-        if refs["editing"]:
+        if refs.get("editing"):
+            async def finish():
+                if await commit_edit():
+                    refs["editing"] = False
+                    current = refs.get("output")
+                    if current is not None:
+                        current.props(add="readonly")
+            asyncio.get_running_loop().create_task(finish())
+        else:
+            refs["editing"] = True
             out.props(remove="readonly")
             ui.notify("Editing the result — copies use your edits.", type="info")
-        else:
-            commit_edit()
-            out.props(add="readonly")
 
-    def commit_edit() -> None:
-        """Keep an edited result for copying and learn which lines were deleted."""
-        out = refs.get("output")
-        if out is None or not refs.get("editing"):
-            return
-        value = out.value or ""
-        previous = CLEAN_STATE.get("result_text") or ""
-        if value == previous:
-            return
-        CLEAN_STATE["result_text"] = value
-        CLEAN_STATE["fact_ack"] = False
-        CLEAN_STATE["release_ack"] = None  # an edited output is a different result
-        from chartcleaner.fact_check import FactTracker
-        result = CLEAN_STATE.get("result")
-        if result is not None:
-            baseline = refs.get("verification_baseline")
-            if not baseline or baseline[0] is not result:
-                baseline = (result, result.fact_check)
-                refs["verification_baseline"] = baseline
-            tracker = FactTracker(CLEAN_STATE["input"])
-            tracker.after_stage("edited_output", "Edited output", value)
-            report = tracker.report(value)
-            # Preserve pipeline attribution for losses the user did not create.
-            if baseline[1]:
+    async def commit_edit() -> bool:
+        """Check the exact edited snapshot before publishing it or allowing copy."""
+        async with edit_lock:
+            out = refs.get("output")
+            if out is None or not refs.get("editing"):
+                return True
+            value = out.value or ""
+            previous = CLEAN_STATE.get("result_text") or ""
+            if value == previous:
+                return True
+            result = CLEAN_STATE.get("result")
+            if result is None or state["running"]:
+                return False
+            source = result_source(result)
+            baseline = CLEAN_STATE.get("verification_baseline") or result.fact_check
+            CLEAN_STATE.update(fact_ack=False, release_ack=None)
+
+            def work():
                 from dataclasses import replace
-                attributed = []
-                for loss in report.losses:
-                    remaining = loss.count
-                    for prior in baseline[1].losses:
-                        if prior.key == loss.key and remaining:
-                            count = min(remaining, prior.count)
-                            attributed.append(replace(prior, count=count))
-                            remaining -= count
-                    if remaining:
-                        attributed.append(replace(loss, count=remaining))
-                report.losses = attributed
-            result.fact_check = report
-            result.text = value
-        CLEAN_STATE["review_html"] = None
-        CLEAN_STATE["audit"] = run_audit(value, load_config(common.CONFIG_PATH))
-        try:
-            if edit_log.record(previous, value):
-                asyncio.get_running_loop().create_task(refresh_inbox())
-        except Exception:
-            pass  # learning from edits is a bonus; never break editing
-        # Previous insights describe the pre-edit text; do not display stale claims.
-        for key in ("safety", "stale", "conflicts", "trends", "timeline", "problems", "devices",
-                    "micro", "overnight", "pending", "bundle", "delta", "summary"):
-            CLEAN_STATE.pop(key, None)
-        CLEAN_STATE["qa"] = []
-        with results_col.client:
-            render_results()
+                from chartcleaner.fact_check import FactTracker
+                from chartcleaner.review_state import release_decision
+                tracker = FactTracker(source)
+                tracker.after_stage("edited_output", "Edited output", value)
+                report = tracker.report(value)
+                # Preserve pipeline attribution for losses the user did not create.
+                if baseline:
+                    attributed = []
+                    for loss in report.losses:
+                        remaining = loss.count
+                        for prior in baseline.losses:
+                            if prior.key == loss.key and remaining:
+                                count = min(remaining, prior.count)
+                                attributed.append(replace(prior, count=count))
+                                remaining -= count
+                        if remaining:
+                            attributed.append(replace(loss, count=remaining))
+                    report.losses = attributed
+                edited = replace(result, text=value, fact_check=report, edited_validation=None)
+                release_decision(edited, output_text=value, source=source)
+                audit = run_audit(value, load_config(common.CONFIG_PATH))
+                review = review_html(source, edited, audit) if len(source) < LAZY_TABS_MIN_CHARS else None
+                return edited, audit, review, redaction_candidates(source, value)
+
+            try:
+                checked = await run.io_bound(work)
+            except Exception as exc:
+                with results_col.client:
+                    report_error("Could not check edited output", exc)
+                return False
+            if (checked is None or CLEAN_STATE.get("result") is not result
+                    or out.value != value or state["running"]):
+                return False
+            edited, audit, review, candidates = checked
+            CLEAN_STATE.update(result=edited, result_text=value, audit=audit,
+                               redactions=(source, value, candidates), insights_ready=False,
+                               review_html=(edited, source, value, *review) if review else None)
+            # Previous insights describe the pre-edit text; do not display stale claims.
+            for key in ("safety", "stale", "conflicts", "trends", "timeline", "problems", "devices",
+                        "micro", "overnight", "pending", "bundle", "delta", "summary"):
+                CLEAN_STATE.pop(key, None)
+            CLEAN_STATE["qa"] = []
+            with results_col.client:
+                render_results()
+            try:
+                if await run.io_bound(edit_log.record, previous, value):
+                    asyncio.get_running_loop().create_task(refresh_inbox())
+            except Exception:
+                pass  # learning from edits is a bonus; never break editing
+            return True
 
     def open_copy_default_dialog() -> None:
         with ui.dialog() as dlg, ui.card().classes("w-[380px] gap-2"):
@@ -884,16 +1009,30 @@ async def clean_page():
         out.on("blur", lambda _: commit_edit())
         refs["output"] = out
         refs["editing"] = False
-        candidates = redaction_candidates(CLEAN_STATE["input"], shown_text)
+        cached = CLEAN_STATE.get("redactions")
+        candidates = cached[2] if cached and cached[:2] == (result_source(result), shown_text) else []
         if candidates:
             with ui.expansion(f"Inspect redactions ({len(candidates)})", icon="privacy_tip").classes("w-full"):
                 ui.label("Inspect a replacement before restoring source text. Restoring may reintroduce identifying information.") \
                     .classes("text-sm")
-                with ui.row().classes("gap-2 flex-wrap"):
-                    for index, candidate in enumerate(candidates):
-                        ui.button(f"{candidate['token']} · {index + 1}",
-                                  on_click=lambda c=candidate: inspect_redaction(c)) \
-                            .props("outline no-caps").mark("redaction-chip")
+                with ui.row().classes("gap-2 flex-wrap") as chips:
+                    pass
+                position = 0
+
+                def more_redactions():
+                    nonlocal position
+                    end = min(position + review_workspace.ROW_PAGE, len(candidates))
+                    with chips:
+                        for index in range(position, end):
+                            candidate = candidates[index]
+                            ui.button(f"{candidate['token']} · {index + 1}",
+                                      on_click=lambda c=candidate: inspect_redaction(c)) \
+                                .props("outline no-caps").mark("redaction-chip")
+                    position = end
+                    more.set_visibility(position < len(candidates))
+
+                more = ui.button("Show more redactions", on_click=more_redactions).mark("redactions-more")
+                more_redactions()
         default = common.PREFS.get("copy_default") or "text"
         release_ready = release_for_copy(result).status == "ready"
         copy_style = "unelevated" if release_ready else "outline"
@@ -976,7 +1115,7 @@ async def clean_page():
                                      "[REDACTED_EMAIL]", "[REDACTED_ADDRESS]"],
                                     label="Replacement type").classes("w-full")
 
-            def apply(value):
+            async def apply(value):
                 if CLEAN_STATE.get("result_text") != snapshot:
                     ui.notify("The result changed. Inspect the current redaction again.", type="warning")
                     dlg.close()
@@ -984,9 +1123,8 @@ async def clean_page():
                 out = refs["output"]
                 out.set_value(snapshot[:candidate["start"]] + value + snapshot[candidate["end"]:])
                 refs["editing"] = True
-                commit_edit()
+                await commit_edit()
                 dlg.close()
-                render_results()
 
             if original is not None:
                 ui.button("Restore source text (may include PHI)", on_click=lambda: apply(original)) \
@@ -1064,16 +1202,11 @@ async def clean_page():
     def render_review(result, groups: list[dict], single_pass: bool, finding_rows) -> None:
         audit = CLEAN_STATE.get("audit")
         cached = CLEAN_STATE.get("review_html")
-        if (cached and len(cached) >= 5 and cached[0] is result
-                and cached[1] == CLEAN_STATE["input"] and cached[2] == result.text):
-            html, change_count = cached[3], cached[4]
-        else:
-            metadata = {}
-            html = common.review_diff_html(CLEAN_STATE["input"], result.text,
-                                          flagged_lines(audit), groups, metadata)
-            change_count = metadata["change_count"]
-            CLEAN_STATE["review_html"] = (
-                result, CLEAN_STATE["input"], result.text, html, change_count)
+        if not (cached and len(cached) >= 5 and cached[0] is result
+                and cached[1] == result_source(result) and cached[2] == result.text):
+            ui.label("Review is being prepared.")
+            return
+        html, change_count = cached[3], cached[4]
 
         def render_diff() -> None:
             ui.label("Click struck-through or highlighted text to see which rule changed it — and "
@@ -1584,10 +1717,10 @@ async def clean_page():
         box = ui.textarea("", value=delta.compact_text)
         box.props("outlined readonly input-style='min-height: 240px'").classes("w-full cc-mono")
 
-        def use_for_ai() -> None:
+        async def use_for_ai() -> None:
             refs["output"].set_value(delta.compact_text)
             refs["editing"] = True
-            commit_edit()
+            await commit_edit()
             ui.notify("Local AI summary and Ask this chart now use the changes-over-time view.",
                       type="positive")
 
@@ -2056,6 +2189,7 @@ async def clean_page():
 
     def on_input_change(e) -> None:
         if e.value != CLEAN_STATE.get("input"):
+            spec.update(task=None, inputs=None)
             CLEAN_STATE.pop("manual_note_type", None)
         CLEAN_STATE.update(input=e.value)
         state["edited"] = time.monotonic()
@@ -2925,13 +3059,14 @@ async def clean_page():
         guarded_copy(do_save)
 
     def copy_note(name: str) -> None:
-        try:
-            text = note_templates_mod.render(name, CLEAN_STATE.get("result_text") or "",
-                                             load_config(common.CONFIG_PATH))
-        except Exception as ex:
-            ui.notify(f"Could not fill the note template: {ex}", type="negative")
-            return
-        guarded_copy(lambda: copy_to_clipboard(text, f"“{name}” note copied"))
+        def go():
+            try:
+                text = note_templates_mod.render(name, CLEAN_STATE.get("result_text") or "", load_config(common.CONFIG_PATH))
+            except Exception as ex:
+                ui.notify(f"Could not fill the note template: {ex}", type="negative")
+                return
+            copy_to_clipboard(text, f"“{name}” note copied")
+        guarded_copy(go)
 
     def open_daily_note_dialog() -> None:
         """Pick a previous chart (same bed tag first) and show today's daily update."""
@@ -2988,12 +3123,14 @@ async def clean_page():
         dlg.open()
 
     def copy_prompt(name: str) -> None:
-        try:
-            text = render_prompt(name, CLEAN_STATE.get("result_text") or "", load_config(common.CONFIG_PATH))
-        except Exception as ex:
-            ui.notify(f"Could not build the prompt: {ex}", type="negative")
-            return
-        guarded_copy(lambda: copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool"))
+        def go():
+            try:
+                text = render_prompt(name, CLEAN_STATE.get("result_text") or "", load_config(common.CONFIG_PATH))
+            except Exception as ex:
+                ui.notify(f"Could not build the prompt: {ex}", type="negative")
+                return
+            copy_to_clipboard(text, f"“{name}” prompt copied — paste it into your AI tool")
+        guarded_copy(go)
 
     def render_abbreviation_changes(changes: list[dict]) -> None:
         """Every abbreviation applied in this result, with quick fixes."""
@@ -3532,6 +3669,12 @@ async def clean_page():
         ui.timer(0.5, auto_tick)
         ui.timer(0.25, tick_streams)
         ui.timer(0.3, refresh_inbox, once=True)
+        result = CLEAN_STATE.get("result")
+        if result is not None:
+            await run.io_bound(release_for_copy, result)
+            await ensure_redactions(result)
+            if len(result_source(result)) < LAZY_TABS_MIN_CHARS:
+                await ensure_review(result)
         render_results()
 
 

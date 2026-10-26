@@ -225,7 +225,7 @@ def batch_page():
             ui.label("Cleaned copies also live in data/exports; run history is on the "
                      "Statistics page.").classes("text-xs opacity-60")
 
-    def publish(results) -> None:
+    def persist_results(results):
         """Save cleaned copies + a .zip, record history, and show the results."""
         out_dir = store.EXPORTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}"
         store.ensure_dir(out_dir)
@@ -244,10 +244,17 @@ def batch_page():
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for r in ok:
                 zf.writestr(f"{safe_stem(r.name)}_cleaned.txt", r.cleaned)
+        return out_dir, zip_name, len(ok)
+
+    async def publish(results) -> None:
+        saved = await run.io_bound(persist_results, results)
+        if saved is None:
+            return
+        out_dir, zip_name, ok_count = saved
         out_ref.update(dir=out_dir, zip=zip_name)
         out_ref["results"] = results
         render_results()
-        ui.notify(f"Processed {len(results)} item(s) — {len(ok)} ok.", type="positive")
+        ui.notify(f"Processed {len(results)} item(s) — {ok_count} ok.", type="positive")
 
     def preview_split() -> None:
         chunks = patients_mod.split(list_input.value or "")
@@ -287,7 +294,9 @@ def batch_page():
                                          custom_dir=common.CUSTOM_DIR, on_progress=report,
                                          summarize=summarize_fn)
 
-            publish(await run.io_bound(work))
+            results = await run.io_bound(work)
+            if results is not None:
+                await publish(results)
         except ConfigError as e:
             ui.notify(str(e), type="negative")
         except Exception as e:
@@ -316,7 +325,8 @@ def batch_page():
                                        preset_loader=store.load_preset)
 
             results = await run.io_bound(work)
-            publish(results)
+            if results is not None:
+                await publish(results)
         except ConfigError as e:
             ui.notify(str(e), type="negative")
         except Exception as e:

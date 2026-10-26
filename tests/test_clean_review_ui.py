@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from nicegui.testing import User
 from app_pages import clean as clean_mod, common
@@ -52,6 +53,7 @@ async def test_edit_introduced_dose_requires_review(user: User, page, monkeypatc
     out.set_value(CLEAN_STATE['result_text'] + '\nWarfarin 500 mg daily.')
     user.find(marker='copy-as').click()
     user.find(marker='copy-text').click()
+    await user.should_see('Blocked · review before copying')
     assert not copied
     assert CLEAN_STATE['result'].fact_check.introduced
     assert CLEAN_STATE['result'].fact_check.implausible_new
@@ -72,5 +74,9 @@ async def test_redaction_chip_requires_explicit_confirmation(user: User, page, m
     await user.should_see(marker='redaction-inspector')
     assert 'John Smith' not in CLEAN_STATE['result_text']
     user.find(marker='restore-redaction').click()
+    for _ in range(200):
+        if 'John Smith' in CLEAN_STATE['result_text']:
+            break
+        await asyncio.sleep(0.01)
     assert 'John Smith' in CLEAN_STATE['result_text']
     assert CLEAN_STATE['fact_ack'] is False

@@ -85,13 +85,13 @@ def test_warm_and_cold_enforcement_are_identical():
     assert cache.hits >= 0  # opaque stages may hit; regex stages never cache under enforcement
 
 
-def test_regex_stages_bypass_the_cache_under_enforcement_but_not_in_shadow():
+def test_regex_stages_bypass_the_cache_when_validation_needs_rule_provenance():
     cache = StageCache()
     Pipeline(TWO_MATCHES).run(CHART, cache=cache)
     assert not any(key.startswith("boilerplate|") for key in cache._items), \
         "enforced regex output embodies verdicts and is never cached"
     Pipeline(_mode(TWO_MATCHES, "shadow")).run(CHART, cache=cache)
-    assert any(key.startswith("boilerplate|") for key in cache._items)
+    assert not any(key.startswith("boilerplate|") for key in cache._items)
 
 
 def test_validator_failure_retains_original(monkeypatch):

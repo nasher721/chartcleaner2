@@ -9,6 +9,7 @@ counts, character deltas) so each run can be tracked, charted, and compared.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import tempfile
@@ -374,6 +375,13 @@ class RunResult:
     source_digest: str = ""
     config_digest: str = ""
     validator_version: str = ""
+    validated_output_digest: str = ""
+    edited_validation: Any = None
+
+    def __post_init__(self) -> None:
+        if not self.validated_output_digest:
+            self.validated_output_digest = hashlib.sha256(
+                self.text.encode("utf-8", "surrogatepass")).hexdigest()
 
     @property
     def chars_after(self) -> int:
@@ -805,15 +813,16 @@ class Pipeline:
                 # verdicts, so it is neither read from nor written to the cache
                 # (warm and cold runs must decide identically). Opaque stages
                 # cache their *candidate* and are judged again on every use.
-                use = cache is not None and not (ctx.enforcing and spec.kind in _REGEX_KINDS)
+                # Shadow also needs exact rule keys and per-match validation.
+                use = cache is not None and not (ctx.ledger is not None and spec.kind in _REGEX_KINDS)
                 key = cache.key(spec.id, text, self.config, ctx.track_changes) if use else None
-                hit = cache.get(key) if use else None
+                hit = cache.get(key, input_text=text) if use else None
                 if hit is not None:
                     text, n, details = hit
                 else:
                     out, n, details = RUNNERS[spec.kind](text, self.config, ctx)
                     if use:
-                        cache.put(key, out, n, details)
+                        cache.put(key, out, n, details, input_text=text)
                     text = out
                 st.matches, st.details = n, details
         except NlpUnavailable as e:

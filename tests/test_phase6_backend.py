@@ -300,7 +300,7 @@ def test_stage_cache_is_safe_across_threads():
         t.join()
     assert not errors
     assert len(cache) <= 8
-    assert cache._chars == sum(len(out) for out, _n, _d in cache._items.values())
+    assert cache._chars == sum(len(out) + len("i") for out, _n, _d in cache._items.values())
 
 
 def test_a_cached_run_does_not_leave_the_cache_on_the_pipeline():

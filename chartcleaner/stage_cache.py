@@ -95,7 +95,8 @@ class StageCache:
     def __init__(self, max_entries: int = 256, max_chars: int = 4_000_000):
         self.max_entries = max_entries
         self.max_chars = max_chars
-        self._items: OrderedDict[str, tuple[str, int, dict]] = OrderedDict()
+        self._items: OrderedDict[str, tuple[str | None, int, dict]] = OrderedDict()
+        self._sizes: dict[str, int] = {}
         self._chars = 0
         self.hits = 0
         self.misses = 0
@@ -108,34 +109,52 @@ class StageCache:
         h = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
         return f"{sid}|{int(track_changes)}|{h}|{fingerprint(cfg, sid)}"
 
-    def get(self, key: str) -> tuple[str, int, dict] | None:
+    def get(self, key: str, *, input_text: str | None = None) -> tuple[str, int, dict] | None:
         with self._lock:
             item = self._items.get(key)
-            if item is None:
+            if item is None or (item[0] is None and input_text is None):
                 self.misses += 1
                 return None
             self._items.move_to_end(key)
             self.hits += 1
         out, n, details = item
-        return out, n, copy.deepcopy(details)
+        return input_text if out is None else out, n, copy.deepcopy(details)
 
-    def put(self, key: str, out: str, matches: int, details: dict) -> None:
-        if len(out) > self.max_chars:
+    def put(self, key: str, out: str, matches: int, details: dict, *,
+            input_text: str | None = None) -> None:
+        # An unchanged stage needs only its key and details, not another chart.
+        stored = None if out == input_text else out
+        size = (len(stored) if stored is not None else 0) + _detail_chars(details)
+        if size > self.max_chars:
             return
-        item = (out, matches, copy.deepcopy(details))
+        item = (stored, matches, copy.deepcopy(details))
         with self._lock:
             if key in self._items:
-                self._chars -= len(self._items.pop(key)[0])
+                self._items.pop(key)
+                self._chars -= self._sizes.pop(key)
             self._items[key] = item
-            self._chars += len(out)
+            self._sizes[key] = size
+            self._chars += size
             while self._items and (len(self._items) > self.max_entries or self._chars > self.max_chars):
                 _k, (old, _n, _d) = self._items.popitem(last=False)
-                self._chars -= len(old)
+                self._chars -= self._sizes.pop(_k)
 
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
+            self._sizes.clear()
             self._chars = 0
 
     def __len__(self) -> int:
         return len(self._items)
+
+
+def _detail_chars(value: Any) -> int:
+    """Conservative retained string budget, including removed chart text."""
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, dict):
+        return sum(_detail_chars(k) + _detail_chars(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return sum(_detail_chars(v) for v in value)
+    return 0

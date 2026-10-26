@@ -247,13 +247,31 @@ class StatementSet:
             return False
 
         out = [s for s in self.statements if not hit(s)]
-        for i, p in enumerate(proposals):
-            later = ranges[i + 1:]
-            for s in extract_statements(p.after, source_offset=p.enclosing.start,
-                                        note_id=p.proposal_id).statements:
-                if not any(sp.start < end and sp.end > start
-                           for start, end in later for sp in s.source_spans):
-                    out.append(s)
+        starts = sorted({start for start, _end in ranges})
+        suffix_ends = [-1] * (len(starts) + 1)
+
+        def overwritten(statement) -> bool:
+            for sp in statement.source_spans:
+                i = bisect.bisect_left(starts, sp.end)
+                end = -1
+                while i:
+                    end = max(end, suffix_ends[i])
+                    i -= i & -i
+                if end > sp.start:
+                    return True
+            return False
+
+        added = []
+        for p in reversed(proposals):
+            added.append([s for s in extract_statements(
+                p.after, source_offset=p.enclosing.start, note_id=p.proposal_id).statements
+                if not overwritten(s)])
+            # Prefix maxima index the later proposals, preserving overwrite order.
+            i = bisect.bisect_left(starts, p.enclosing.start) + 1
+            while i < len(suffix_ends):
+                suffix_ends[i] = max(suffix_ends[i], p.enclosing.end)
+                i += i & -i
+        out.extend(s for group in reversed(added) for s in group)
         self.statements = out
         self.version += len(proposals)
 
@@ -290,10 +308,23 @@ class ValidationContext:
     stage_id: str = ""
     _sections_cache: Any = field(default=None, init=False, repr=False, compare=False)
     _note_type_cache: Any = field(default=None, init=False, repr=False, compare=False)
+    _source_numbers: set[str] | None = field(default=None, init=False, repr=False, compare=False)
+    _line_extractions: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+
+    def extract_lines(self, text: str):
+        """Reuse bounded, immutable local parses within this run only."""
+        from .clinical_statements import extract_statements
+        if len(text) > 32_000:
+            return extract_statements(text)
+        if text not in self._line_extractions:
+            if len(self._line_extractions) >= 64:
+                self._line_extractions.clear()
+            self._line_extractions[text] = extract_statements(text)
+        return self._line_extractions[text]
 
     @property
     def statement_set(self) -> "StatementSet":
@@ -506,8 +537,10 @@ def _check_introduced(proposal: EditProposal, contract: RuleContract,
     new = {fc._norm_number(m.group(1)) for m in _ANY_NUMBER.finditer(lines.after)} - before
     if not new:
         return out
-    source = {fc._norm_number(m.group(1)) for m in _ANY_NUMBER.finditer(context.source)}
-    foreign = new - source
+    if context._source_numbers is None:
+        context._source_numbers = {fc._norm_number(m.group(1))
+                                   for m in _ANY_NUMBER.finditer(context.source)}
+    foreign = new - context._source_numbers
     if foreign:
         out.issues.append(_issue("value_introduced", "error", proposal,
                                  f"{len(foreign)} number(s) appeared that are nowhere in the chart"))
@@ -602,7 +635,7 @@ def _check_statements(proposal: EditProposal, contract: RuleContract,
             tuple(s for s in context.statement_set.statements if _overlaps(s)), ())
         head_start = (cur.rfind("\n", 0, max(0, ls - CONTEXT_CHARS)) + 1) if ls > 0 else 0
         head = cur[head_start:ls]
-        after_all = extract_statements(head + cur[ls:proposal.start] + proposal.after + cur[proposal.end:le])
+        after_all = context.extract_lines(head + cur[ls:proposal.start] + proposal.after + cur[proposal.end:le])
         own = len(head)
         after = StatementExtraction(
             tuple(s for s in after_all.statements if any(sp.end > own for sp in s.source_spans)),
@@ -614,8 +647,8 @@ def _check_statements(proposal: EditProposal, contract: RuleContract,
             tuple(s for s in context.statement_set.statements if not _overlaps(s)), ())
         touched = list(before.statements)
     else:
-        before = extract_statements(lines.before)
-        after = extract_statements(lines.after)
+        before = context.extract_lines(lines.before)
+        after = context.extract_lines(lines.after)
         frag = (lines.fragment_start, lines.fragment_start + max(len(lines.fragment_before), 1))
         touched = [s for s in before.statements
                    if any(sp.start < frag[1] and sp.end > frag[0] for sp in s.source_spans)]
@@ -874,6 +907,13 @@ def validate_candidate(source: str, candidate: str, cfg: dict, *, mode: str = "s
     The window of difference becomes one proposal under a generic legacy
     ``reduce`` contract (facts, meaning, introduced numbers, statements).
     """
+    from .validation_windows import TARGET_CHARS, OVERSIZED_FACTOR
+    # shortcut: oversized lines cannot be safely parsed, require review until checks support bounded segments.
+    if any(len(line) > TARGET_CHARS * OVERSIZED_FACTOR
+           for text in (source, candidate) for line in text.splitlines()):
+        coverage = Coverage.from_spans(len(source), [], unresolved=[(0, len(source))],
+                                       reasons=("oversized_window", "budget_exhausted"))
+        return ValidationReport((), coverage, "retain_original")
     ledger = EditLedger(source)
     context = ValidationContext.for_source(source, config=cfg, ledger=ledger, mode=mode)
     if candidate == source:

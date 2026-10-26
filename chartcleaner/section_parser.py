@@ -162,11 +162,12 @@ def _build_combined_regex() -> tuple[re.Pattern, dict[str, str]]:
             grp_name = f"sec_{idx}"
             # Matches header at start of line, optional markdown hash/bold, word boundaries, and line end or colon
             pattern_parts.append(
-                rf"(?P<{grp_name}>^[ \t]*(?:#+[ \t]*|\*\*)?(?:\b{alias}\b)(?:\*\*)?[ \t]*(?::[ \t]*$|:\s+[^\n]+$|$))"
+                rf"(?P<{grp_name}>[ \t]*(?:#+[ \t]*|\*\*)?(?:\b{alias}\b)(?:\*\*)?[ \t]*(?::[ \t]*$|:\s+[^\n]+$|$))"
             )
             group_to_domain[grp_name] = domain
             idx += 1
-    combined = re.compile("|".join(pattern_parts), re.IGNORECASE | re.MULTILINE)
+    # Anchor the alternation so the engine tries aliases only at line starts.
+    combined = re.compile("^(?:" + "|".join(pattern_parts) + ")", re.IGNORECASE | re.MULTILINE)
     return combined, group_to_domain
 
 

@@ -1,6 +1,8 @@
 """In-memory findings shared by the Clean status, review list and copy gate,
 and the one release decision every output surface consults."""
 from dataclasses import dataclass
+from collections import Counter
+from bisect import bisect_right
 from difflib import SequenceMatcher, get_close_matches
 import hashlib
 import re
@@ -58,12 +60,17 @@ def redaction_candidates(before, after):
     inspect/edit them without guessing which source text should be restored.
     """
     matches = list(re.finditer(r'\[REDACTED_[A-Z_]+\]', after))
+    if not matches:
+        return []
     mapping = {}
     source_lines = before.splitlines()
     indexed_output = [(i, line) for i, line in enumerate(after.splitlines())
                       if line not in ('<patient_chart>', '</patient_chart>')]
     output_lines = [line for _, line in indexed_output]
-    opcodes = SequenceMatcher(None, source_lines, output_lines, autojunk=False).get_opcodes()
+    from .edit_provenance import SMALL_DIFF_CELLS
+    # shortcut: large-chart originals stay ambiguous, use exact provenance before enabling restoration.
+    opcodes = (SequenceMatcher(None, source_lines, output_lines, autojunk=False).get_opcodes()
+               if len(source_lines) * len(output_lines) <= SMALL_DIFF_CELLS else ())
     for tag, a, b, c, d in opcodes:
         if tag != 'replace' or b-a != d-c:
             continue
@@ -76,8 +83,9 @@ def redaction_candidates(before, after):
             if source.startswith(prefix) and source.endswith(suffix):
                 original = source[len(prefix):len(source)-len(suffix) if suffix else len(source)]
                 mapping[indexed_output[line_index][0]] = original
+    newlines = [m.start() for m in re.finditer('\n', after)]
     return [dict(start=m.start(), end=m.end(), token=m.group(),
-                 original=mapping.get(after[:m.start()].count('\n')))
+                 original=mapping.get(bisect_right(newlines, m.start())))
             for m in matches]
 
 
@@ -165,19 +173,38 @@ def release_decision(result, *, output_text: str, acknowledgement: str | None = 
             reasons.append(f"coverage_{status}")
         if "budget_exhausted" in validation.coverage.reasons:
             reasons.append("budget_exhausted")
-    if output_text != getattr(result, "text", output_text):
+    baseline = getattr(result, "validated_output_digest", "")
+    edited = (_sha(output_text) != baseline if baseline
+              else output_text != getattr(result, "text", output_text))
+    if edited:
         reasons.append("edited_output")
+        ledger = getattr(result, "ledger", None)
+        if ledger is not None:
+            markers = re.compile(r'\[REDACTED_[A-Z_]+\]')
+            before = Counter(markers.sub("[REDACTED]", line) for line in ledger.current.splitlines()
+                             if markers.search(line))
+            after = Counter(markers.sub("[REDACTED]", line) for line in output_text.splitlines()
+                            if markers.search(line))
+            if before - after:
+                deidentified = False
+                reasons.append("redaction_unverified")
         if source is not None:
-            from .validation import validate_candidate
+            from .validation import validate_candidate, validator_version
+            signature = (_sha(source), _sha(output_text), validator_version())
+            cached = getattr(result, "edited_validation", None)
             try:
-                again = validate_candidate(source, output_text, {}, mode="enforce", stage_id="edited_output")
+                if cached is not None and cached[0] == signature:
+                    again = cached[1]
+                else:
+                    again = validate_candidate(source, output_text, {}, mode="enforce", stage_id="edited_output")
+                    result.edited_validation = (signature, again)
             except Exception:
                 reasons.append("coverage_failed")
             else:
-                if again.decision != "accept":
+                if again.decision != "accept" or again.coverage.status != "complete":
                     reasons.append("edited_output_issues")
     key = acknowledgement_key(result, output_text)
-    if not deidentified:
+    if "redaction_failed" in reasons:
         status = "blocked"
     elif any(r in _REVIEW_REASONS for r in reasons):
         status = "ready" if acknowledgement == key else "review"

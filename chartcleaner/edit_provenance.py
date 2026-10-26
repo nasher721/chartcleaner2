@@ -390,6 +390,22 @@ RESYNC_WINDOW = 64        # lines searched ahead for the next matching pair
 SMALL_DIFF_CELLS = 250_000  # len(a) * len(b) below which difflib is cheap
 
 
+def line_opcodes(a: list[str], b: list[str]):
+    """Bounded display alignment; every input/output line remains represented."""
+    if len(a) * len(b) <= SMALL_DIFF_CELLS:
+        yield from difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+        return
+    i = j = 0
+    for i1, i2, j1, j2 in _greedy_regions(a, b):
+        if i < i1 or j < j1:
+            yield "equal", i, i1, j, j1
+        tag = "insert" if i1 == i2 else "delete" if j1 == j2 else "replace"
+        yield tag, i1, i2, j1, j2
+        i, j = i2, j2
+    if i < len(a) or j < len(b):
+        yield "equal", i, len(a), j, len(b)
+
+
 def _greedy_regions(a: list[str], b: list[str]) -> list[list[int]]:
     """``[i1, i2, j1, j2]`` for each changed run of lines, in O(lines x window).
 

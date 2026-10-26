@@ -144,6 +144,10 @@ async def test_editing_the_result_is_kept_and_learned(user: User, page):
     with user.client:
         out.set_value(edited)
     user.find(marker="result-output").trigger("blur")
+    for _ in range(200):
+        if CLEAN_STATE["result_text"] == edited and any("inbox" in e["sample"] for e in edit_log.entries().values()):
+            break
+        await asyncio.sleep(0.01)
     assert CLEAN_STATE["result_text"] == edited
     assert any("inbox" in e["sample"] for e in edit_log.entries().values())
 

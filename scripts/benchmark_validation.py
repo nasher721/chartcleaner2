@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import subprocess
 import sys
 import time
 import tracemalloc
@@ -29,8 +30,7 @@ NOTE = ("Progress Note {n}\n"
         "Labs: Na {na} mmol/L, K {k} mmol/L, Hgb {hgb} g/dL. Vitals: BP {sys}/{dia}, HR {hr}.\n"
         "Meds: aspirin 81 mg daily. Metoprolol 25 mg BID — held for hypotension.\n"
         "Assessment: Possible pneumonia. Denies shortness of breath. No fever.\n"
-        "Plan: continue current regimen. Repeat CXR in AM.\n"
-        "This message is confidential and intended only for the recipient.\n\n")
+        "Plan: continue current regimen. Repeat CXR in AM.\n")
 
 
 def synth(chars: int) -> str:
@@ -50,6 +50,8 @@ def synth(chars: int) -> str:
 def _run(cfg: dict, text: str, cache: StageCache | None, *, measure_memory: bool = False) -> dict:
     pipe = Pipeline(cfg)
     started = time.perf_counter()
+    cpu_started = time.process_time()
+    hits, misses = (cache.hits, cache.misses) if cache is not None else (0, 0)
     if measure_memory:
         tracemalloc.start()
     result = pipe.run(text, wrap=False, cache=cache)
@@ -60,44 +62,69 @@ def _run(cfg: dict, text: str, cache: StageCache | None, *, measure_memory: bool
     ms = (time.perf_counter() - started) * 1000
     val = result.validation
     return {"ms": round(ms, 1), "peak_mb": round(peak / 1_048_576, 1) if measure_memory else None,
+            "cpu_ms": round((time.process_time() - cpu_started) * 1000, 1),
+            "cache_hits": cache.hits - hits if cache is not None else 0,
+            "cache_misses": cache.misses - misses if cache is not None else 0,
+            "output_chars": len(result.text),
             "coverage": val.coverage.status if val else "off",
-            "unresolved_chars": len(getattr(val.coverage, "unresolved_spans", ()) or ()),
+            "unresolved_chars": val.coverage.to_dict()["unresolved_chars"] if val else 0,
             "proposals": len(result.ledger.proposals) if result.ledger else 0,
             "issues": len(val.issues) if val else 0}
+
+
+def measure_case(size: int, mode: str, repeat: int) -> dict:
+    """Run once in a fresh worker, then reuse that exact cache for warm timing."""
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": False}
+    cfg["cleaning_validation"] = {"mode": mode, "schema_version": 1}
+    text = synth(size)
+    cache = StageCache()
+    cold = _run(cfg, text, cache)
+    warm_runs = [_run(cfg, text, cache) for _ in range(repeat)]
+    warm = dict(warm_runs[-1])
+    for key in ("ms", "cpu_ms"):
+        warm[key] = round(statistics.median(r[key] for r in warm_runs), 1)
+    # Memory instrumentation must never replace ordinary timing or hit counts.
+    cold["peak_mb"] = _run(cfg, text, StageCache(), measure_memory=True)["peak_mb"]
+    warm["peak_mb"] = _run(cfg, text, cache, measure_memory=True)["peak_mb"]
+    return {"chars": len(text), "cold": cold, "warm": warm}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--sizes", type=int, nargs="+", default=[100_000, 1_000_000, 5_000_000])
-    parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--report", type=Path)
     parser.add_argument("--repeat", type=int, default=1, help="warm runs to take the median of")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--worker", choices=("off", "shadow", "enforce"), help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.repeat < 1 or any(size < 1 for size in args.sizes):
+        parser.error("sizes and repeat must be positive")
+    if args.worker:
+        print(json.dumps(measure_case(args.sizes[0], args.worker, args.repeat)))
+        return 0
+    if args.report is None:
+        parser.error("--report is required")
 
-    base = load_default_config()
-    base["nlp_redaction"] = {"enabled": False}
     report: dict = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "python": sys.version.split()[0],
-                    "platform": sys.platform, "sizes": {}, "notes": "synthetic charts only"}
+                    "platform": sys.platform, "sizes": {},
+                    "notes": "Synthetic charts; NLP off. Fresh-process pipeline timing excludes imports. "
+                             "Memory is measured separately as peak allocations during a run; "
+                             "UI presentation and pre-existing cached objects are not included."}
     for size in args.sizes:
-        text = synth(size)
-        entry: dict = {"chars": len(text), "modes": {}}
+        entry = {"modes": {}}
         for mode in ("off", "shadow", "enforce"):
-            cfg = {**base, "cleaning_validation": {"mode": mode, "schema_version": 1}}
-            # Time without tracemalloc (it inflates wall time); measure peak
-            # memory in a separate pass.
-            cold = _run(cfg, text, None)
-            cold.update(_run(cfg, text, None, measure_memory=True))
-            warm_runs = [_run(cfg, text, StageCache()) for _ in range(args.repeat)]
-            warm = {k: (round(statistics.median(r[k] for r in warm_runs), 1)
-                        if isinstance(warm_runs[0][k], (int, float)) and warm_runs[0][k] is not None
-                        else warm_runs[0][k])
-                    for k in warm_runs[0]}
-            warm.update(_run(cfg, text, StageCache(), measure_memory=True))
-            entry["modes"][mode] = {"cold": cold, "warm": warm}
+            worker = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--worker", mode,
+                 "--sizes", str(size), "--repeat", str(args.repeat)],
+                capture_output=True, text=True, check=True)
+            result = json.loads(worker.stdout)
+            entry["chars"] = result.pop("chars")
+            entry["modes"][mode] = result
             if not args.quiet:
-                print(f"{size:>9,} {mode:>7}: cold {cold['ms']:>9.0f} ms / {cold['peak_mb']:>7.1f} MB"
-                      f" · warm {warm['ms']:>9.0f} ms / {warm['peak_mb']:>7.1f} MB"
-                      f" · coverage {warm['coverage']}")
+                print(f"{size:>9,} {mode:>7}: cold {result['cold']['ms']:>9.0f} ms"
+                      f" · warm {result['warm']['ms']:>9.0f} ms"
+                      f" · hits {result['warm']['cache_hits']}")
         report["sizes"][str(size)] = entry
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=1, sort_keys=True) + "\n", encoding="utf-8")
