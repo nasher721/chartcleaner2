@@ -23,12 +23,14 @@ The accuracy and performance scripts use synthetic fixtures. Clinician review an
 
 ## Dependency locks
 
-After intentionally changing `requirements.txt` or `requirements-dev.in`, regenerate both files with pip-tools:
+After intentionally changing `requirements.txt` or `requirements-dev.in`, regenerate both files with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-python -m piptools compile --allow-unsafe --generate-hashes requirements.txt -o requirements.lock
-python -m piptools compile --allow-unsafe --generate-hashes requirements-dev.in -o requirements-dev.lock
+uv pip compile --universal --python-version 3.10 --generate-hashes --allow-unsafe requirements.txt -o requirements.lock
+uv pip compile --universal --python-version 3.10 --generate-hashes --allow-unsafe requirements-dev.in -o requirements-dev.lock
 ```
+
+`--universal` writes one lock for every platform and Python ≥ 3.10, with environment markers (e.g. `uvloop` off Windows, `macholib` on macOS only, older pins for 3.10). A plain `pip-compile` only resolves for the machine it runs on and breaks the macOS, Windows and 3.10 CI jobs.
 
 CI installs with `--require-hashes`. GitHub Actions must remain pinned to full commit SHAs. Dependabot proposes dependency and Action updates; review compatibility and hashes rather than disabling the gates.
 
