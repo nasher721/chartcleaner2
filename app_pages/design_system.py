@@ -356,6 +356,8 @@ body{font-family:var(--nd-font);font-size:var(--body);font-weight:400;
 .cc-mode-remove textarea::selection{background:color-mix(in srgb, var(--nd-accent) 35%, transparent);}
 .cc-mode-abbreviate .q-field__control{box-shadow:inset 0 0 0 2px var(--nd-interactive);}
 .cc-mode-abbreviate textarea::selection{background:color-mix(in srgb, var(--nd-interactive) 30%, transparent);}
+/* While a clean runs the chart box is inert (no typing) and dimmed. */
+.cc-busy{opacity:.6;transition:opacity var(--nd-dur) var(--nd-ease);}
 .cc-tint--danger{background:var(--cc-neg-soft);border-color:var(--nd-accent);}
 .cc-panel{background:var(--nd-surface-raised);}
 

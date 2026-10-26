@@ -97,6 +97,8 @@ app.add_middleware(SecurityHeaders)
 # entry point
 # ---------------------------------------------------------------------------
 
+RECONNECT_TIMEOUT = 30.0  # seconds; see ui.run below
+
 def _free_port(start: int) -> int:
     """First port uvicorn can actually bind. A connect probe is not enough:
     a socket may be bound without listening (e.g. an outbound connection's
@@ -231,6 +233,12 @@ def main():
         reload=args.reload,
         show=not args.no_browser,
         favicon="🩺",
+        # NiceGUI derives the socket.io heartbeat from this (ping every 0.8x,
+        # timeout 0.4x). At the default 3 s a busy moment of a few seconds
+        # dropped the connection and, 3 s later, discarded the page — the
+        # reload then rebuilt everything and stalled again. A local, single-user
+        # app can wait: the browser reconnects to the same page with its state.
+        reconnect_timeout=RECONNECT_TIMEOUT,
     )
 
 

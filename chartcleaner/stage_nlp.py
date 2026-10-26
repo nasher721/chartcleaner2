@@ -77,6 +77,7 @@ class PresidioEngineCache:
             if find_spec("en_core_web_sm") is None:
                 raise NlpUnavailable("spaCy model 'en_core_web_sm' is not installed in this environment.")
 
+            _offline_tldextract()
             try:
                 nlp_engine = SpacyNlpEngine(models=[{"lang_code": "en", "model_name": "en_core_web_sm"}])
                 analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
@@ -96,6 +97,28 @@ class PresidioEngineCache:
         self._signature = None
         self._analyzer = None
         self._anonymizer = None
+
+
+def _offline_tldextract() -> None:
+    """Make Presidio's email recognizer use tldextract's bundled suffix list.
+
+    By default tldextract downloads the public suffix list from the internet
+    the first time it runs (here: the first clean that sees an email-shaped
+    string). Behind a hospital proxy that request can hang for many seconds —
+    and this app promises to stay offline. The snapshot shipped inside the
+    package is used instead (plus any list already cached on disk).
+    """
+    try:
+        import tldextract
+        from tldextract import tldextract as tld_module
+    except Exception:
+        return
+    try:
+        offline = tldextract.TLDExtract(suffix_list_urls=())
+    except Exception:
+        return
+    tld_module.TLD_EXTRACTOR = offline
+    tldextract.extract = offline
 
 
 # Pipes that only feed token lemmas. en_core_web_sm's NER has its own

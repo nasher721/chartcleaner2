@@ -15,7 +15,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .config_validator import ConfigValidator, REQUIRED_CONFIG_KEYS
 from .custom_rules import (
@@ -61,6 +61,7 @@ from .stages import (
 
 __all__ = [
     "ConfigError",
+    "PipelineCancelled",
     "NlpUnavailable",
     "CustomRuleError",
     "StageStat",
@@ -214,6 +215,10 @@ STAGE_KINDS = {
 # Backwards-compatibility alias for app.py imports
 _load_custom_module = load_custom_module
 _stage_opts = get_stage_options
+
+
+class PipelineCancelled(Exception):
+    """``Pipeline.run(stop=...)`` asked to stop; raised between stages."""
 
 
 class ConfigError(Exception):
@@ -598,7 +603,8 @@ class Pipeline:
     def run(self, text: str, wrap: bool | None = None, *,
             track_changes: bool = False, fact_check: bool | None = None,
             cache: Any = None, provenance: bool = False,
-            validation: str | None = None) -> RunResult:
+            validation: str | None = None,
+            stop: Callable[[], bool] | None = None) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
@@ -615,6 +621,9 @@ class Pipeline:
         :class:`~chartcleaner.validation.ValidationReport` is ``result.validation``.
         Shadow validates every edit but returns the legacy text; off reports
         unavailable coverage; enforce lets the validator decide each edit.
+        ``stop()`` is polled between stages; when it returns true the run is
+        abandoned with :class:`PipelineCancelled` (a speculative clean whose
+        text has changed since it started).
         """
         started = time.perf_counter()
         source_text = text
@@ -642,7 +651,8 @@ class Pipeline:
         # windowed, so large charts get the same checks with coverage reported.
         tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
-        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache, session)
+        extra = {"stop": stop} if stop is not None else {}  # unchanged call for ordinary runs
+        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache, session, **extra)
         text, wrapped, wrapper_stat = self._apply_wrapper(
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
@@ -694,12 +704,16 @@ class Pipeline:
 
     @staticmethod
     def _reconcile(ledger: Any, ctx: CleanContext, stage_id: str, text: str) -> str:
-        """Fold an opaque stage's output into the ledger; returns the accepted text."""
-        proposal = ledger.reconcile(stage_id, text, decision=None)
-        if proposal is None:
+        """Fold an opaque stage's output into the ledger; returns the accepted text.
+
+        Each changed line region is its own coarse proposal, judged and resolved
+        as one batch (like a regex rule's matches), so provenance stays local.
+        """
+        proposals = ledger.reconcile_hunks(stage_id, text)
+        if not proposals:
             return text
-        decision = ctx.judge(proposal) if ctx.judge is not None else "accept"
-        ledger.resolve(proposal, decision)
+        ledger.resolve_many([(p, ctx.judge(p) if ctx.judge is not None else "accept")
+                             for p in proposals])
         return ledger.current
 
     def stage_io(self, text: str, sid: str, *, cache: Any = None) -> tuple[str, str, StageStat]:
@@ -733,7 +747,8 @@ class Pipeline:
             yield spec, before, text, st, warning
 
     def _execute_stages(
-        self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None, session: Any = None
+        self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None, session: Any = None,
+        stop: Callable[[], bool] | None = None,
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
@@ -760,6 +775,8 @@ class Pipeline:
                 session.sync()
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
+            if stop is not None and stop():
+                raise PipelineCancelled(spec.id)
         if session is not None:
             session.sync()
             if tracker is not None and tracker.limits():

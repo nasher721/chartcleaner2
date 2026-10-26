@@ -10,6 +10,10 @@ from app_pages.review_model import (
 )
 
 
+ROW_PAGE = 40      # finding rows drawn per "Show more"
+LOCATE_LIMIT = 5   # Locate buttons per finding row
+
+
 def collapse_context_ranges(line_count: int, changed_lines: set[int], context: int = 3) -> list[tuple[int, int]]:
     visible = set(changed_lines)
     for line in changed_lines:
@@ -59,6 +63,11 @@ def render_review_workspace(*, result, audit, source, output, decision,
                 {"all": "All", "blocking": "Blocking", "review": "Needs review", "info": "Informational"},
                 value=initial_filter).props("dense no-caps").mark("finding-filter")
             listing = ui.column().classes("w-full gap-2")
+            shown = {"rows": ROW_PAGE}
+
+            def show_more() -> None:
+                shown["rows"] += ROW_PAGE
+                draw_findings()
 
             def draw_findings() -> None:
                 listing.clear()
@@ -68,16 +77,25 @@ def render_review_workspace(*, result, audit, source, output, decision,
                         message = ("No issues detected by these checks—review before sharing."
                                    if not rows else "No findings match this filter.")
                         ui.label(message).classes("cc-muted")
-                    for row in visible:
+                    # Every element is a websocket message and server-side work:
+                    # a long chart can yield thousands of occurrences, so draw a
+                    # page of rows and a few Locate buttons per row.
+                    for row in visible[:shown["rows"]]:
                         with ui.card().classes("w-full gap-1").mark("finding-row"):
                             ui.badge({"blocked": "Blocked", "review": "Review", "info": "Info"}[row.severity],
                                      color={"blocked": "red", "review": "orange", "info": "grey"}[row.severity])
                             ui.label(row.title).classes("cc-section")
                             ui.label(f"{row.detail} · {row.count} occurrence(s)").classes("cc-muted")
-                            for occurrence in row.occurrences:
-                                ui.button("Locate", icon="my_location",
-                                          on_click=lambda _e, item=occurrence: locate(item)) \
-                                    .props("flat dense no-caps").mark("locate-finding")
+                            with ui.row().classes("items-center gap-1"):
+                                for occurrence in row.occurrences[:LOCATE_LIMIT]:
+                                    ui.button("Locate", icon="my_location",
+                                              on_click=lambda _e, item=occurrence: locate(item)) \
+                                        .props("flat dense no-caps").mark("locate-finding")
+                                if row.count > LOCATE_LIMIT:
+                                    ui.label(f"+{row.count - LOCATE_LIMIT:,} more").classes("cc-muted text-xs")
+                    if len(visible) > shown["rows"]:
+                        ui.button(f"Show more findings ({len(visible) - shown['rows']:,} left)",
+                                  on_click=show_more).props("flat no-caps").mark("findings-more")
             filter_control.on_value_change(lambda _e: draw_findings())
             draw_findings()
         with ui.tab_panel(changes_tab):
