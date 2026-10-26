@@ -38,7 +38,14 @@ def fuzz_ratio(a: str, b: str) -> float:
 
 
 def run_duplicate_notes(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, int, dict]:
-    """Fold repeated copy-forward notes based on body similarity."""
+    """Fold repeated copy-forward notes based on body similarity.
+
+    A near-duplicate note is folded down to its header plus every line that
+    does not literally repeat a line of an earlier note (whitespace and case
+    aside), so content that exists only in the later copy is never lost —
+    the same guarantee ``delta_engine`` gives at sentence level. Only a note
+    with nothing new is dropped outright.
+    """
     dcfg = cfg.get("duplicate_note_detection") or {}
     if dcfg.get("enabled") is False:
         return text, 0, {}
@@ -56,27 +63,65 @@ def run_duplicate_notes(text: str, cfg: dict, ctx: CleanContext) -> tuple[str, i
     kept = [parts[0]]
     seen_bodies: list[str] = []
     seen_bodies_set: set[str] = set()
+    # Every line of every earlier segment: each one is in the output already
+    # (kept verbatim, or itself a repeat of an earlier line).
+    seen_lines: set[str] = {_line_key(ln) for ln in parts[0].splitlines()}
     dropped = 0
+    partial = 0
+    lines_kept = 0
 
     for seg in parts[1:]:
         body = _extract_body(seg)
-        if len(body) < min_body:
-            kept.append(seg)
-            continue
         body_low = body.lower()
-        if body_low in seen_bodies_set:
-            dropped += 1
-            continue
-        if seen_bodies and rf_process.extractOne(
-            body_low, seen_bodies, scorer=rf_fuzz.ratio, score_cutoff=threshold
-        ) is not None:
-            dropped += 1
-            continue
-        seen_bodies.append(body_low)
-        seen_bodies_set.add(body_low)
-        kept.append(seg)
+        folded = len(body) >= min_body and (
+            body_low in seen_bodies_set
+            or (seen_bodies and rf_process.extractOne(
+                body_low, seen_bodies, scorer=rf_fuzz.ratio, score_cutoff=threshold
+            ) is not None))
+        if not folded:
+            if len(body) >= min_body:
+                seen_bodies.append(body_low)
+                seen_bodies_set.add(body_low)
+            kept.append(seg)
+        else:
+            unique = _unique_lines(seg, seen_lines)
+            if unique is None:
+                dropped += 1
+            else:
+                partial += 1
+                lines_kept += unique[1]
+                kept.append(unique[0])
+        seen_lines.update(_line_key(ln) for ln in seg.splitlines())
 
-    return "".join(kept), dropped, {"notes_kept": len(kept)}
+    details: dict = {"notes_kept": len(kept)}
+    if partial:
+        details["notes_partially_folded"] = partial
+        details["unique_lines_kept"] = lines_kept
+    return "".join(kept), dropped + partial, details
+
+
+def _line_key(line: str) -> str:
+    return " ".join(line.split()).lower()
+
+
+def _unique_lines(segment: str, seen_lines: set[str]) -> tuple[str, int] | None:
+    """The folded form of a near-duplicate *segment*: its header line plus the
+    lines no earlier segment has, or ``None`` when every body line repeats."""
+    lines = segment.splitlines(keepends=True)
+    header_idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+    if header_idx is None:
+        return None
+    new = [ln for ln in lines[header_idx + 1:]
+           if ln.strip() and _line_key(ln) not in seen_lines]
+    if not new:
+        return None
+    header = lines[header_idx]
+    if not header.endswith("\n"):
+        header += "\n"
+    if not new[-1].endswith("\n"):
+        new[-1] += "\n"
+    tail = "\n" if segment.endswith("\n\n") else ""
+    return header + "".join(new) + tail, len(new)
 
 
 def _extract_body(segment: str) -> str:
