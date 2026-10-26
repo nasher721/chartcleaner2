@@ -16,10 +16,10 @@ Run with:  python app.py            (or the platform launcher / double-click hel
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import re
 import socket
-import sys
 import threading
 import webbrowser
 
@@ -178,25 +178,6 @@ def main():
         ui.run(title="Chart Cleaner")
         return
 
-    if getattr(sys, "frozen", False):
-        # macOS .app launches can inject multiprocessing bootstrap args
-        # (--keep-parent / resource_tracker -c ...); strip them before argparse.
-        clean: list[str] = [sys.argv[0]]
-        skip = False
-        for a in sys.argv[1:]:
-            if skip:
-                skip = False
-                continue
-            if a in ("--keep-parent",):
-                continue
-            if a == "-B" or a == "-S" or a == "-I":
-                continue
-            if a == "-c":
-                skip = True
-                continue
-            clean.append(a)
-        sys.argv = clean
-
     ap = argparse.ArgumentParser(description="Chart Cleaner desktop app (local web UI).")
     ap.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1 — keep it local).")
     ap.add_argument("--port", type=int, default=0, help="Port (default: first free port from 8765).")
@@ -242,5 +223,11 @@ def main():
     )
 
 
-if __name__ == "__main__":
+def _entrypoint() -> None:
+    """Route frozen multiprocessing helpers before starting the web app."""
+    multiprocessing.freeze_support()
     main()
+
+
+if __name__ == "__main__":
+    _entrypoint()

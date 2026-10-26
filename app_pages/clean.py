@@ -262,10 +262,15 @@ async def clean_page():
         set_running(True)
         try:
             inputs = clean_inputs(text)
-            cfg, note_info, digest = await run.io_bound(prepare, *inputs)
+            prepared = await run.io_bound(prepare, *inputs)
+            if prepared is None:  # NiceGUI returns None on cancellation or shutdown.
+                return
+            cfg, note_info, digest = prepared
             out = await take_speculation(inputs, digest)
             if out is None:
                 out = await run.io_bound(compute, text, mode, cfg)
+            if out is None:
+                return
             result, audit, extras, review = out
             tag = CLEAN_STATE.get("tag") or ""
 

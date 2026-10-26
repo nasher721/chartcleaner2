@@ -169,6 +169,40 @@ async def _clean(user: User, route: str, text: str) -> None:
     raise AssertionError("clean did not finish")
 
 
+@pytest.mark.parametrize("cancelled_step", ["prepare", "compute"])
+@pytest.mark.parametrize("failure", [None, RuntimeError("worker failed")])
+async def test_interrupted_clean_preserves_previous_result(user: User, page, monkeypatch,
+                                                          cancelled_step, failure):
+    await _clean(user, "/resp-cancelled", "Plan: earlier chart\n")
+    previous, previous_text = CLEAN_STATE["result"], CLEAN_STATE["result_text"]
+    real_io_bound = clean_mod.run.io_bound
+    cancelled = asyncio.Event()
+    errors, saved = [], []
+
+    async def io_bound(callback, *args, **kwargs):
+        if callback.__name__ == cancelled_step:
+            cancelled.set()
+            if failure is not None:
+                raise failure
+            return None
+        return await real_io_bound(callback, *args, **kwargs)
+
+    monkeypatch.setattr(clean_mod.run, "io_bound", io_bound)
+    monkeypatch.setattr(clean_mod, "report_error", lambda *args: errors.append(args))
+    monkeypatch.setattr(clean_mod.store, "append_run", lambda record: saved.append(record))
+    textarea = next(iter(user.find(marker="highlight-source").elements))
+    textarea.set_value("Plan: new chart\n")
+    user.find(marker="run-clean").click()
+    await asyncio.wait_for(cancelled.wait(), timeout=2)
+
+    assert errors == ([] if failure is None else [("Cleaning failed", failure)])
+    assert saved == []
+    assert CLEAN_STATE["result"] is previous
+    assert CLEAN_STATE["result_text"] == previous_text
+    assert next(iter(user.find(marker="run-clean").elements)).enabled
+    assert "inert" not in next(iter(user.find(marker="input-shell").elements)).props
+
+
 async def test_long_chart_builds_review_on_first_open(user: User, page, monkeypatch):
     monkeypatch.setattr(clean_mod, "LAZY_TABS_MIN_CHARS", 0)
     calls = []

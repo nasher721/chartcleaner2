@@ -33,10 +33,10 @@ async def test_abbreviations_only_mode_and_switch_back(user: User, monkeypatch, 
     cfg['audit'] = {'enabled': False}
     config_path = tmp_path / 'config.json'
     save_config(cfg, config_path)
-    monkeypatch.setattr(store, 'CONFIG_PATH', config_path)
+    monkeypatch.setattr(common, 'CONFIG_PATH', config_path)
     monkeypatch.setattr(store, 'append_run', lambda _record: None)
     monkeypatch.setattr(store, 'append_audit_hits', lambda _hits: None)
-    monkeypatch.setattr(store, 'load_prefs', lambda: dict(store.DEFAULT_PREFS, auto_clean=False))
+    monkeypatch.setitem(common.PREFS, 'auto_clean', False)
     before, auto_before = dict(CLEAN_STATE), dict(AUTO_LAST)
     raw = '  MRN: 1234567\n• Anterior cerebral artery  \n'
     CLEAN_STATE.update(input=raw, mode='clean', result=None, result_text='', audit=None)
