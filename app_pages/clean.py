@@ -9,7 +9,12 @@ right. The result has three tabs — **Output** (copy as…, timeline),
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import threading
 import time
+from pathlib import Path
 
 from app_pages import common
 from app_pages.common import *  # noqa: F401,F403 — shared imports and helpers
@@ -21,6 +26,7 @@ from chartcleaner import edit_log, recent_charts, regression_set, rule_history, 
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
 from chartcleaner.destinations import apply_destination, destination_options, get_destination
+from chartcleaner.engine import PipelineCancelled
 from chartcleaner.review_state import review_findings, review_status, redaction_candidates
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
@@ -85,16 +91,39 @@ COPY_ITEM_MARKERS = {
     "ai": "copy-ai",
 }
 AUTO_CLEAN_PAUSE = 1.5  # seconds of no typing before auto-clean runs
+# Speculative clean: once a pasted chart has been still this long, it is cleaned
+# in the background so pressing Clean shows the result at once (or joins the run).
+# Off under the test harness unless a test turns it on.
+SPECULATE = not os.environ.get("NICEGUI_USER_SIMULATION")
+SPECULATE_PAUSE = 0.8      # seconds of no typing
+SPECULATE_MIN_CHARS = 2_000  # short charts clean fast enough already
+SPECULATION_STATS = {"hits": 0}
+# The in-flight speculative clean, app-wide (single user): a newer chart in any
+# tab, or a reload, stops a run whose page is gone instead of queueing behind it.
+SPECULATION: dict = {"task": None, "inputs": None}
+COMPUTE_LOCK = threading.Lock()
+LAZY_TABS_MIN_CHARS = 20_000  # charts this long build Review/Insights on first open
 UNDO_DEPTH = 30  # Clean-page edits Undo can step back through
 
 
+def _custom_rules_fingerprint():
+    """Names, sizes and times of the custom scripts and their trust list: a
+    speculative result is stale if any of them changed since it ran."""
+    try:
+        paths = sorted(Path(common.CUSTOM_DIR).glob("*.py")) + [Path(store.CUSTOM_TRUST_FILE)]
+        return [(p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in paths if p.exists()]
+    except Exception:
+        return time.monotonic()  # unknown: never matches a later digest
+
+
 async def clean_page():
-    state = {"running": False, "edited": 0.0}
+    state = {"running": False, "edited": 0.0, "speculated": 0.0}
     # stack: undo entries (newest last) — {"entry": rule journal entry or None,
     # "before"/"after": chart text, "label"}; collected: selections saved together.
     highlight = {"pending": False, "stack": [], "selection": None, "collected": []}
     refs: dict = {}          # result widgets (tabs, output box), repopulated by render_results
     inbox = {"items": []}    # rule-inbox suggestions for the current recent charts
+    spec = SPECULATION
     inbox_btn = None         # the "Suggestions" button; built in header_actions
 
     # ---- handlers (defined before the UI that references them) -------------
@@ -103,58 +132,169 @@ async def clean_page():
         clean_btn.set_enabled(not flag)
         mode_sel.set_enabled(not flag)
         destination_sel.set_enabled(not flag and mode_sel.value == "clean")
-        input_area.set_enabled(not flag)
+        # `inert` blocks typing/focus while a clean runs without touching the
+        # textarea itself (see input_shell).
+        if flag:
+            input_shell.props("inert").classes("cc-busy")
+        else:
+            input_shell.props(remove="inert").classes(remove="cc-busy")
         spinner.set_visibility(flag)
+
+    def prepare(text: str, mode: str, destination: str, manual) -> tuple[dict, dict, str]:
+        """The effective config of a clean, its note detection, and a digest of
+        every input the result depends on (speculative results are reused only
+        when the digest still matches at click time)."""
+        cfg = load_config(common.CONFIG_PATH)
+        note_info: dict = {}
+        if mode == "clean":
+            found = detect_note_type(text, cfg)
+            if manual in NOTE_TYPE_LABELS:
+                found.note_type, found.label = manual, NOTE_TYPE_LABELS[manual]
+            note_info.update(label=found.label, type=found.note_type, preset=None)
+            preset = (common.PREFS.get("note_presets") or {}).get(found.note_type or "")
+            if common.PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
+                # This run only: applying a preset for real would overwrite config.json.
+                cfg = store.load_preset(preset)
+                note_info["preset"] = preset
+            cfg, destination_policy = apply_destination(cfg, destination)
+            note_info["destination"] = destination_policy.label if destination_policy else None
+        digest = hashlib.sha256(json.dumps(
+            [text, mode, cfg, note_info, _custom_rules_fingerprint()],
+            sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        return cfg, note_info, digest
+
+    def compute(text: str, mode: str, cfg: dict, stop=None):
+        """Everything a clean shows — ``(result, audit, extras, review)``. Pure:
+        writes nothing, so a speculative run can be thrown away; ``stop()``
+        abandons it between stages (:class:`PipelineCancelled`)."""
+        with COMPUTE_LOCK:  # one pipeline at a time (speculative and real)
+            if stop is not None and stop():
+                raise PipelineCancelled("before start")
+            cache = service_mod.result_cache()
+            if mode != "clean":
+                result = Pipeline(cfg, mode=mode).run(text, track_changes=True, cache=cache,
+                                                      stop=stop)
+                audit = None
+            else:
+                # Tracked changes stay in memory for the inspect tabs; history drops them.
+                result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
+                    text, track_changes=True, cache=cache, stop=stop)
+                audit = run_audit(result.text, cfg)
+            if stop is not None and stop():
+                raise PipelineCancelled("after pipeline")
+            extras = extras_work(result.text, result.fact_check) if mode == "clean" else {}
+            # The Review diff is the slowest part of drawing a result; build it
+            # here, off the event loop, so the page stays responsive.
+            review = review_html(text, result, audit)
+        return result, audit, extras, review
+
+    def extras_work(cleaned: str, fact_report):
+        out = {}
+        gone = removed_lines(fact_report)
+        for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
+                        ("timeline", build_timeline), ("problems", build_problems),
+                        ("devices", build_devices), ("micro", build_micro),
+                        ("overnight", build_overnight), ("pending", build_pending),
+                        ("bundle", build_bundle),
+                        ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale),
+                        ("conflicts", build_conflicts)):
+            try:
+                out[key] = fn(cleaned)
+            except Exception:
+                out[key] = None  # bonus views; never fail a clean over them
+        return out
+
+    def clean_inputs(text: str) -> tuple:
+        return (text, mode_sel.value, destination_sel.value, CLEAN_STATE.get("manual_note_type"))
+
+    def speculate(text: str) -> None:
+        """Start cleaning a chart that has settled in the editor, before Clean.
+
+        The result is only reused when the click asks for exactly the same
+        thing (same text, mode, destination, note type and config digest); a
+        click mid-run joins it instead of starting over.
+        """
+        if not SPECULATE or len(text) < SPECULATE_MIN_CHARS or not text.strip():
+            return
+        inputs = clean_inputs(text)
+        if spec.get("inputs") == inputs:
+            return
+        if CLEAN_STATE.get("result") is not None and AUTO_LAST.get("text") == text:
+            return  # already showing this chart's result
+        # Replacing spec["inputs"] is also what stops an older speculative run:
+        # its stop() turns true and it gives up at its next stage boundary.
+        spec["inputs"] = inputs
+
+        def stop() -> bool:
+            return spec.get("inputs") != inputs
+
+        async def go():
+            try:
+                cfg, _note, digest = await run.io_bound(prepare, *inputs)
+                return digest, await run.io_bound(compute, inputs[0], inputs[1], cfg, stop)
+            except Exception:
+                # Cancelled, or failed: the real clean runs normally and is the
+                # one that reports errors.
+                return None
+
+        spec["task"] = asyncio.get_running_loop().create_task(go())
+
+    async def take_speculation(inputs: tuple, digest: str):
+        """The speculative ``compute`` output for these inputs, or None."""
+        task, same = spec.get("task"), spec.get("inputs") == inputs
+        if task is None or not same:
+            spec.update(task=None, inputs=None)  # a stale run stops at its next stage
+            return None
+        try:
+            got = await task  # joining: inputs stay set, or the run would stop itself
+        except Exception:
+            got = None  # a failed speculation just means a normal clean
+        finally:
+            if spec.get("task") is task:
+                spec.update(task=None, inputs=None)
+        if got is None or got[0] != digest:
+            return None
+        SPECULATION_STATS["hits"] += 1
+        return got[1]
 
     async def do_clean_core(text: str, source: str) -> None:
         mode = mode_sel.value
-        note_info: dict = {}
         set_running(True)
         try:
-            def work():
-                cfg = load_config(common.CONFIG_PATH)
-                cache = service_mod.result_cache()
-                if mode != "clean":
-                    return Pipeline(cfg, mode=mode).run(text, track_changes=True, cache=cache), None
-                found = detect_note_type(text, cfg)
-                manual = CLEAN_STATE.get("manual_note_type")
-                if manual in NOTE_TYPE_LABELS:
-                    found.note_type, found.label = manual, NOTE_TYPE_LABELS[manual]
-                note_info.update(label=found.label, type=found.note_type, preset=None)
-                preset = (common.PREFS.get("note_presets") or {}).get(found.note_type or "")
-                if common.PREFS.get("note_auto_apply") and preset and preset in store.list_presets():
-                    # This run only: applying a preset for real would overwrite config.json.
-                    cfg = store.load_preset(preset)
-                    note_info["preset"] = preset
-                cfg, destination_policy = apply_destination(cfg, destination_sel.value)
-                note_info["destination"] = destination_policy.label if destination_policy else None
-                # Tracked changes stay in memory for the inspect tabs; history drops them.
-                result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
-                    text, track_changes=True, cache=cache)
-                return result, run_audit(result.text, cfg)
+            inputs = clean_inputs(text)
+            cfg, note_info, digest = await run.io_bound(prepare, *inputs)
+            out = await take_speculation(inputs, digest)
+            if out is None:
+                out = await run.io_bound(compute, text, mode, cfg)
+            result, audit, extras, review = out
+            tag = CLEAN_STATE.get("tag") or ""
 
-            def extras_work(cleaned: str, fact_report):
-                out = {}
-                gone = removed_lines(fact_report)
-                for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
-                                ("timeline", build_timeline), ("problems", build_problems),
-                                ("devices", build_devices), ("micro", build_micro),
-                                ("overnight", build_overnight), ("pending", build_pending),
-                                ("bundle", build_bundle),
-                                ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale),
-                                ("conflicts", build_conflicts)):
+            def persist() -> None:
+                # Disk writes and encryption: off the event loop, so a slow disk
+                # or keychain never stalls the websocket (the reconnect banner).
+                store.append_run(result.to_history_dict(
+                    f"{source}:{mode}" if mode != "clean" else source))
+                # persist reversible-token maps produced by the tokenize stage
+                try:
+                    for st in result.stages:
+                        tmap = st.details.get("token_map")
+                        if tmap:
+                            store.save_token_map(tmap, source)
+                except Exception:
+                    pass  # map saving must never break a run
+                if mode == "clean":
                     try:
-                        out[key] = fn(cleaned)
+                        recent_charts.remember(text, source, common.PREFS, tag=tag)
                     except Exception:
-                        out[key] = None  # bonus views; never fail a clean over them
-                return out
+                        pass  # suggestions are a bonus; never break a run
+                store.maybe_purge_old_data()
+                try:
+                    if audit is not None:
+                        store.append_audit_hits(f.signature for f in audit.findings)
+                except Exception:
+                    pass  # history of findings must never break a run
 
-            result, audit = await run.io_bound(work)
-            extras = (await run.io_bound(extras_work, result.text, result.fact_check)
-                      if mode == "clean" else {})
-            # The Review diff is the slowest part of drawing a result; build it
-            # here, off the event loop, so the page stays responsive.
-            review = await run.io_bound(review_html, text, result, audit)
+            await run.io_bound(persist)
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
                                review_html=(result, text, result.text, review[0], review[1]),
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
@@ -166,28 +306,8 @@ async def clean_page():
                                stale=extras.get("stale"), conflicts=extras.get("conflicts"),
                                fact_ack=False, release_ack=None)
             AUTO_LAST["text"] = text
-            store.append_run(result.to_history_dict(
-                f"{source}:{mode}" if mode != "clean" else source))
-            # persist reversible-token maps produced by the tokenize stage
-            try:
-                for st in result.stages:
-                    tmap = st.details.get("token_map")
-                    if tmap:
-                        store.save_token_map(tmap, source)
-            except Exception:
-                pass  # map saving must never break a run
-            if mode == "clean":
-                try:
-                    recent_charts.remember(text, source, common.PREFS, tag=CLEAN_STATE.get("tag") or "")
-                except Exception:
-                    pass  # suggestions are a bonus; never break a run
-            store.maybe_purge_old_data()
-            try:
-                if audit is not None:
-                    store.append_audit_hits(f.signature for f in audit.findings)
-            except Exception:
-                pass  # history of findings must never break a run
-            input_area.set_value(text)
+            if input_area.value != text:
+                input_area.set_value(text)  # resending an unchanged chart costs a round trip
             render_results()
             workspace_switch.set_value("result")
             set_mobile_view(layout, "result")
@@ -353,15 +473,35 @@ async def clean_page():
                         ui.badge(str(issue_count), color="orange").props("floating").mark("review-count")
                 t_insights = ui.tab("Insights", icon="insights") if not single_pass else None
             refs["tabs"] = (tabs, [t for t in (t_out, t_review, t_insights) if t is not None])
+            # On a long chart Review and Insights are built the first time they
+            # are opened: the Review diff alone can be close to a megabyte of
+            # HTML, which every clean used to push to the browser even if unread.
+            lazy = len(CLEAN_STATE.get("input") or "") >= LAZY_TABS_MIN_CHARS
+            pending: dict[str, tuple] = {}
+
+            def open_panel(value) -> None:
+                name = value._props.get("name") if hasattr(value, "_props") else value
+                job = pending.pop(name, None)
+                if job is not None:
+                    panel, draw = job
+                    with panel:
+                        draw()
+
             with ui.tab_panels(tabs, value=t_out).classes("w-full") \
                     .props("keep-alive transition-prev=fade transition-next=fade"):
                 with ui.tab_panel(t_out).classes("px-0"):
                     render_output(result, single_pass)
-                with ui.tab_panel(t_review).classes("px-0"):
-                    render_review(result, groups, single_pass, finding_rows)
+                with ui.tab_panel(t_review).classes("px-0") as review_panel:
+                    pending["Review"] = (review_panel, lambda: render_review(
+                        result, groups, single_pass, finding_rows))
                 if t_insights is not None:
-                    with ui.tab_panel(t_insights).classes("px-0"):
-                        render_insights()
+                    with ui.tab_panel(t_insights).classes("px-0") as insights_panel:
+                        pending["Insights"] = (insights_panel, render_insights)
+            if lazy:
+                tabs.on_value_change(lambda e: open_panel(e.value))
+            else:
+                for name in list(pending):
+                    open_panel(name)
             if result.warnings:
                 with ui.row().classes("w-full items-center gap-2"):
                     ui.element("span").classes("cc-dot cc-dot--warn")
@@ -1916,6 +2056,15 @@ async def clean_page():
         state["edited"] = time.monotonic()
 
     async def auto_tick() -> None:
+        if (not common.PREFS.get("auto_clean") and not state["running"]
+                and not highlight["pending"] and not highlight.get("saving")
+                and state["edited"] != state["speculated"]
+                and time.monotonic() - state["edited"] >= SPECULATE_PAUSE):
+            # Once per edit: an idle page (another tab, or one closed but still
+            # inside its reconnect window) must not keep re-claiming the
+            # app-wide speculation from the chart being worked on.
+            state["speculated"] = state["edited"]
+            speculate(input_area.value or "")
         if (not common.PREFS.get("auto_clean") or state["running"]
                 or highlight["pending"] or highlight.get("saving")):
             return
@@ -1971,9 +2120,9 @@ async def clean_page():
         save_prefs()
         hide_selection_bar()
         highlight_status.set_text(SELECTION_MODE_HELP[mode])
-        input_area.classes(remove="cc-mode-remove cc-mode-abbreviate")
+        input_shell.classes(remove="cc-mode-remove cc-mode-abbreviate")
         if mode != "ask":
-            input_area.classes(f"cc-mode-{mode}")
+            input_shell.classes(f"cc-mode-{mode}")
 
     def current_selection() -> dict | None:
         selection = highlight.get("selection")
@@ -3308,36 +3457,42 @@ async def clean_page():
                     with undo_btn:
                         undo_tip = ui.tooltip("Nothing to undo yet")
 
-                if HAS_EX4:
-                    # ex4nicegui gives the textarea a reactive value signal; the plain
-                    # NiceGUI element underneath keeps every existing code path intact.
-                    _rx_input = rxui.textarea(
-                        "Chart text (paste an Epic export, drop a file, or load the sample)",
-                        value=CLEAN_STATE["input"], on_change=on_input_change)
-                    input_area = _rx_input.element
-                else:
-                    input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
-                                             value=CLEAN_STATE["input"], on_change=on_input_change)
-                input_area.props("outlined input-style='min-height: 420px'") \
-                    .classes("w-full cc-mono cc-learn-src")
-                input_area.mark("highlight-source")
-                if selection_mode != "ask":
-                    input_area.classes(f"cc-mode-{selection_mode}")
-                for event_name in ("mouseup", "keyup", "touchend"):
-                    input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
-                with input_area:
-                    # Right-click on a selection: the same actions as the selection bar.
-                    with ui.context_menu().mark("chart-context-menu"):
-                        for label, icon, action, mark in (
-                                ("Remove", "backspace", sel_remove, "remove"),
-                                ("Remove whole line(s)", "horizontal_rule", sel_line, "line"),
-                                ("Replace…", "find_replace", sel_replace, "replace"),
-                                ("Abbreviate…", "short_text", sel_abbreviate, "abbreviate"),
-                                ("Build a rule…", "tune", sel_build, "build"),
-                                ("Never remove", "shield", sel_keep, "keep"),
-                                ("Collect", "add_to_photos", sel_collect, "collect")):
-                            ui.menu_item(label, on_click=lambda a=action: selection_shortcut(a)) \
-                                .props(f"icon={icon}").mark(f"ctx-{mark}")
+                # State that changes while the page is in use (busy, selection
+                # mode) lives on this wrapper, not the textarea: any prop or class
+                # change re-sends an element's full props, and the textarea's
+                # include the whole chart (hundreds of KB per toggle).
+                input_shell = ui.element("div").classes("w-full cc-input-shell").mark("input-shell")
+                with input_shell:
+                    if HAS_EX4:
+                        # ex4nicegui gives the textarea a reactive value signal; the plain
+                        # NiceGUI element underneath keeps every existing code path intact.
+                        _rx_input = rxui.textarea(
+                            "Chart text (paste an Epic export, drop a file, or load the sample)",
+                            value=CLEAN_STATE["input"], on_change=on_input_change)
+                        input_area = _rx_input.element
+                    else:
+                        input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
+                                                 value=CLEAN_STATE["input"], on_change=on_input_change)
+                    input_area.props("outlined input-style='min-height: 420px'") \
+                        .classes("w-full cc-mono cc-learn-src")
+                    input_area.mark("highlight-source")
+                    if selection_mode != "ask":
+                        input_shell.classes(f"cc-mode-{selection_mode}")
+                    for event_name in ("mouseup", "keyup", "touchend"):
+                        input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
+                    with input_area:
+                        # Right-click on a selection: the same actions as the selection bar.
+                        with ui.context_menu().mark("chart-context-menu"):
+                            for label, icon, action, mark in (
+                                    ("Remove", "backspace", sel_remove, "remove"),
+                                    ("Remove whole line(s)", "horizontal_rule", sel_line, "line"),
+                                    ("Replace…", "find_replace", sel_replace, "replace"),
+                                    ("Abbreviate…", "short_text", sel_abbreviate, "abbreviate"),
+                                    ("Build a rule…", "tune", sel_build, "build"),
+                                    ("Never remove", "shield", sel_keep, "keep"),
+                                    ("Collect", "add_to_photos", sel_collect, "collect")):
+                                ui.menu_item(label, on_click=lambda a=action: selection_shortcut(a)) \
+                                    .props(f"icon={icon}").mark(f"ctx-{mark}")
 
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:

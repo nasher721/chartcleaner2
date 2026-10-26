@@ -21,6 +21,7 @@ carry codes and counts, never chart text.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import re
@@ -212,6 +213,50 @@ class StatementSet:
         self.statements = kept + list(added)
         self.version += 1
 
+    def apply_many(self, proposals: list[EditProposal]) -> None:
+        """Same result as :meth:`apply` for each proposal in order, in one pass.
+
+        One accepted rule or stage can fold hundreds of proposals in; applying
+        them one by one rescans every statement per proposal. Original
+        statements are filtered once against the union of the ranges (bisect);
+        each proposal's added statements are filtered against the ranges of
+        the proposals after it, exactly as sequential application would.
+        """
+        if not proposals:
+            return
+        if len(proposals) == 1:
+            self.apply(proposals[0])
+            return
+        from .clinical_statements import extract_statements
+        ranges = [(p.enclosing.start, p.enclosing.end) for p in proposals]
+        union: list[list[int]] = []
+        for start, end in sorted(ranges):
+            if union and start < union[-1][1]:  # strictly overlapping only
+                union[-1][1] = max(union[-1][1], end)
+            else:
+                union.append([start, end])
+        ends = [end for _start, end in union]
+
+        def hit(statement) -> bool:
+            for sp in statement.source_spans:
+                i = bisect.bisect_right(ends, sp.start)
+                while i < len(union) and union[i][0] < sp.end:
+                    if union[i][1] > sp.start:
+                        return True
+                    i += 1
+            return False
+
+        out = [s for s in self.statements if not hit(s)]
+        for i, p in enumerate(proposals):
+            later = ranges[i + 1:]
+            for s in extract_statements(p.after, source_offset=p.enclosing.start,
+                                        note_id=p.proposal_id).statements:
+                if not any(sp.start < end and sp.end > start
+                           for start, end in later for sp in s.source_spans):
+                    out.append(s)
+        self.statements = out
+        self.version += len(proposals)
+
     def in_region(self, start: int, end: int) -> list:
         return [s for s in self.statements
                 if any(sp.start < end and sp.end > start for sp in s.source_spans)]
@@ -256,8 +301,7 @@ class ValidationContext:
         if self._statement_set is None:
             self._statement_set = StatementSet(self.source)
         pending, self._pending_accepted = self._pending_accepted, []
-        for p in pending:
-            self._statement_set.apply(p)
+        self._statement_set.apply_many(pending)
         if pending:
             self._statement_index = None
         return self._statement_set

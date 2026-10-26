@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from chartcleaner.review_state import review_findings, support_text
 
 _SEVERITY = {"blocked": 0, "review": 1, "info": 2}
+MAX_BEFORE_CHARS = 2000  # source context kept per validation occurrence
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,10 @@ def build_finding_rows(result, audit, *, source: str, output: str) -> list[Findi
     labels = {stage.id: stage.label for stage in result.stages}
     for issue in validation.issues:
         spans = tuple(span for span in issue.source_spans if span.end > span.start)
-        before = source[spans[0].start:spans[0].end] if spans else ""
+        # Capped: a coarse span can cover most of a long chart, and copying it
+        # once per issue made building the Review tab quadratic.
+        before = (source[spans[0].start:min(spans[0].end, spans[0].start + MAX_BEFORE_CHARS)]
+                  if spans else "")
         items.append(dict(kind=issue.code,
                           severity="blocked" if issue.blocking else "review",
                           title=issue.message,

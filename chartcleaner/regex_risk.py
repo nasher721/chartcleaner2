@@ -18,6 +18,8 @@ real runs (``details["slow_rules"]``, see :mod:`chartcleaner.stages`).
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 try:  # Python 3.11+: the parser moved to a private module
     from re import _constants as _c  # type: ignore[attr-defined]
     from re import _parser as _p  # type: ignore[attr-defined]
@@ -187,10 +189,17 @@ _MESSAGES = {
 
 def risks(pattern: str, flags: int = 0) -> list[str]:
     """Human-readable backtracking risks in ``pattern`` ([] = none found)."""
+    return list(_risks(pattern, flags))
+
+
+@lru_cache(maxsize=4096)
+def _risks(pattern: str, flags: int) -> tuple[str, ...]:
+    # Memoized: the config validator re-analyzes every rule on each page load
+    # and save, and parsing hundreds of patterns took ~0.5 s on the UI loop.
     try:
         parsed = _p.parse(pattern, flags)
     except Exception:
-        return []  # invalid regexes are reported by the validator
+        return ()  # invalid regexes are reported by the validator
     found: list[str] = []
     _walk(list(parsed), found)
     if _wildcards(list(parsed)) >= 3 and not _anchored(list(parsed)):
@@ -199,7 +208,7 @@ def risks(pattern: str, flags: int = 0) -> list[str]:
     for kind in found:
         if kind not in seen:
             seen.append(kind)
-    return [_MESSAGES[k] for k in seen]
+    return tuple(_MESSAGES[k] for k in seen)
 
 
 def is_risky(pattern: str, flags: int = 0) -> bool:

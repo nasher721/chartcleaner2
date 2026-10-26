@@ -13,14 +13,17 @@ enclosing anchor; one that inserts without replacing anything is an
 Only accepted proposals advance the text. Regex stages propose every match on
 the same input and resolve them as one batch (:meth:`EditLedger.resolve_many`)
 so the table is rebuilt once per rule, not once per match. Opaque stages
-(compactors, custom scripts) are reconciled after the fact into one coarse
-proposal (:meth:`EditLedger.reconcile`). The ledger lives in memory for the run;
+(compactors, custom scripts) are reconciled after the fact into coarse
+proposals: one per changed line region (:meth:`EditLedger.reconcile_hunks`),
+so an opaque stage that touches the first and the last line of a long chart
+does not make every later edit map to the whole chart. The ledger lives in memory for the run;
 :meth:`EditLedger.summary` is the text-free part that may be persisted.
 """
 
 from __future__ import annotations
 
 import bisect
+import difflib
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator, NamedTuple, Sequence
 
@@ -28,6 +31,11 @@ __all__ = ["DECISIONS", "MAPPINGS", "EditLedger", "EditProposal", "SourceSpan", 
 
 DECISIONS = ("accept", "retain_original", "withhold_release")
 MAPPINGS = ("exact", "coarse", "insertion")
+# Line regions an opaque stage's output is split into, at most. Past it nearby
+# regions are merged (still correct, just coarser); past MAX_DIFF_LINES the
+# line diff is skipped and the whole differing window is one proposal.
+MAX_HUNKS = 400
+MAX_DIFF_LINES = 50_000
 
 
 class SourceSpan(NamedTuple):
@@ -285,6 +293,52 @@ class EditLedger:
             self.resolve(proposal, decision)
         return proposal
 
+    def reconcile_hunks(self, stage_id: str, after: str, *,
+                        rule_key: str | None = None) -> list[EditProposal]:
+        """Fold a stage's whole-text result into one coarse proposal per changed region.
+
+        Like :meth:`reconcile`, but the differing window is line-diffed and each
+        changed run of lines (trimmed to its differing characters) becomes its
+        own pending proposal against the current text. Unchanged lines between
+        regions keep their exact mapping, so later edits — and the validator's
+        before/after statement comparison — stay local instead of spanning
+        everything between the stage's first and last change. Resolve the
+        returned proposals together with :meth:`resolve_many`.
+        """
+        current = self.current
+        if after == current:
+            return []
+        limit = min(len(current), len(after))
+        a = 0
+        while a < limit and current[a] == after[a]:
+            a += 1
+        b = 0
+        while b < limit - a and current[-1 - b] == after[-1 - b]:
+            b += 1
+        # Widen the window to whole lines so the diff compares complete lines.
+        ws = current.rfind("\n", 0, a) + 1
+        we = len(current) - b
+        nl = current.find("\n", we)
+        we = len(current) if nl == -1 else nl + 1
+        aws, awe = ws, len(after) - (len(current) - we)
+        hunks = _line_hunks(current[ws:we], after[aws:awe])
+        if hunks is None:
+            return [self.propose(stage_id, rule_key, a, len(current) - b,
+                                 after[a:len(after) - b], mapping="coarse")]
+        proposals = []
+        for cs, ce, as_, ae in hunks:
+            cs, ce, as_, ae = cs + ws, ce + ws, as_ + aws, ae + aws
+            # trim the region to the characters that actually differ
+            while cs < ce and as_ < ae and current[cs] == after[as_]:
+                cs, as_ = cs + 1, as_ + 1
+            while ce > cs and ae > as_ and current[ce - 1] == after[ae - 1]:
+                ce, ae = ce - 1, ae - 1
+            if cs == ce and as_ == ae:
+                continue
+            proposals.append(self.propose(stage_id, rule_key, cs, ce, after[as_:ae],
+                                          mapping="coarse"))
+        return proposals
+
     # -- reporting ------------------------------------------------------------
 
     def summary(self) -> dict:
@@ -299,3 +353,83 @@ class EditLedger:
         out["accepted"] = out.pop("accept", 0)
         out["by_stage"] = by_stage
         return out
+
+
+def _line_hunks(old: str, new: str) -> list[tuple[int, int, int, int]] | None:
+    """Changed line regions ``(old_start, old_end, new_start, new_end)`` as char offsets.
+
+    ``None`` when the texts are too long to line-diff cheaply. Regions are in
+    order and never overlap; at most :data:`MAX_HUNKS` (nearby regions merge).
+    Any region list is a valid edit script — alignment quality only decides
+    how local the provenance stays — so a linear greedy diff is used.
+    """
+    old_lines = old.splitlines(keepends=True)
+    new_lines = new.splitlines(keepends=True)
+    if len(old_lines) > MAX_DIFF_LINES or len(new_lines) > MAX_DIFF_LINES:
+        return None
+    old_at = [0]
+    for line in old_lines:
+        old_at.append(old_at[-1] + len(line))
+    new_at = [0]
+    for line in new_lines:
+        new_at.append(new_at[-1] + len(line))
+    regions = _greedy_regions(old_lines, new_lines)
+    gap = 1
+    while len(regions) > MAX_HUNKS:
+        merged = [regions[0]]
+        for r in regions[1:]:
+            if r[0] - merged[-1][1] <= gap:
+                merged[-1][1], merged[-1][3] = r[1], r[3]
+            else:
+                merged.append(r)
+        regions, gap = merged, gap * 2
+    return [(old_at[i1], old_at[i2], new_at[j1], new_at[j2]) for i1, i2, j1, j2 in regions]
+
+
+RESYNC_WINDOW = 64        # lines searched ahead for the next matching pair
+SMALL_DIFF_CELLS = 250_000  # len(a) * len(b) below which difflib is cheap
+
+
+def _greedy_regions(a: list[str], b: list[str]) -> list[list[int]]:
+    """``[i1, i2, j1, j2]`` for each changed run of lines, in O(lines x window).
+
+    Walks both line lists; on a mismatch it looks for the nearest point where
+    two consecutive lines agree again (a lone blank line is not a resync). When
+    nothing resyncs inside the window, the rest is handed to difflib if it is
+    small, else it becomes one region. ``difflib.SequenceMatcher`` alone is
+    quadratic on charts that repeat lines (copied-forward notes).
+    """
+    regions: list[list[int]] = []
+    i = j = 0
+    n, m = len(a), len(b)
+
+    def agree(x: int, y: int) -> bool:
+        if x >= n or y >= m or a[x] != b[y]:
+            return False
+        return x + 1 >= n or y + 1 >= m or a[x + 1] == b[y + 1]
+
+    while i < n and j < m:
+        if a[i] == b[j]:
+            i, j = i + 1, j + 1
+            continue
+        found = None
+        for d in range(1, RESYNC_WINDOW + 1):
+            for da in range(d + 1):
+                if agree(i + da, j + d - da):
+                    found = (i + da, j + d - da)
+                    break
+            if found:
+                break
+        if found is None:
+            if (n - i) * (m - j) <= SMALL_DIFF_CELLS:
+                matcher = difflib.SequenceMatcher(None, a[i:], b[j:], autojunk=False)
+                regions.extend([i + i1, i + i2, j + j1, j + j2]
+                               for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal")
+            else:
+                regions.append([i, n, j, m])
+            return regions
+        regions.append([i, found[0], j, found[1]])
+        i, j = found
+    if i < n or j < m:
+        regions.append([i, n, j, m])
+    return regions
