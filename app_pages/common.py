@@ -837,9 +837,12 @@ def shell(title: str, active: str, *, measure: bool = False,
     # Primary = the page title (Doto). Secondary = the supporting line.
     head, _, sub = title.partition(" — ")
     page_cls = "cc-page cc-page--measure" if measure else "cc-page"
+    if slug == "clean":
+        page_cls += " cc-clean-screen"
     with ui.column().classes(page_cls):
         with ui.column().classes("cc-pagehead gap-0"):
-            ui.label(f"{num} / {sec_label}" if num else sec_label).classes("cc-eyebrow")
+            if slug != "clean":
+                ui.label(f"{num} / {sec_label}" if num else sec_label).classes("cc-eyebrow")
             with ui.element("h1").classes("cc-page-title"):
                 ui.label(head)
             if sub:

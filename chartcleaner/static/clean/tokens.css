@@ -1,0 +1,21 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, the familiar paired editors remain for chart comparison */
+:root, .body--dark {
+  --clean-font: var(--nd-font);
+  --clean-paper: var(--nd-surface);
+  --clean-ink: var(--nd-text-primary);
+  --clean-muted: var(--nd-text-secondary);
+  --clean-rule: var(--nd-border-visible);
+  --clean-edge: #767676;
+  --clean-clear: transparent;
+  --clean-radius: 8px;
+  --clean-title: 30px;
+  --clean-body: 16px;
+  --clean-label: 14px;
+  --clean-xs: 4px;
+  --clean-sm: 8px;
+  --clean-md: 16px;
+  --clean-lg: 24px;
+  --clean-xl: 32px;
+  --clean-width: 1440px;
+}

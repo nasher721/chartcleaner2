@@ -1,0 +1,30 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, retained the established app shell */
+html:has(.cc-clean-screen), body:has(.cc-clean-screen) { overflow-x: clip; }
+/* Quasar puts no-outline in an important layer; match its cascade explicitly. */
+@layer overrides {
+body:has(.cc-clean-screen) :focus-visible {
+  outline: 2px solid var(--nd-text-display) !important; outline-offset: 2px;
+  animation: none; transition: none;
+}
+}
+body:has(.cc-clean-screen) .q-field:focus-within .q-field__control {
+  outline: 2px solid var(--nd-text-display) !important; outline-offset: 2px;
+}
+body:has(.cc-clean-screen) .cc-skip:not(:focus) {
+  left: 0; top: 0; width: 1px; height: 1px; clip-path: inset(50%);
+  padding: 0; overflow: clip;
+}
+body:has(.cc-clean-screen) :is(h1,h2,h3,.cc-section) {
+  overflow-wrap: break-word; min-width: 0; text-wrap: balance;
+}
+body:has(.cc-clean-screen) :is(.cc-arrive,.cc-reveal,.cc-pagehead,.cc-stagger > *) {
+  animation: none; opacity: 1; transform: none;
+}
+body:has(.cc-clean-screen) .q-btn[disabled] { opacity: .55; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  body:has(.cc-clean-screen) *, body:has(.cc-clean-screen) *::before,
+  body:has(.cc-clean-screen) *::after {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  }
+}

@@ -117,6 +117,7 @@ def _custom_rules_fingerprint():
 
 
 async def clean_page():
+    ui.add_head_html('<link rel="stylesheet" href="/static/clean/screen.css">')
     state = {"running": False, "edited": 0.0, "speculated": 0.0}
     edit_lock = asyncio.Lock()
     # stack: undo entries (newest last) — {"entry": rule journal entry or None,
@@ -455,45 +456,23 @@ async def clean_page():
             mode = CLEAN_STATE.get("mode") or "clean"
             single = mode in ("abbreviations", "expand")
             previews = [
-                ("Output", "Copy-ready cleaned text — Epic-safe, Markdown or an AI prompt.",
-                 "var(--nd-success)"),
-                ("Review", "Every change, clickable — see the exact rule behind each removal.",
-                 "var(--nd-accent)"),
+                ("Output", "Copy-ready cleaned text in Epic-safe, Markdown or an AI prompt."),
+                ("Review", "Every change is clickable. See the exact rule behind each removal."),
             ]
             if not single:
-                previews.append(("Insights",
-                    "Trends, timeline and safety nets pulled from the note.",
-                    "var(--nd-interactive)"))
+                previews.append(("Insights", "Trends, timeline and safety nets pulled from the note."))
             with results_col:
-                with ui.column().classes("w-full gap-4 py-12"):
-                    ui.label("Your cleaned chart appears here.").classes(
-                        "cc-page-sub text-center w-full")
-                    with ui.element("div").classes(
-                            f"grid gap-px cc-preview-grid grid-cols-{len(previews)}"):
-                        for name, desc, color in previews:
-                            with ui.column().classes("cc-preview-cell gap-3"):
-                                with ui.row().classes("w-full items-center gap-2"):
-                                    ui.element("span").classes("cc-dot").style(f"color:{color}")
-                                    ui.label(name.upper()).classes("cc-mono text-xs opacity-80")
-                                ui.label(desc).classes("text-xs cc-muted")
-                                if name == "Output":
-                                    with ui.row().classes("cc-minibar"):
-                                        for i in range(12):
-                                            ui.element("span").classes(
-                                                "cc-minibar__cell on" if i < 10
-                                                else "cc-minibar__cell off")
-                                elif name == "Review":
-                                    ui.html('<span class="cc-mono text-xs">Dr. Smith '
-                                            '<s style="color:var(--nd-accent)">MRN 1234</s> '
-                                            'discharged</span>')
-                                else:
-                                    with ui.row().classes("cc-spark"):
-                                        for h, op in zip([40, 64, 30, 80, 52, 70, 46],
-                                                         opacity_ramp(7)):
-                                            ui.element("span").classes("cc-spark__bar") \
-                                                .style(f"height:{h}px;background:{op}")
-                    ui.label(f"Paste a chart on the left and press Clean ({MOD}+Enter).") \
-                        .classes("cc-segbar-note text-center")
+                with ui.column().classes("cc-clean-empty").mark("clean-empty"):
+                    ui.label("Your cleaned chart appears here.").classes("cc-clean-empty-title")
+                    ui.label(f"Paste a chart in Input and press Clean ({MOD}+Enter).") \
+                        .classes("cc-muted")
+                    with ui.element("dl").classes("cc-clean-preview"):
+                        for name, desc in previews:
+                            with ui.element("div"):
+                                with ui.element("dt"):
+                                    ui.label(name)
+                                with ui.element("dd"):
+                                    ui.label(desc)
             return
         result_mode = CLEAN_STATE.get("result_mode")
         single_pass = result_mode in ("abbreviations", "expand")
@@ -3447,10 +3426,10 @@ async def clean_page():
         with ui.card().classes("w-full gap-2 cc-tint cc-tint--accent cc-reveal").mark("onboarding") as onboarding:
             ui.label("New here? Four steps").classes("cc-section")
             with ui.row().classes("w-full gap-4 flex-wrap text-sm cc-mono"):
-                ui.label("01 · Paste or drop a chart on the left")
-                ui.label(f"02 · Clean ({MOD}+Enter)")
-                ui.label("03 · Review — click any struck-out text to see the rule")
-                ui.label("04 · Copy as… Epic-safe, Markdown or an AI prompt")
+                ui.label("Paste or drop a chart in Input")
+                ui.label(f"Clean ({MOD}+Enter)")
+                ui.label("Review: click any struck-out text to see the rule")
+                ui.label("Copy as… Epic-safe, Markdown or an AI prompt")
             with ui.row().classes("gap-2"):
                 ui.button("Try it on the sample chart", icon="science", on_click=try_sample) \
                     .props("unelevated no-caps")
@@ -3465,12 +3444,12 @@ async def clean_page():
                     ui.label("→").classes("cc-task-flow__arrow").props("aria-hidden=true")
                 ui.label(f"{step} {name}").classes("cc-task-flow__step").props(f"data-step={step}")
 
-        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+        with ui.row().classes("w-full items-center gap-3 flex-wrap cc-clean-settings"):
             mode_sel = ui.toggle({"clean": "Full clean", "abbreviations": "Abbreviations only",
                                   "expand": "Expand abbreviations"},
                                  value=CLEAN_STATE.get("mode", "clean"),
                                  on_change=on_mode_change)
-            mode_sel.mark("clean-mode")
+            mode_sel.mark("clean-mode").classes("cc-clean-modes")
             presets = store.list_presets()
             preset_sel = ui.select(
                 options={**{p: p for p in presets}, "": "(config.json — current rules)"},
@@ -3484,8 +3463,10 @@ async def clean_page():
                 label="Destination",
                 on_change=on_destination_change,
             ).props("dense outlined").classes("w-60").mark("clean-destination")
-        mode_note = ui.label("").classes("cc-muted")
+        mode_note = ui.label("").classes("cc-muted cc-clean-mode-note")
 
+        selection_mode = common.PREFS.get("selection_mode")
+        selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
         workspace_switch = ui.toggle(
             {"input": "Input", "result": "Result"}, value="input",
             on_change=lambda e: set_mobile_view(layout, e.value)) \
@@ -3497,7 +3478,7 @@ async def clean_page():
             # ---- left: the chart ----
             with workflow_section("Input") as input_section:
                 input_section.classes("min-w-0 cc-input-pane").mark("input-pane")
-                with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                with ui.row().classes("w-full items-center gap-2 flex-wrap cc-clean-toolbar"):
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
                     clean_btn.mark("run-clean")
                     clean_btn.props("unelevated color=primary no-caps").tooltip(f"{MOD}+Enter")
@@ -3568,10 +3549,45 @@ async def clean_page():
                 tray = ui.row().classes("w-full items-center gap-1 flex-wrap rounded-lg px-2 py-1 "
                                         "cc-panel cc-arrive").mark("collect-tray")
                 tray.set_visibility(False)
+                # State that changes while the page is in use (busy, selection
+                # mode) lives on this wrapper, not the textarea: any prop or class
+                # change re-sends an element's full props, and the textarea's
+                # include the whole chart (hundreds of KB per toggle).
+                input_shell = ui.element("div").classes("w-full cc-input-shell").mark("input-shell")
+                with input_shell:
+                    if HAS_EX4:
+                        # ex4nicegui gives the textarea a reactive value signal; the plain
+                        # NiceGUI element underneath keeps every existing code path intact.
+                        _rx_input = rxui.textarea(
+                            "Chart text",
+                            value=CLEAN_STATE["input"], on_change=on_input_change)
+                        input_area = _rx_input.element
+                    else:
+                        input_area = ui.textarea("Chart text",
+                                                 value=CLEAN_STATE["input"], on_change=on_input_change)
+                    input_area.props("outlined input-style='min-height: 360px' aria-label='Chart text (paste an Epic export, drop a file, or load the sample)'") \
+                        .classes("w-full cc-mono cc-learn-src")
+                    input_area.mark("highlight-source")
+                    if selection_mode != "ask":
+                        input_shell.classes(f"cc-mode-{selection_mode}")
+                    for event_name in ("mouseup", "keyup", "touchend"):
+                        input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
+                    with input_area:
+                        # Right-click on a selection: the same actions as the selection bar.
+                        with ui.context_menu().mark("chart-context-menu"):
+                            for label, icon, action, mark in (
+                                    ("Remove", "backspace", sel_remove, "remove"),
+                                    ("Remove whole line(s)", "horizontal_rule", sel_line, "line"),
+                                    ("Replace…", "find_replace", sel_replace, "replace"),
+                                    ("Abbreviate…", "short_text", sel_abbreviate, "abbreviate"),
+                                    ("Build a rule…", "tune", sel_build, "build"),
+                                    ("Never remove", "shield", sel_keep, "keep"),
+                                    ("Collect", "add_to_photos", sel_collect, "collect")):
+                                ui.menu_item(label, on_click=lambda a=action: selection_shortcut(a)) \
+                                    .props(f"icon={icon}").mark(f"ctx-{mark}")
+
                 with ui.expansion("Advanced input tools", icon="tune").classes("w-full") \
                         .mark("advanced-input-tools") as advanced_tools:
-                    selection_mode = common.PREFS.get("selection_mode")
-                    selection_mode = selection_mode if selection_mode in SELECTION_MODE_HELP else "ask"
                     selection_toggle = ui.toggle(
                         {"ask": "Ask", "remove": "Remove text", "abbreviate": "Abbreviate"},
                         value=selection_mode, on_change=lambda e: set_selection_mode(e.value)) \
@@ -3599,46 +3615,10 @@ async def clean_page():
                     with undo_btn:
                         undo_tip = ui.tooltip("Nothing to undo yet")
 
-                # State that changes while the page is in use (busy, selection
-                # mode) lives on this wrapper, not the textarea: any prop or class
-                # change re-sends an element's full props, and the textarea's
-                # include the whole chart (hundreds of KB per toggle).
-                input_shell = ui.element("div").classes("w-full cc-input-shell").mark("input-shell")
-                with input_shell:
-                    if HAS_EX4:
-                        # ex4nicegui gives the textarea a reactive value signal; the plain
-                        # NiceGUI element underneath keeps every existing code path intact.
-                        _rx_input = rxui.textarea(
-                            "Chart text (paste an Epic export, drop a file, or load the sample)",
-                            value=CLEAN_STATE["input"], on_change=on_input_change)
-                        input_area = _rx_input.element
-                    else:
-                        input_area = ui.textarea("Chart text (paste an Epic export, drop a file, or load the sample)",
-                                                 value=CLEAN_STATE["input"], on_change=on_input_change)
-                    input_area.props("outlined input-style='min-height: 420px'") \
-                        .classes("w-full cc-mono cc-learn-src")
-                    input_area.mark("highlight-source")
-                    if selection_mode != "ask":
-                        input_shell.classes(f"cc-mode-{selection_mode}")
-                    for event_name in ("mouseup", "keyup", "touchend"):
-                        input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
-                    with input_area:
-                        # Right-click on a selection: the same actions as the selection bar.
-                        with ui.context_menu().mark("chart-context-menu"):
-                            for label, icon, action, mark in (
-                                    ("Remove", "backspace", sel_remove, "remove"),
-                                    ("Remove whole line(s)", "horizontal_rule", sel_line, "line"),
-                                    ("Replace…", "find_replace", sel_replace, "replace"),
-                                    ("Abbreviate…", "short_text", sel_abbreviate, "abbreviate"),
-                                    ("Build a rule…", "tune", sel_build, "build"),
-                                    ("Never remove", "shield", sel_keep, "keep"),
-                                    ("Collect", "add_to_photos", sel_collect, "collect")):
-                                ui.menu_item(label, on_click=lambda a=action: selection_shortcut(a)) \
-                                    .props(f"icon={icon}").mark(f"ctx-{mark}")
 
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     ui.label().bind_text_from(input_area, "value", lambda t:
-                        f"{len(t or ''):,} chars · {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                        f"{len(t or ''):,} characters / {len((t or '').split()):,} words").classes("text-xs opacity-60")
                     tag_input = ui.input("Bed tag (optional)", value=CLEAN_STATE.get("tag") or "",
                                          autocomplete=recent_charts.tags(),
                                          on_change=lambda e: CLEAN_STATE.update(
@@ -3655,6 +3635,8 @@ async def clean_page():
                     ui.button("Batch", icon="layers", on_click=lambda: ui.navigate.to("/batch")) \
                         .props("flat dense no-caps").tooltip("Many files? Use the Batch page")
 
+
+
             split_handle = ui.element("div") \
                 .classes("cc-split-handle").mark("clean-split-handle")
             bind_split_handle(layout, split_handle)
@@ -3662,7 +3644,7 @@ async def clean_page():
             # ---- right: the result ----
             with workflow_section("Review & export") as result_section:
                 result_section.classes("min-w-0 cc-result-pane").mark("result-pane")
-                results_col = ui.column().classes("w-full gap-2 cc-stagger").mark("results")
+                results_col = ui.column().classes("w-full gap-2").mark("results")
 
         preset_sel.on_value_change(on_preset_change)
         sync_mode_controls()
