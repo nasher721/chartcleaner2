@@ -142,7 +142,7 @@ async def test_cancellation_is_not_retried():
             worker.cancel(request.job_id)
         try:
             await task
-        except Exception:
+        except BaseException:
             pass
         await worker.close()
 
@@ -339,11 +339,11 @@ async def test_close_terminates_unresponsive_active_process_without_replacement(
         if close_task is not None:
             try:
                 await asyncio.wait_for(close_task, 10)
-            except Exception:
+            except BaseException:
                 pass
         if task is not None:
             try:
                 await task
-            except Exception:
+            except BaseException:
                 pass
         await worker.close()
