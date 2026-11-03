@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import multiprocessing
 import os
 import re
@@ -163,6 +164,31 @@ app.on_startup(_retention_startup)
 app.on_shutdown(shutdown_clean_worker)
 
 
+def _clean_worker_self_test() -> int:
+    async def check():
+        from chartcleaner.clean_worker import ProcessCleanWorker, WorkRequest
+        from chartcleaner.engine import load_default_config
+
+        worker = ProcessCleanWorker()
+        try:
+            cfg = load_default_config()
+            request = WorkRequest("packaged-self-test", "compute", {
+                "text": "Patient Name: John Doe\nPlan: recheck K 4.1 tomorrow\n",
+                "mode": "clean", "cfg": cfg,
+                "custom_dir": str(common.CUSTOM_DIR), "lazy": True,
+            })
+            got = await worker.run(request)
+            assert "John Doe" not in got.result.text
+            assert "K 4.1" in got.result.text
+            return len(got.result.stages)
+        finally:
+            await worker.close()
+
+    stages = asyncio.run(check())
+    print(json.dumps({"ok": True, "stages": stages}))
+    return 0
+
+
 def main():
     if os.environ.get("NICEGUI_USER_SIMULATION"):
         # Test harness (nicegui.testing): pages are registered at import; ui.run
@@ -175,7 +201,10 @@ def main():
     ap.add_argument("--port", type=int, default=0, help="Port (default: first free port from 8765).")
     ap.add_argument("--no-browser", action="store_true", help="Do not auto-open the browser.")
     ap.add_argument("--reload", action="store_true", help="Dev mode: auto-reload on code changes.")
+    ap.add_argument("--clean-worker-self-test", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.clean_worker_self_test:
+        raise SystemExit(_clean_worker_self_test())
 
     requested = args.port or 8765
     port = requested

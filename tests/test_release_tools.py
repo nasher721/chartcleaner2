@@ -134,3 +134,10 @@ def test_sbom_is_deterministic_and_contains_application_metadata(monkeypatch):
     assert first['bomFormat'] == 'CycloneDX'
     assert first['metadata']['component']['name'] == 'Chart Cleaner'
     assert all(component['purl'].startswith('pkg:pypi/') for component in first['components'])
+
+
+def test_release_report_requires_frozen_clean_worker_proof():
+    from pathlib import Path
+    source = Path("scripts/release_smoke.py").read_text(encoding="utf-8")
+    assert "--clean-worker-self-test" in source
+    assert "'frozen_clean_worker': 'PASS'" in source

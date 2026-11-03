@@ -43,6 +43,14 @@ def wait_ui(version: str, timeout: int = 120):
     raise RuntimeError('Installed UI did not report expected version')
 
 
+def check_clean_worker(install: Path, env: dict):
+    completed = subprocess.run(
+        [str(updater._executable(install)), '--clean-worker-self-test'],
+        env=env, check=True, timeout=180, capture_output=True, text=True)
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert result['ok'] is True and result['stages'] > 0
+
+
 def stop_installed(install: Path):
     executable = str(updater._executable(install))
     if sys.platform == 'darwin':
@@ -94,6 +102,7 @@ def smoke(output: Path, previous: Path, previous_version: str, report: Path, min
                 # Real signed installer, compiled pins and embedded signed payload.
                 subprocess.run([str(installer)], env=env, check=True, timeout=180)
                 wait_ui(VERSION)
+                check_clean_worker(install, env)
                 stop_installed(install)
                 shutil.rmtree(install)
                 previous_root = home / 'previous'
@@ -143,6 +152,7 @@ def smoke(output: Path, previous: Path, previous_version: str, report: Path, min
                     result = updater.update_install(exited.pid, install, staged, VERSION)
                     assert result.state == 'updated'
                     wait_ui(VERSION)
+                    check_clean_worker(install, env)
                     stop_installed(install)
                     assert all((data / name).read_bytes() == value for name, value in sentinels.items())
                     shutil.rmtree(install)
@@ -162,6 +172,7 @@ def smoke(output: Path, previous: Path, previous_version: str, report: Path, min
                 report.write_text(json.dumps({'platform': target, 'version': VERSION,
                     'previous_version': previous_version, 'minimum_supported_version': minimum,
                     'previous_provenance': provenance, 'frozen_installer_ui': 'PASS',
+                    'frozen_clean_worker': 'PASS',
                     'signed_upgrade_sentinels': 'PASS', 'broken_startup_rollback': 'PASS',
                     'production_network_upgrade': 'NOT_RUN', 'clean_machine_presentation': 'NOT_RUN'}, indent=2))
             finally:
