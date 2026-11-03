@@ -41,13 +41,22 @@ def _textarea(user: User):
     return next(iter(user.find(marker="highlight-source").elements))
 
 
-async def test_editor_has_no_unrevisioned_model_value_listener(user: User, page):
+async def test_clean_controls_expose_browser_dom_markers(user: User, page):
+    await _open(user, "/editor-dom-markers")
+    elements = [descendant for root in user.find().elements for descendant in root.descendants()]
+    for marker in ("highlight-source", "run-clean", "clean-progress", "chart-counts"):
+        element = next(element for element in elements if marker in element._markers)
+        assert element.props.get("data-cc-marker") == marker
+
+
+async def test_editor_has_no_unrevisioned_value_listener(user: User, page):
     await _open(user, "/editor-listeners")
     textarea = _textarea(user)
     listener_types = {listener.type for listener in textarea._event_listeners.values()}
-    assert not {"update:modelValue", "update:model-value"} & listener_types
+    assert not {"update:value", "update:modelValue", "update:model-value"} & listener_types
     assert {"input", "mouseup", "keyup", "touchend"} <= listener_types
 
+    user.find(marker="highlight-source").trigger("update:value", "unrevisioned browser echo")
     user.find(marker="highlight-source").trigger("update:modelValue", "unrevisioned browser echo")
     user.find(marker="highlight-source").trigger("update:model-value", "unrevisioned browser echo")
     assert CLEAN_STATE["input"] == "Plan: original\n"

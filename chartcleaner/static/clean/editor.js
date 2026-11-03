@@ -1,7 +1,7 @@
 (() => {
   const state = {revision: 0, acknowledged: 0, lastValue: null,
                  timer: null, raf: null, latestEmit: null};
-  const selector = '[mark="highlight-source"] textarea';
+  const selector = '[data-cc-marker="highlight-source"]';
   const textarea = () => document.querySelector(selector);
 
   function syncValue(ta) {
@@ -21,7 +21,7 @@
     if (state.raf) return;
     state.raf = requestAnimationFrame(() => {
       state.raf = null;
-      const label = document.querySelector('[mark="chart-counts"]');
+      const label = document.querySelector('[data-cc-marker="chart-counts"]');
       if (!label || !ta) return;
       const value = counts(ta.value);
       label.textContent = `${value.characters.toLocaleString()} characters / ` +

@@ -17,7 +17,7 @@ function browser() {
   const window = {};
   const document = {
     querySelector(selector) {
-      return selector === '[mark="highlight-source"] textarea' ? textarea : counts;
+      return selector === '[data-cc-marker="highlight-source"]' ? textarea : counts;
     },
   };
   const context = {

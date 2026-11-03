@@ -3494,13 +3494,14 @@ async def clean_page():
                 input_section.classes("min-w-0 cc-input-pane").mark("input-pane")
                 with ui.row().classes("w-full items-center gap-2 flex-wrap cc-clean-toolbar"):
                     clean_btn = ui.button("Clean", icon="auto_fix_high", on_click=run_clean)
-                    clean_btn.mark("run-clean")
+                    clean_btn.mark("run-clean").props("data-cc-marker=run-clean")
                     clean_btn.props("unelevated color=primary no-caps").tooltip(f"{MOD}+Enter")
                     spinner = ui.row().classes("items-center gap-2 cc-arrive").mark("spinner")
                     with spinner:
                         ui.element("div").classes("cc-spinner")
                         ui.label("Cleaning").classes("cc-mono text-xs cc-muted cc-pulse")
-                        progress_label = ui.label("").classes("text-xs cc-muted").mark("clean-progress")
+                        progress_label = ui.label("").classes("text-xs cc-muted") \
+                            .mark("clean-progress").props("data-cc-marker=clean-progress")
                         progress_label.set_visibility(False)
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
@@ -3584,12 +3585,13 @@ async def clean_page():
                             "Chart text", value=CLEAN_STATE["input"], on_change=harness_change)
                     input_area.props("outlined input-style='min-height: 360px' aria-label='Chart text (paste an Epic export, drop a file, or load the sample)'") \
                         .classes("w-full cc-mono cc-learn-src")
-                    input_area.mark("highlight-source")
+                    input_area.mark("highlight-source").props("data-cc-marker=highlight-source")
                     # Browser edits arrive only through the revisioned input handler below.
-                    # NiceGUI has no per-element off(); remove just its model-value listener
-                    # so a Vue value echo cannot overwrite a newer snapshot or re-run Clean.
+                    # NiceGUI has no per-element off(); remove its value listener (Input uses
+                    # VALUE_PROP="value", hence update:value) so a Vue echo cannot overwrite
+                    # a newer snapshot, re-run Clean, or bypass the debounced transport.
                     for listener_id, listener in list(input_area._event_listeners.items()):
-                        if listener.type == "update:modelValue":
+                        if listener.type == f"update:{input_area.VALUE_PROP}":
                             del input_area._event_listeners[listener_id]
                     input_area.on(
                         "input", on_editor_sync,
@@ -3647,7 +3649,8 @@ async def clean_page():
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                     initial = CLEAN_STATE.get("input") or ""
                     ui.label(f"{len(initial):,} characters / {len(initial.split()):,} words") \
-                        .classes("text-xs opacity-60").mark("chart-counts")
+                        .classes("text-xs opacity-60").mark("chart-counts") \
+                        .props("data-cc-marker=chart-counts")
                     tag_input = ui.input("Bed tag (optional)", value=CLEAN_STATE.get("tag") or "",
                                          autocomplete=recent_charts.tags(),
                                          on_change=lambda e: CLEAN_STATE.update(
