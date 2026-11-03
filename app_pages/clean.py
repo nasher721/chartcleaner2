@@ -2114,7 +2114,11 @@ async def clean_page():
                 spec["job_id"] = None
             CLEAN_STATE.pop("manual_note_type", None)
         CLEAN_STATE.update(input=value)
-        input_area.value = value  # server-side value only; do not resend the textarea
+        # Mirror the accepted browser snapshot without NiceGUI's value setter:
+        # that setter enqueues an element update containing the entire chart.
+        input_area.___value = value
+        with input_area.props.suspend_updates():
+            input_area.props[input_area.VALUE_PROP] = input_area._value_to_model_value(value)
         state["edited"] = time.monotonic()
         input_area.client.run_javascript(
             f"window.ccCleanEditor.ack({data['revision']})")
@@ -2665,13 +2669,13 @@ async def clean_page():
             undo_btn.disable()
             undo_tip.set_text("Nothing to undo yet")
 
-    def undo_highlight_now() -> None:
+    def undo_highlight_now() -> bool:
         """Undo the newest edit: its saved rule change, and the chart text if unchanged since."""
         if not highlight["stack"] or state["running"]:
-            return
+            return False
         if highlight.get("saving"):
             ui.notify("Finish saving the latest edit before using Undo.", type="info")
-            return
+            return False
         item = highlight["stack"].pop()
         entry = item["entry"]
         try:
@@ -2682,7 +2686,7 @@ async def clean_page():
         except Exception as ex:
             highlight["stack"].append(item)
             ui.notify(str(ex), type="negative")
-            return
+            return False
         if input_area.value == item["after"]:
             input_area.set_value(item["before"])
             invalidate_output()
@@ -2692,20 +2696,31 @@ async def clean_page():
             highlight_status.set_text("Rule change undone. The chart text changed since, so it "
                                       "was left as it is.")
         sync_undo()
+        return True
 
-    async def undo_highlight() -> None:
+    async def undo_highlight() -> bool:
         await sync_editor()
-        undo_highlight_now()
+        return undo_highlight_now()
 
-    def on_harness_undo_highlight() -> None:
+    def on_harness_undo_highlight() -> bool:
         CLEAN_STATE["input"] = input_area.value or ""
-        undo_highlight_now()
+        return undo_highlight_now()
 
     undo_handler = (on_harness_undo_highlight
                     if os.environ.get("NICEGUI_USER_SIMULATION") else undo_highlight)
 
     def open_undo_history() -> None:
         """The edits Undo can step back through, newest first, plus the full journal link."""
+        async def undo_and_close() -> None:
+            if await undo_highlight():
+                dlg.close()
+
+        def on_harness_undo_and_close() -> None:
+            if on_harness_undo_highlight():
+                dlg.close()
+
+        history_undo_handler = (on_harness_undo_and_close
+                                if os.environ.get("NICEGUI_USER_SIMULATION") else undo_and_close)
         with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("undo-history"):
             ui.label("Undo history").classes("cc-section")
             stack = highlight["stack"]
@@ -2719,7 +2734,7 @@ async def clean_page():
                      "My text rules → Recent changes, where any one can be undone.") \
                 .classes("text-xs cc-muted")
             with ui.row():
-                ui.button("Undo newest", icon="undo", on_click=undo_handler).props("flat") \
+                ui.button("Undo newest", icon="undo", on_click=history_undo_handler).props("flat") \
                     .bind_enabled_from(undo_btn, "enabled")
                 ui.button("Recent rule changes", icon="history",
                           on_click=lambda: ui.navigate.to("/rules")).props("flat")
@@ -3570,6 +3585,12 @@ async def clean_page():
                     input_area.props("outlined input-style='min-height: 360px' aria-label='Chart text (paste an Epic export, drop a file, or load the sample)'") \
                         .classes("w-full cc-mono cc-learn-src")
                     input_area.mark("highlight-source")
+                    # Browser edits arrive only through the revisioned input handler below.
+                    # NiceGUI has no per-element off(); remove just its model-value listener
+                    # so a Vue value echo cannot overwrite a newer snapshot or re-run Clean.
+                    for listener_id, listener in list(input_area._event_listeners.items()):
+                        if listener.type == "update:modelValue":
+                            del input_area._event_listeners[listener_id]
                     input_area.on(
                         "input", on_editor_sync,
                         js_handler="(event) => window.ccCleanEditor.input(event, emit)")

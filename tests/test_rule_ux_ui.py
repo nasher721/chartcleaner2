@@ -272,3 +272,8 @@ async def test_undo_history_dialog_lists_edits(user: User, page):
     user.find(marker="undo-history-button").click()
     await user.should_see(marker="undo-history")
     await user.should_see("Added: Remove “one”")
+    dialog = next(e for e in user.find().elements if isinstance(e, ui.dialog) and e.value)
+    user.find("Undo newest").click()
+    assert not dialog.value
+    assert _chart(user).value == text
+    assert _learned(page) == []
