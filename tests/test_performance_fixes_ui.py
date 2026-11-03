@@ -119,6 +119,27 @@ async def test_delayed_edit_logging_never_overwrites_the_next_edit(user: User, p
     assert CLEAN_STATE["result_text"] == "Possible pneumonia. Recheck tomorrow.\n"
 
 
+async def test_edit_config_failure_preserves_previous_result(user: User, page, monkeypatch):
+    _write_cfg()
+    await _clean(user, "/perf-edit-config-failure", "Possible pneumonia.\n")
+    previous, previous_text = CLEAN_STATE["result"], CLEAN_STATE["result_text"]
+    failure = RuntimeError("synthetic config parse failure")
+    errors = []
+
+    def fail_load(*args):
+        raise failure
+
+    monkeypatch.setattr(clean_mod, "load_config", fail_load)
+    monkeypatch.setattr(clean_mod, "report_error", lambda *args: errors.append(args))
+    user.find(marker="edit-result").click()
+    next(iter(user.find(marker="result-output").elements)).set_value("Pneumonia.\n")
+    user.find(marker="edit-result").click()
+    await _until(lambda: bool(errors))
+    assert errors == [("Could not check edited output", failure)]
+    assert CLEAN_STATE["result"] is previous
+    assert CLEAN_STATE["result_text"] == previous_text
+
+
 async def test_optional_computation_is_lazy_and_off_loop(user: User, page, monkeypatch):
     monkeypatch.setattr(clean_mod, "LAZY_TABS_MIN_CHARS", 0)
     calls = []

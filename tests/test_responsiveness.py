@@ -206,14 +206,15 @@ async def test_interrupted_clean_preserves_previous_result(user: User, page, mon
 async def test_clean_uses_worker_and_displays_stage_progress(user: User, page, monkeypatch):
     from chartcleaner import clean_worker
 
-    events = []
+    requests, progress_events = [], []
     started, release = asyncio.Event(), asyncio.Event()
     real = clean_worker.InlineCleanWorker.run
 
     async def observed(self, request, on_progress=None):
-        events.append(request)
+        requests.append(request)
 
         def progress(event):
+            progress_events.append(event)
             if on_progress is not None:
                 on_progress(event)
             started.set()
@@ -230,8 +231,13 @@ async def test_clean_uses_worker_and_displays_stage_progress(user: User, page, m
     user.find(marker="run-clean").click()
     await asyncio.wait_for(started.wait(), timeout=2)
     await user.should_see(marker="clean-progress")
-    assert [request.kind for request in events] == ["compute"]
-    assert events[0].payload["lazy"] is False
+    event = progress_events[-1]
+    label = next(iter(user.find(marker="clean-progress").elements))
+    assert label.text == (f"Stage {event.completed} of {event.total}: {event.stage_label} · "
+                          f"{int(event.elapsed)} seconds elapsed")
+    assert "%" not in label.text
+    assert [request.kind for request in requests] == ["compute"]
+    assert requests[0].payload["lazy"] is False
     release.set()
     for _ in range(300):
         if CLEAN_STATE.get("result") is not None:
@@ -244,21 +250,31 @@ async def test_failed_worker_preserves_previous_result_and_unlocks(user: User, p
     from chartcleaner import clean_worker
 
     await _clean(user, "/resp-worker-failure", "Plan: previous result\n")
-    previous = CLEAN_STATE["result"]
+    previous, previous_text = CLEAN_STATE["result"], CLEAN_STATE["result_text"]
+    requests, errors = [], []
+    failed = asyncio.Event()
+    failure = clean_worker.WorkerError("synthetic worker failure")
 
     async def fail(self, request, on_progress=None):
-        raise clean_worker.WorkerError("synthetic worker failure")
+        requests.append(request)
+        failed.set()
+        raise failure
 
     monkeypatch.setattr(clean_worker.InlineCleanWorker, "run", fail)
-    monkeypatch.setattr(clean_mod, "report_error", lambda *args: None)
+    monkeypatch.setattr(clean_mod, "report_error", lambda *args: errors.append(args))
     textarea = next(iter(user.find(marker="highlight-source").elements))
     textarea.set_value("Plan: replacement chart\n")
     user.find(marker="run-clean").click()
+    await asyncio.wait_for(failed.wait(), timeout=2)
     for _ in range(300):
-        if next(iter(user.find(marker="run-clean").elements)).enabled:
+        if errors and next(iter(user.find(marker="run-clean").elements)).enabled:
             break
         await asyncio.sleep(0.02)
+    assert [request.kind for request in requests] == ["compute"]
+    assert errors == [("Cleaning failed", failure)]
     assert CLEAN_STATE["result"] is previous
+    assert CLEAN_STATE["result_text"] == previous_text
+    assert next(iter(user.find(marker="run-clean").elements)).enabled
     assert "inert" not in next(iter(user.find(marker="input-shell").elements)).props
 
 
@@ -420,6 +436,84 @@ async def test_newer_text_cancels_a_stale_speculative_run(user: User, page, monk
     assert "K 4.1" in CLEAN_STATE["result_text"]
     assert first not in ran, "the stale speculative run was abandoned"
     assert ran == [second] and clean_mod.SPECULATION_STATS["hits"] == 1
+
+
+async def test_newer_text_cancels_queued_speculation_before_pipeline(user: User, page, monkeypatch):
+    from chartcleaner import clean_worker
+    from chartcleaner.engine import load_default_config
+
+    monkeypatch.setattr(clean_mod, "SPECULATE", True)
+    monkeypatch.setattr(clean_mod, "SPECULATE_PAUSE", 0.0)
+    monkeypatch.setattr(clean_mod, "SPECULATE_MIN_CHARS", 1)
+    monkeypatch.setitem(clean_mod.SPECULATION_STATS, "hits", 0)
+    monkeypatch.setattr(clean_mod, "SPECULATION", {"task": None, "inputs": None})
+    ran = []
+    real_run = Pipeline.run
+    monkeypatch.setattr(Pipeline, "run",
+                        lambda self, text, *a, **kw: (ran.append(text), real_run(self, text, *a, **kw))[1])
+    CLEAN_STATE.update(input="", mode="clean", result=None, result_text="", audit=None,
+                       summary=None, qa=[], tag="")
+    await _route(user, "/resp-spec-queued-cancel", cc_app.clean_page)
+    textarea = next(iter(user.find(marker="highlight-source").elements))
+    blocker, first = "Plan: unrelated active chart\n", "Plan: stale queued chart\n"
+    second = "Plan: current chart K 4.1\n"
+    active, release = asyncio.Event(), asyncio.Event()
+    first_queued, second_queued = asyncio.Event(), asyncio.Event()
+    real_io_bound = clean_worker.run.io_bound
+    real_execute = clean_worker.execute_work
+    real_worker = clean_worker.InlineCleanWorker.run
+
+    async def observed(self, request, on_progress=None):
+        text = request.payload.get("text")
+        if text == first:
+            first_queued.set()
+        elif text == second:
+            second_queued.set()
+        return await real_worker(self, request, on_progress)
+
+    async def gated_io_bound(callback, *args, **kwargs):
+        if (callback is real_execute and args
+                and isinstance(args[0], clean_worker.WorkRequest)
+                and args[0].payload.get("text") == blocker):
+            active.set()
+            await release.wait()
+        return await real_io_bound(callback, *args, **kwargs)
+
+    monkeypatch.setattr(clean_worker.InlineCleanWorker, "run", observed)
+    monkeypatch.setattr(clean_worker.run, "io_bound", gated_io_bound)
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": False}
+    cfg["audit"] = {"enabled": False}
+    blocker_request = clean_worker.WorkRequest("unrelated-blocker", "compute", {
+        "text": blocker, "mode": "clean", "cfg": cfg, "custom_dir": None, "lazy": True,
+    })
+    blocker_task = asyncio.create_task(clean_worker.get_clean_worker().run(blocker_request))
+    try:
+        await asyncio.wait_for(active.wait(), timeout=2)
+        textarea.set_value(first)
+        await asyncio.wait_for(first_queued.wait(), timeout=2)
+        textarea.set_value(second)
+        await asyncio.wait_for(second_queued.wait(), timeout=2)
+        release.set()
+        await asyncio.wait_for(blocker_task, timeout=10)
+        for _ in range(300):
+            if second in ran:
+                break
+            await asyncio.sleep(0.02)
+        user.find(marker="run-clean").click()
+        for _ in range(300):
+            if CLEAN_STATE.get("result") is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert "K 4.1" in CLEAN_STATE["result_text"]
+        assert first not in ran, "queued stale speculation never reached Pipeline.run"
+        assert ran == [blocker, second]
+        assert clean_mod.SPECULATION_STATS["hits"] == 1
+    finally:
+        release.set()
+        if not blocker_task.done():
+            blocker_task.cancel()
+        await asyncio.gather(blocker_task, return_exceptions=True)
 
 
 async def test_clean_joins_an_in_flight_speculative_run(user: User, page, monkeypatch):

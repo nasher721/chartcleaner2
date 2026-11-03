@@ -842,13 +842,13 @@ async def clean_page():
             baseline = CLEAN_STATE.get("verification_baseline") or result.fact_check
             CLEAN_STATE.update(fact_ack=False, release_ack=None)
 
-            cfg = await run.io_bound(load_config, common.CONFIG_PATH)
-            request = work_request("edit", {
-                "source": source, "value": value, "result": result,
-                "baseline": baseline, "cfg": cfg,
-                "lazy": len(source) >= LAZY_TABS_MIN_CHARS,
-            })
             try:
+                cfg = await run.io_bound(load_config, common.CONFIG_PATH)
+                request = work_request("edit", {
+                    "source": source, "value": value, "result": result,
+                    "baseline": baseline, "cfg": cfg,
+                    "lazy": len(source) >= LAZY_TABS_MIN_CHARS,
+                })
                 checked = await get_clean_worker().run(request)
             except Exception as exc:
                 with results_col.client:

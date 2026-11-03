@@ -347,3 +347,42 @@ async def test_close_terminates_unresponsive_active_process_without_replacement(
             except BaseException:
                 pass
         await worker.close()
+
+
+@pytest.mark.parametrize("worker_type", [InlineCleanWorker, ProcessCleanWorker])
+async def test_queued_cancellation_skips_only_the_stale_job(worker_type):
+    worker = worker_type()
+    active = _request(text="Plan: recheck K 4.1 tomorrow\n" * 20000)
+    active.payload["lazy"] = True
+    stale, current = _request(text="Plan: stale chart\n"), _request(text="Plan: current chart\n")
+    progress = []
+    active_task = asyncio.create_task(worker.run(active, progress.append))
+    stale_task = current_task = None
+    try:
+        for _ in range(300):
+            if progress:
+                break
+            await asyncio.sleep(0.02)
+        assert progress, "active work never reached a stage boundary"
+        stale_task = asyncio.create_task(worker.run(stale))
+        await asyncio.sleep(0)  # let the stale request register behind the active job
+        worker.cancel(stale.job_id)
+        worker.cancel("unknown-job")
+        current_task = asyncio.create_task(worker.run(current))
+
+        assert "K 4.1" in (await asyncio.wait_for(active_task, 30)).result.text
+        with pytest.raises(PipelineCancelled):
+            await asyncio.wait_for(stale_task, 10)
+        assert "current chart" in (await asyncio.wait_for(current_task, 30)).result.text
+        assert worker._pending == set()
+        assert worker._cancelled == set()
+        assert worker._active is None
+    finally:
+        for request in (active, stale, current):
+            worker.cancel(request.job_id)
+        tasks = [task for task in (active_task, stale_task, current_task) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await worker.close()

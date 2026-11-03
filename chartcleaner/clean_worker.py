@@ -85,11 +85,15 @@ class InlineCleanWorker:
         self._lock = asyncio.Lock()
         self._cancel = threading.Event()
         self._active: str | None = None
+        self._pending: set[str] = set()
+        self._cancelled: set[str] = set()
         self._closing = False
 
     def cancel(self, job_id: str) -> None:
-        if self._active == job_id:
-            self._cancel.set()
+        if job_id in self._pending:
+            self._cancelled.add(job_id)
+            if self._active == job_id:
+                self._cancel.set()
 
     async def run(self, request: WorkRequest,
                   on_progress: ProgressCallback | None = None) -> object:
@@ -101,15 +105,21 @@ class InlineCleanWorker:
             if on_progress is not None:
                 loop.call_soon_threadsafe(on_progress, event)
 
-        async with self._lock:
-            self._active = request.job_id
-            self._cancel.clear()
-            try:
+        self._pending.add(request.job_id)
+        try:
+            async with self._lock:
+                self._active = request.job_id
+                if request.job_id in self._cancelled:
+                    raise PipelineCancelled(request.job_id)
+                self._cancel.clear()
                 value = await run.io_bound(execute_work, request, progress, self._cancel)
                 if value is None and request.kind != "warm":
                     raise WorkerError("Cleaning worker was interrupted")
                 return value
-            finally:
+        finally:
+            self._pending.discard(request.job_id)
+            self._cancelled.discard(request.job_id)
+            if self._active == request.job_id:
                 self._active = None
 
     async def close(self) -> None:
@@ -152,11 +162,15 @@ class ProcessCleanWorker:
         self._process = None
         self._conn = None
         self._active: str | None = None
+        self._pending: set[str] = set()
+        self._cancelled: set[str] = set()
         self._closing = False
 
     def cancel(self, job_id: str) -> None:
-        if self._active == job_id:
-            self._cancel.set()
+        if job_id in self._pending:
+            self._cancelled.add(job_id)
+            if self._active == job_id:
+                self._cancel.set()
 
     async def _read(self):
         value = await run.io_bound(self._conn.recv)
@@ -215,10 +229,13 @@ class ProcessCleanWorker:
                   on_progress: ProgressCallback | None = None) -> object:
         if self._closing:
             raise WorkerError("Cleaning worker is closed")
-        async with self._lock:
-            self._active = request.job_id
-            self._cancel.clear()
-            try:
+        self._pending.add(request.job_id)
+        try:
+            async with self._lock:
+                self._active = request.job_id
+                if request.job_id in self._cancelled:
+                    raise PipelineCancelled(request.job_id)
+                self._cancel.clear()
                 for attempt in range(2):
                     try:
                         if self._closing:
@@ -262,7 +279,10 @@ class ProcessCleanWorker:
                         if attempt == 1:
                             raise WorkerError("Cleaning worker failed twice") from exc
                 raise AssertionError("unreachable")
-            finally:
+        finally:
+            self._pending.discard(request.job_id)
+            self._cancelled.discard(request.job_id)
+            if self._active == request.job_id:
                 self._active = None
 
     async def close(self) -> None:
