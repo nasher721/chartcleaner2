@@ -176,8 +176,10 @@ class ProcessCleanWorker:
             name="chart-cleaner-worker", daemon=True)
         self._conn, self._process = parent, process
         try:
-            await run.io_bound(process.start)
-            child.close()
+            try:
+                await run.io_bound(process.start)
+            finally:
+                child.close()
             message = await asyncio.wait_for(self._read(), timeout=60)
             if message != {"type": "ready"}:
                 raise WorkerTransportError("Cleaning worker handshake failed")
@@ -187,13 +189,27 @@ class ProcessCleanWorker:
 
     async def _restart(self) -> None:
         process, conn = self._process, self._conn
+        try:
+            if conn is not None:
+                conn.close()
+            if process is not None and process.pid is not None:
+                if process.is_alive():
+                    process.terminate()
+                await run.io_bound(process.join, 10)
+                if process.is_alive():
+                    kill = getattr(process, "kill", None)
+                    if kill is None:
+                        process.terminate()
+                    else:
+                        kill()
+                    await run.io_bound(process.join, 10)
+                if process.is_alive():
+                    raise WorkerTransportError("Cleaning worker did not exit")
+        except WorkerTransportError:
+            raise
+        except Exception as exc:
+            raise WorkerTransportError("Cleaning worker cleanup failed") from exc
         self._process = self._conn = None
-        if conn is not None:
-            conn.close()
-        if process is not None:
-            if process.is_alive():
-                process.terminate()
-            await run.io_bound(process.join, 10)
 
     async def run(self, request: WorkRequest,
                   on_progress: ProgressCallback | None = None) -> object:
@@ -212,21 +228,29 @@ class ProcessCleanWorker:
                         while True:
                             message = await self._read()
                             kind = message.get("type") if isinstance(message, dict) else None
-                            if kind is None:
+                            if not isinstance(kind, str):
                                 raise WorkerTransportError("Cleaning worker protocol failed")
                             if kind == "progress":
-                                event = message["event"]
+                                event = message.get("event")
+                                if (not isinstance(event, WorkProgress)
+                                        or not isinstance(event.job_id, str)):
+                                    raise WorkerTransportError("Cleaning worker protocol failed")
                                 if event.job_id == request.job_id and on_progress is not None:
                                     on_progress(event)
                                 continue
                             if message.get("job_id") != request.job_id:
                                 raise WorkerTransportError("Cleaning worker returned a mismatched job")
                             if kind == "result":
+                                if "payload" not in message:
+                                    raise WorkerTransportError("Cleaning worker protocol failed")
                                 return message["payload"]
                             if kind == "cancelled":
                                 raise PipelineCancelled(request.job_id)
                             if kind == "error":
-                                raise WorkerError(message["error"])
+                                error = message.get("error")
+                                if not isinstance(error, str):
+                                    raise WorkerTransportError("Cleaning worker protocol failed")
+                                raise WorkerError(error)
                             raise WorkerTransportError(f"Unknown worker message: {kind}")
                     except PipelineCancelled:
                         raise

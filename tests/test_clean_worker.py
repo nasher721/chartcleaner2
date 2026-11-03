@@ -128,13 +128,222 @@ async def test_cancellation_is_not_retried():
         with pytest.raises(PipelineCancelled):
             await worker.run(request, seen.append)
 
-    import asyncio
     task = asyncio.create_task(run_job())
-    for _ in range(300):
-        if seen:
-            break
-        await asyncio.sleep(0.02)
-    assert seen, "worker never reached a stage boundary"
-    worker.cancel(request.job_id)
-    await task
-    await worker.close()
+    try:
+        for _ in range(300):
+            if seen:
+                break
+            await asyncio.sleep(0.02)
+        assert seen, "worker never reached a stage boundary"
+        worker.cancel(request.job_id)
+        await task
+    finally:
+        if not task.done():
+            worker.cancel(request.job_id)
+        try:
+            await task
+        except Exception:
+            pass
+        await worker.close()
+
+
+@pytest.mark.parametrize("case", [
+    "progress_missing_event",
+    "progress_bad_event",
+    "progress_bad_job_id",
+    "result_missing_payload",
+    "error_missing_error",
+    "error_bad_error",
+])
+async def test_process_worker_malformed_message_fields_retry(monkeypatch, case):
+    worker = ProcessCleanWorker()
+    request = _request()
+    if case == "progress_missing_event":
+        frame = {"type": "progress"}
+    elif case == "progress_bad_event":
+        frame = {"type": "progress", "event": object()}
+    elif case == "progress_bad_job_id":
+        frame = {"type": "progress", "event": WorkProgress(123, "stage", "Stage", 0, 1, 0.0)}
+    elif case == "result_missing_payload":
+        frame = {"type": "result", "job_id": request.job_id}
+    elif case == "error_missing_error":
+        frame = {"type": "error", "job_id": request.job_id}
+    else:
+        frame = {"type": "error", "job_id": request.job_id, "error": 123}
+    reads = 0
+    starts = 0
+    original_read = worker._read
+    original_start = worker._start
+
+    async def malformed_once():
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            return frame
+        return await original_read()
+
+    async def counted_start():
+        nonlocal starts
+        starts += 1
+        await original_start()
+
+    monkeypatch.setattr(worker, "_read", malformed_once)
+    monkeypatch.setattr(worker, "_start", counted_start)
+    try:
+        got = await worker.run(request)
+        assert got.result.text
+        assert starts == 2
+    finally:
+        await worker.close()
+
+
+async def test_process_worker_persistent_transport_failure_has_exact_two_attempts(monkeypatch):
+    worker = ProcessCleanWorker()
+    reads = 0
+    starts = 0
+    original_read = worker._read
+    original_start = worker._start
+
+    async def fail_work_reads():
+        nonlocal reads
+        reads += 1
+        if reads % 2 == 0:
+            raise EOFError("persistent closed pipe")
+        return await original_read()
+
+    async def counted_start():
+        nonlocal starts
+        starts += 1
+        await original_start()
+
+    monkeypatch.setattr(worker, "_read", fail_work_reads)
+    monkeypatch.setattr(worker, "_start", counted_start)
+    try:
+        with pytest.raises(WorkerError, match="Cleaning worker failed twice"):
+            await worker.run(_request())
+        assert starts == 2
+        assert reads == 4
+    finally:
+        await worker.close()
+
+
+async def test_restart_escalates_to_kill_after_join_timeout():
+    class FakeProcess:
+        pid = 123
+        alive = True
+        terminates = 0
+        kills = 0
+        joins = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            self.terminates += 1
+
+        def kill(self):
+            self.kills += 1
+            self.alive = False
+
+        def join(self, timeout):
+            self.joins += 1
+
+    worker = ProcessCleanWorker()
+    process = FakeProcess()
+    worker._process = process
+    await worker._restart()
+    assert process.terminates == 1
+    assert process.kills == 1
+    assert process.joins == 2
+    assert worker._process is None
+
+
+async def test_restart_retains_process_when_exit_cannot_be_confirmed():
+    from chartcleaner.clean_worker import WorkerTransportError
+
+    class FakeProcess:
+        pid = 123
+        joins = 0
+
+        def is_alive(self):
+            return True
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+        def join(self, timeout):
+            self.joins += 1
+
+    worker = ProcessCleanWorker()
+    process = FakeProcess()
+    worker._process = process
+    with pytest.raises(WorkerTransportError, match="did not exit"):
+        await worker._restart()
+    assert process.joins == 2
+    assert worker._process is process
+
+
+async def test_close_terminates_unresponsive_active_process_without_replacement(monkeypatch):
+    worker = ProcessCleanWorker()
+    request = _request(text="Plan: recheck K 4.1\n" * 20000)
+    work_reading = asyncio.Event()
+    release_read = asyncio.Event()
+    reads = 0
+    starts = 0
+    original_read = worker._read
+    original_start = worker._start
+
+    async def controlled_read():
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            return await original_read()
+        work_reading.set()
+        await release_read.wait()
+        raise EOFError("terminated worker pipe")
+
+    async def counted_start():
+        nonlocal starts
+        starts += 1
+        await original_start()
+
+    monkeypatch.setattr(worker, "_read", controlled_read)
+    monkeypatch.setattr(worker, "_start", counted_start)
+    task = None
+    close_task = None
+    try:
+        task = asyncio.create_task(worker.run(request))
+        await asyncio.wait_for(work_reading.wait(), 10)
+        process = worker._process
+        assert process is not None and process.is_alive()
+        close_task = asyncio.create_task(worker.close())
+        for _ in range(100):
+            if not process.is_alive():
+                break
+            await asyncio.sleep(0.02)
+        assert not process.is_alive()
+        assert not close_task.done()
+        release_read.set()
+        await asyncio.wait_for(close_task, 10)
+        with pytest.raises(WorkerError, match="Cleaning worker is closed"):
+            await task
+        assert starts == 1
+        assert worker._process is None
+    finally:
+        release_read.set()
+        if task is not None and not task.done():
+            task.cancel()
+        if close_task is not None:
+            try:
+                await asyncio.wait_for(close_task, 10)
+            except Exception:
+                pass
+        if task is not None:
+            try:
+                await task
+            except Exception:
+                pass
+        await worker.close()
