@@ -107,6 +107,7 @@ def _custom_rules_fingerprint():
 
 async def clean_page():
     ui.add_head_html('<link rel="stylesheet" href="/static/clean/screen.css">')
+    ui.add_head_html('<script src="/static/clean/editor.js"></script>')
     state = {"running": False, "edited": 0.0, "speculated": 0.0, "job_id": None}
     edit_lock = asyncio.Lock()
     # stack: undo entries (newest last) — {"entry": rule journal entry or None,
@@ -115,6 +116,8 @@ async def clean_page():
     refs: dict = {}          # result widgets (tabs, output box), repopulated by render_results
     inbox = {"items": []}    # rule-inbox suggestions for the current recent charts
     spec = SPECULATION
+    from chartcleaner.editor_sync import EditorRevisions
+    editor_revisions = EditorRevisions()
     inbox_btn = None         # the "Suggestions" button; built in header_actions
 
     # ---- handlers (defined before the UI that references them) -------------
@@ -326,6 +329,7 @@ async def clean_page():
             set_running(False)
 
     async def run_clean(_=None) -> None:
+        await sync_editor()
         text = input_area.value or ""
         if not text.strip():
             ui.notify("Nothing to clean — paste some text first.", type="warning")
@@ -2045,6 +2049,7 @@ async def clean_page():
             CLEAN_STATE["input"] = text
 
     async def handle_upload(e) -> None:
+        await sync_editor()
         try:
             name, data = await read_upload(e)
         except Exception as ex:
@@ -2094,13 +2099,45 @@ async def clean_page():
         if name:
             apply_preset(name)
 
-    def on_input_change(e) -> None:
-        if e.value != CLEAN_STATE.get("input"):
-            cancel_speculative_job()
+    def accept_editor_snapshot(data) -> bool:
+        if not isinstance(data, dict):
+            return False
+        value = data.get("value")
+        if not isinstance(value, str) or not editor_revisions.accept(data.get("revision")):
+            return False  # malformed values must not consume a new revision
+        if value != CLEAN_STATE.get("input"):
+            job_id = spec.get("job_id")
+            if job_id:
+                get_clean_worker().cancel(job_id)
             spec.update(task=None, inputs=None)
+            if "job_id" in spec:
+                spec["job_id"] = None
             CLEAN_STATE.pop("manual_note_type", None)
-        CLEAN_STATE.update(input=e.value)
+        CLEAN_STATE.update(input=value)
+        input_area.value = value  # server-side value only; do not resend the textarea
         state["edited"] = time.monotonic()
+        input_area.client.run_javascript(
+            f"window.ccCleanEditor.ack({data['revision']})")
+        return True
+
+    def on_editor_sync(event) -> None:
+        accept_editor_snapshot(event.args)
+
+    def on_harness_editor_change(event) -> None:
+        # set_value() bypasses browser input events in the NiceGUI harness.
+        accept_editor_snapshot({"value": event.value or "",
+                                "revision": editor_revisions.current + 1})
+
+    async def sync_editor() -> str:
+        if os.environ.get("NICEGUI_USER_SIMULATION"):
+            value = input_area.value or ""
+            CLEAN_STATE["input"] = value  # textarea.set_value/upload tests bypass browser JS
+            return value
+        data = await input_area.client.run_javascript(
+            "return window.ccCleanEditor.snapshot();")
+        if data is not None:
+            accept_editor_snapshot(data)
+        return CLEAN_STATE.get("input") or ""
 
     async def auto_tick() -> None:
         if (not common.PREFS.get("auto_clean") and not state["running"]
@@ -2135,10 +2172,11 @@ async def clean_page():
         highlight["selection"] = None
         sel_bar.set_visibility(False)
 
-    def on_highlight(e) -> None:
-        if highlight["pending"] or state["running"]:
-            return
+    def process_highlight(e) -> None:
         selection = e.args
+        if isinstance(selection, dict) and not selection.get("text"):
+            hide_selection_bar()
+            return
         if not isinstance(selection, dict) or not str(selection.get("text", "")).strip():
             return
         highlight["selection"] = selection
@@ -2159,6 +2197,18 @@ async def clean_page():
         shown = " ".join(selection["text"].split())
         sel_text.set_text(f"“{shown[:70]}{'…' if len(shown) > 70 else ''}”")
         sel_bar.set_visibility(True)
+
+    async def on_highlight(e) -> None:
+        if highlight["pending"] or state["running"]:
+            return
+        await sync_editor()
+        process_highlight(e)
+
+    def on_harness_highlight(e) -> None:
+        if highlight["pending"] or state["running"]:
+            return
+        CLEAN_STATE["input"] = input_area.value or ""
+        process_highlight(e)
 
     def set_selection_mode(mode: str) -> None:
         if mode not in SELECTION_MODE_HELP:
@@ -2279,7 +2329,9 @@ async def clean_page():
             for i, text in enumerate(items):
                 ui.chip(text[:40] + ("…" if len(text) > 40 else ""), removable=True,
                         on_value_change=lambda _e, i=i: drop_collected(i)).props("dense outline")
-            ui.button("Remove all", icon="backspace", on_click=save_collected) \
+            ui.button("Remove all", icon="backspace",
+                      on_click=(on_harness_save_collected
+                                if os.environ.get("NICEGUI_USER_SIMULATION") else save_collected)) \
                 .props("flat dense no-caps").mark("tray-save")
             ui.button("Clear", on_click=lambda: (highlight["collected"].clear(), render_tray())) \
                 .props("flat dense no-caps")
@@ -2289,7 +2341,7 @@ async def clean_page():
             del highlight["collected"][index]
         render_tray()
 
-    def save_collected() -> None:
+    def save_collected_now() -> None:
         """Save every collected phrase as a removal in one config write (one Undo step)."""
         from chartcleaner.quick_rules import add_removals
         phrases = list(highlight["collected"])
@@ -2316,6 +2368,14 @@ async def clean_page():
         highlight["collected"].clear()
         render_tray()
         highlight_status.set_text(report.summary("removal"))
+
+    async def save_collected() -> None:
+        await sync_editor()
+        save_collected_now()
+
+    def on_harness_save_collected() -> None:
+        CLEAN_STATE["input"] = input_area.value or ""
+        save_collected_now()
 
     def selection_shortcut(action) -> None:
         if not highlight.get("selection"):
@@ -2605,7 +2665,7 @@ async def clean_page():
             undo_btn.disable()
             undo_tip.set_text("Nothing to undo yet")
 
-    def undo_highlight() -> None:
+    def undo_highlight_now() -> None:
         """Undo the newest edit: its saved rule change, and the chart text if unchanged since."""
         if not highlight["stack"] or state["running"]:
             return
@@ -2633,6 +2693,17 @@ async def clean_page():
                                       "was left as it is.")
         sync_undo()
 
+    async def undo_highlight() -> None:
+        await sync_editor()
+        undo_highlight_now()
+
+    def on_harness_undo_highlight() -> None:
+        CLEAN_STATE["input"] = input_area.value or ""
+        undo_highlight_now()
+
+    undo_handler = (on_harness_undo_highlight
+                    if os.environ.get("NICEGUI_USER_SIMULATION") else undo_highlight)
+
     def open_undo_history() -> None:
         """The edits Undo can step back through, newest first, plus the full journal link."""
         with ui.dialog() as dlg, ui.card().classes("w-[620px] gap-2").mark("undo-history"):
@@ -2648,8 +2719,7 @@ async def clean_page():
                      "My text rules → Recent changes, where any one can be undone.") \
                 .classes("text-xs cc-muted")
             with ui.row():
-                ui.button("Undo newest", icon="undo",
-                          on_click=lambda: (undo_highlight(), dlg.close())).props("flat") \
+                ui.button("Undo newest", icon="undo", on_click=undo_handler).props("flat") \
                     .bind_enabled_from(undo_btn, "enabled")
                 ui.button("Recent rule changes", icon="history",
                           on_click=lambda: ui.navigate.to("/rules")).props("flat")
@@ -3319,7 +3389,7 @@ async def clean_page():
         ("alt+shift+a", "Abbreviate the selection", lambda: selection_shortcut(sel_abbreviate)),
         ("alt+shift+k", "Never remove the selection", lambda: selection_shortcut(sel_keep)),
         ("alt+shift+c", "Collect the selection", lambda: selection_shortcut(sel_collect)),
-        ("alt+z", "Undo the last chart edit", lambda: undo_highlight()),
+        ("alt+z", "Undo the last chart edit", undo_handler),
     ]
 
     with ui.right_drawer(value=bool(common.PREFS.get("ai_drawer")), fixed=False) \
@@ -3486,23 +3556,29 @@ async def clean_page():
                 # include the whole chart (hundreds of KB per toggle).
                 input_shell = ui.element("div").classes("w-full cc-input-shell").mark("input-shell")
                 with input_shell:
+                    harness_change = (on_harness_editor_change
+                                      if os.environ.get("NICEGUI_USER_SIMULATION") else None)
                     if HAS_EX4:
                         # ex4nicegui gives the textarea a reactive value signal; the plain
                         # NiceGUI element underneath keeps every existing code path intact.
                         _rx_input = rxui.textarea(
-                            "Chart text",
-                            value=CLEAN_STATE["input"], on_change=on_input_change)
+                            "Chart text", value=CLEAN_STATE["input"], on_change=harness_change)
                         input_area = _rx_input.element
                     else:
-                        input_area = ui.textarea("Chart text",
-                                                 value=CLEAN_STATE["input"], on_change=on_input_change)
+                        input_area = ui.textarea(
+                            "Chart text", value=CLEAN_STATE["input"], on_change=harness_change)
                     input_area.props("outlined input-style='min-height: 360px' aria-label='Chart text (paste an Epic export, drop a file, or load the sample)'") \
                         .classes("w-full cc-mono cc-learn-src")
                     input_area.mark("highlight-source")
+                    input_area.on(
+                        "input", on_editor_sync,
+                        js_handler="(event) => window.ccCleanEditor.input(event, emit)")
                     if selection_mode != "ask":
                         input_shell.classes(f"cc-mode-{selection_mode}")
+                    highlight_handler = (on_harness_highlight
+                                         if os.environ.get("NICEGUI_USER_SIMULATION") else on_highlight)
                     for event_name in ("mouseup", "keyup", "touchend"):
-                        input_area.on(event_name, on_highlight, js_handler=SELECTION_HANDLER)
+                        input_area.on(event_name, highlight_handler, js_handler=SELECTION_HANDLER)
                     with input_area:
                         # Right-click on a selection: the same actions as the selection bar.
                         with ui.context_menu().mark("chart-context-menu"):
@@ -3539,7 +3615,7 @@ async def clean_page():
 
                 advanced_tools.on("click", reveal_advanced_tools)
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_highlight) \
+                    undo_btn = ui.button("Undo last highlight", icon="undo", on_click=undo_handler) \
                         .props("flat dense no-caps")
                     undo_btn.disable()
                     undo_btn.set_visibility(False)
@@ -3548,8 +3624,9 @@ async def clean_page():
 
 
                 with ui.row().classes("w-full items-center gap-2 flex-wrap"):
-                    ui.label().bind_text_from(input_area, "value", lambda t:
-                        f"{len(t or ''):,} characters / {len((t or '').split()):,} words").classes("text-xs opacity-60")
+                    initial = CLEAN_STATE.get("input") or ""
+                    ui.label(f"{len(initial):,} characters / {len(initial.split()):,} words") \
+                        .classes("text-xs opacity-60").mark("chart-counts")
                     tag_input = ui.input("Bed tag (optional)", value=CLEAN_STATE.get("tag") or "",
                                          autocomplete=recent_charts.tags(),
                                          on_change=lambda e: CLEAN_STATE.update(

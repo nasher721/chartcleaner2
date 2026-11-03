@@ -59,7 +59,14 @@ SELECTION_HANDLER = """(event) => {
     const ta = event.target;
     if (!(ta instanceof HTMLTextAreaElement)) return;
     const start = ta.selectionStart, end = ta.selectionEnd;
-    if (start === end || !ta.value.slice(start, end).trim()) return;
+    if (start === end || !ta.value.slice(start, end).trim()) {
+        if (ta.dataset.ccHadSelection === '1') {
+            ta.dataset.ccHadSelection = '0';
+            emit({start: 0, end: 0, text: ''});
+        }
+        return;
+    }
+    ta.dataset.ccHadSelection = '1';
     emit({start: Array.from(ta.value.slice(0, start)).length,
           end: Array.from(ta.value.slice(0, end)).length,
           text: ta.value.slice(start, end)});
