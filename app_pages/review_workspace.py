@@ -8,27 +8,11 @@ from nicegui import ui
 from app_pages.review_model import (
     build_finding_rows, default_review_view, filter_findings, finding_count,
 )
+from chartcleaner.review_html import collapse_context_ranges
 
 
 ROW_PAGE = 40      # finding rows drawn per "Show more"
 LOCATE_LIMIT = 5   # Locate buttons per finding row
-
-
-def collapse_context_ranges(line_count: int, changed_lines: set[int], context: int = 3) -> list[tuple[int, int]]:
-    visible = set(changed_lines)
-    for line in changed_lines:
-        visible.update(range(max(1, line - context), min(line_count, line + context) + 1))
-    ranges = []
-    start = None
-    for line in range(1, line_count + 2):
-        if line not in visible and line <= line_count:
-            start = line if start is None else start
-            continue
-        if start is not None:
-            if line - start >= 2:
-                ranges.append((start, line - 1))
-            start = None
-    return ranges
 
 
 @dataclass(frozen=True)

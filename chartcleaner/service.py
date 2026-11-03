@@ -449,9 +449,6 @@ def timeline(text: str) -> list[dict]:
         return []
 
 
-_RESULT_CACHE: dict = {"cache": None}
-
-
 def census(*, preset: str | None = None, config: dict | None = None) -> dict:
     """One card per bed tag (the newest stored chart for each): allergies, code status,
     possible contradictions, to-do, devices to review, antibiotics, bundle gaps, stale
@@ -574,7 +571,5 @@ def export_rules(fmt: str = "txt", *, complete: bool = False, preset: str | None
 
 def result_cache():
     """The process-wide :class:`~chartcleaner.stage_cache.StageCache` the app shares."""
-    from .stage_cache import StageCache
-    if _RESULT_CACHE["cache"] is None:
-        _RESULT_CACHE["cache"] = StageCache()
-    return _RESULT_CACHE["cache"]
+    from .stage_cache import process_cache
+    return process_cache()

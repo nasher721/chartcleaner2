@@ -158,3 +158,12 @@ def _detail_chars(value: Any) -> int:
     if isinstance(value, (list, tuple)):
         return sum(_detail_chars(v) for v in value)
     return 0
+
+
+_PROCESS_CACHE: dict[str, StageCache | None] = {"cache": None}
+
+
+def process_cache() -> StageCache:
+    if _PROCESS_CACHE["cache"] is None:
+        _PROCESS_CACHE["cache"] = StageCache()
+    return _PROCESS_CACHE["cache"]
