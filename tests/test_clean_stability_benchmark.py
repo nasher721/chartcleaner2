@@ -1,8 +1,10 @@
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-from scripts.benchmark_clean_stability import percentile, summarize
+from scripts import benchmark_clean_stability as benchmark
+from scripts.benchmark_clean_stability import HealthProbe, percentile, summarize
 
 
 def test_stability_summary_has_no_chart_text_and_checks_targets():
@@ -36,6 +38,39 @@ def test_stability_summary_counts_failed_cycles_with_empty_samples():
     assert report["health_max_ms"] == 0
     assert report["warm_clean_ms"] == 0
     assert report["passed"] is False
+
+
+def test_stability_summary_rejects_empty_health_evidence():
+    report = summarize([], [20], [1000], [True], 0, expected_cycles=1,
+                       health_complete=False)
+    assert report["health_complete"] is False
+    assert report["health_failures"] == 0
+    assert report["passed"] is False
+
+
+def test_stability_summary_rejects_health_probe_failures():
+    report = summarize([10], [20], [1000], [True], 0, expected_cycles=1,
+                       health_failures=1)
+    assert report["health_failures"] == 1
+    assert report["passed"] is False
+
+
+def test_health_probe_records_urlopen_exceptions(monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError("synthetic probe failure")
+
+    monkeypatch.setattr(benchmark.urllib.request, "urlopen", fail)
+    with HealthProbe() as probe:
+        time.sleep(0.12)
+    assert probe.failures >= 1
+    assert probe.samples == []
+    assert probe.stalled is False
+
+
+def test_progress_deadline_returns_only_remaining_milliseconds():
+    assert benchmark.remaining_ms(10.0, now=9.75) == 250
+    assert benchmark.remaining_ms(10.0, now=10.0) == 0
+    assert benchmark.remaining_ms(10.0, now=10.1) == 0
 
 
 def test_source_command_loads_project_imports():

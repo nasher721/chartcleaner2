@@ -25,16 +25,24 @@ def percentile(values, fraction):
 
 
 def summarize(health, typing, clean_ms, progress_seen, reconnects, expected_cycles,
-              typing_ws_max_bytes=0, typing_ws_limit_bytes=0, cycle_errors=0):
+              typing_ws_max_bytes=0, typing_ws_limit_bytes=0, cycle_errors=0,
+              health_complete=True, health_failures=0, health_stalls=0):
     complete = len(progress_seen) == expected_cycles
+    evidence_complete = health_complete and bool(health)
+    health_ok = (
+        evidence_complete and health_failures == 0 and health_stalls == 0
+        and percentile(health, .95) <= 100 and max(health) <= 1000
+    )
     websocket_ok = typing_ws_limit_bytes == 0 or typing_ws_max_bytes < typing_ws_limit_bytes
     passed = (
-        reconnects == 0 and complete and all(progress_seen) and websocket_ok and cycle_errors == 0
-        and percentile(health, .95) <= 100 and max(health) <= 1000
+        health_ok and reconnects == 0 and complete and all(progress_seen)
+        and websocket_ok and cycle_errors == 0
         and percentile(typing, .95) <= 100 and max(clean_ms) <= 30000
     )
     return {
         "cycles": len(progress_seen), "reconnects": reconnects, "cycle_errors": cycle_errors,
+        "health_complete": evidence_complete, "health_failures": health_failures,
+        "health_stalls": health_stalls,
         "health_p95_ms": percentile(health, .95) if health else 0,
         "health_max_ms": max(health, default=0),
         "typing_p95_ms": percentile(typing, .95) if typing else 0,
@@ -48,15 +56,21 @@ def summarize(health, typing, clean_ms, progress_seen, reconnects, expected_cycl
 class HealthProbe:
     def __init__(self):
         self.samples = []
+        self.failures = 0
+        self.stalled = False
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
         while not self._stop.is_set():
             started = time.perf_counter()
-            with urllib.request.urlopen(BASE_URL + "/api/v1/health", timeout=2) as response:
-                response.read()
-            self.samples.append((time.perf_counter() - started) * 1000)
+            try:
+                with urllib.request.urlopen(BASE_URL + "/api/v1/health", timeout=2) as response:
+                    response.read()
+            except Exception:
+                self.failures += 1
+            else:
+                self.samples.append((time.perf_counter() - started) * 1000)
             self._stop.wait(.05)
 
     def __enter__(self):
@@ -66,6 +80,12 @@ class HealthProbe:
     def __exit__(self, *args):
         self._stop.set()
         self._thread.join(3)
+        self.stalled = self._thread.is_alive()
+
+
+def remaining_ms(deadline, *, now=None):
+    current = time.perf_counter() if now is None else now
+    return max(0, int((deadline - current) * 1000))
 
 
 def assert_exclusive_editor_channel(page) -> None:
@@ -82,7 +102,8 @@ def assert_exclusive_editor_channel(page) -> None:
 
 def measure(cycles: int, chars: int) -> dict:
     health, typing, clean_ms, progress_seen = [], [], [], []
-    reconnects = 0
+    health_by_cycle, health_failures_by_cycle, health_stalls_by_cycle = [], [], []
+    reconnect_cycles = []
     cycle_errors = 0
     typing_ws_max_bytes = 0
     typing_ws_cycles = []
@@ -100,10 +121,14 @@ def measure(cycles: int, chars: int) -> dict:
             }
           };
         """)
+        context.add_init_script((ROOT / "scripts" / "clean_stability_reconnect_observer.js").read_text())
         page = context.new_page()
         page.goto(BASE_URL + "/", wait_until="networkidle")
         for cycle in range(cycles):
             progress_count = len(progress_seen)
+            probe = HealthProbe()
+            reconnects_before = 0
+            cycle_failed = False
             try:
                 assert_exclusive_editor_channel(page)
                 page.evaluate("""
@@ -114,6 +139,7 @@ def measure(cycles: int, chars: int) -> dict:
                   }
                 """, synth(chars) + f"\nCycle {cycle}\n")
                 page.evaluate("window.__ccWsBytes = 0")
+                reconnects_before = page.evaluate("window.__ccReconnects")
                 samples = page.evaluate("""async () => {
                   const ta = document.querySelector('[data-cc-marker="highlight-source"]');
                   const samples = [];
@@ -130,37 +156,67 @@ def measure(cycles: int, chars: int) -> dict:
                 typing_bytes = page.evaluate("window.__ccWsBytes")
                 typing_ws_cycles.append(typing_bytes)
                 typing_ws_max_bytes = max(typing_ws_max_bytes, typing_bytes)
-                started = time.perf_counter()
-                with HealthProbe() as probe:
-                    page.locator('[data-cc-marker="run-clean"]').click(force=True)
+                with probe:
+                    started = time.perf_counter()
+                    progress_deadline = started + 1.0
+                    page.locator('[data-cc-marker="run-clean"]').click()
                     progress = page.locator('[data-cc-marker="clean-progress"]')
-                    try:
-                        progress.wait_for(state="visible", timeout=1000)
-                        progress_seen.append(True)
-                    except Exception:
+                    remaining = remaining_ms(progress_deadline)
+                    if remaining > 0:
+                        try:
+                            progress.wait_for(state="visible", timeout=remaining)
+                            progress_seen.append(True)
+                        except Exception:
+                            progress_seen.append(False)
+                    else:
                         progress_seen.append(False)
                     progress.wait_for(state="hidden", timeout=120000)
                     page.wait_for_function(
                         "!document.querySelector('[data-cc-marker=\"run-clean\"]').disabled",
                         timeout=120000)
-                health.extend(probe.samples)  # include the final request after the thread joins
                 clean_ms.append((time.perf_counter() - started) * 1000)
-                reconnects += page.locator('text=/reconnecting/i').filter(visible=True).count()
             except Exception:
-                cycle_errors += 1
-                if len(progress_seen) == progress_count:
-                    progress_seen.append(False)
+                cycle_failed = True
+            finally:
+                cycle_health = list(probe.samples)
+                health_by_cycle.append(cycle_health)
+                health.extend(cycle_health)
+                health_failures_by_cycle.append(probe.failures)
+                health_stalls_by_cycle.append(int(probe.stalled))
                 try:
-                    page.close()
+                    reconnects_after = page.evaluate("window.__ccReconnects")
+                    reconnect_cycles.append(max(0, reconnects_after - reconnects_before))
                 except Exception:
-                    pass
-                page = context.new_page()
-                page.goto(BASE_URL + "/", wait_until="networkidle")
+                    reconnect_cycles.append(0)
+                    cycle_failed = True
+                if cycle_failed:
+                    cycle_errors += 1
+                    if len(progress_seen) == progress_count:
+                        progress_seen.append(False)
+                    try:
+                        page.close()
+                        page = context.new_page()
+                        page.goto(BASE_URL + "/", wait_until="networkidle")
+                    except Exception:
+                        pass
         browser.close()
-    result = summarize(health, typing, clean_ms, progress_seen, reconnects, cycles,
-                       typing_ws_max_bytes, typing_ws_limit_bytes, cycle_errors)
-    result["samples"] = {"health_ms": health, "typing_ms": typing, "clean_ms": clean_ms,
-                         "progress_seen": progress_seen, "typing_ws_bytes": typing_ws_cycles}
+    health_complete = (
+        len(health_by_cycle) == cycles and all(health_by_cycle)
+        and len(health_failures_by_cycle) == cycles
+        and len(health_stalls_by_cycle) == cycles
+    )
+    result = summarize(
+        health, typing, clean_ms, progress_seen, sum(reconnect_cycles), cycles,
+        typing_ws_max_bytes, typing_ws_limit_bytes, cycle_errors,
+        health_complete=health_complete,
+        health_failures=sum(health_failures_by_cycle),
+        health_stalls=sum(health_stalls_by_cycle))
+    result["samples"] = {
+        "health_ms": health, "health_ms_by_cycle": health_by_cycle,
+        "health_failures": health_failures_by_cycle, "health_stalls": health_stalls_by_cycle,
+        "typing_ms": typing, "clean_ms": clean_ms, "progress_seen": progress_seen,
+        "typing_ws_bytes": typing_ws_cycles, "reconnects": reconnect_cycles,
+    }
     return result
 
 
