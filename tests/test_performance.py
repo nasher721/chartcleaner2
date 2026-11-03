@@ -13,9 +13,8 @@ from nicegui import ui
 from nicegui.testing import User
 
 import app as cc_app
-from app_pages import clean as clean_page_mod
 from app_pages import common
-from chartcleaner import benchmark, doctor, fact_check, stage_nlp, store, store_history
+from chartcleaner import benchmark, clean_compute, doctor, fact_check, stage_nlp, store, store_history
 from chartcleaner.appstate import AUTO_LAST, CLEAN_STATE
 from chartcleaner.engine import CleanContext, Pipeline, load_default_config, save_config
 
@@ -176,8 +175,8 @@ def page(monkeypatch, tmp_path):
 @pytestmark_ui
 async def test_review_diff_is_built_once_off_the_event_loop(user: User, page, monkeypatch):
     calls = []
-    real = clean_page_mod.review_diff_html
-    monkeypatch.setattr(clean_page_mod, "review_diff_html",
+    real = clean_compute.review_diff_html
+    monkeypatch.setattr(clean_compute, "review_diff_html",
                         lambda *a: calls.append(a) or real(*a))
     CLEAN_STATE.update(input="Printed by Dr. Lee\nNa 141\nPlan: recheck\n", mode="clean",
                        result=None, result_text="", audit=None, summary=None, qa=[])
@@ -210,8 +209,8 @@ async def test_review_diff_is_built_once_off_the_event_loop(user: User, page, mo
 async def test_review_reload_rebuilds_legacy_or_stale_cache(
         user: User, page, monkeypatch, cache_kind):
     calls = []
-    real = common.review_diff_html
-    monkeypatch.setattr(common, "review_diff_html",
+    real = clean_compute.review_diff_html
+    monkeypatch.setattr(clean_compute, "review_diff_html",
                         lambda *a, **kw: calls.append(a) or real(*a, **kw))
     source = "Printed by Dr. Lee\nNa 141\nPlan: recheck\n"
     result = Pipeline(load_default_config()).run(source)

@@ -216,8 +216,10 @@ async def test_clean_page_oversized_diff_uses_cached_metadata(user: User, page):
     html = common.review_diff_html(BLOCK_CHART, result.text, None, [])
     CLEAN_STATE.update(input=BLOCK_CHART, result=result, result_text=result.text,
                        mode="clean", result_mode="clean", audit=None, summary=None, qa=[],
+                       groups=None, finding_rows=None,
                        review_html=(result, BLOCK_CHART, result.text, html, 0))
     await _route(user, "/clean-oversized-diff", cc_app.clean_page)
+    await user.should_see(marker="review-changes-tab")
     user.find(marker="review-changes-tab").click()
     await user.should_see("Diff too large to display")
     position = next(iter(user.find(marker="change-position").elements))

@@ -16,11 +16,11 @@ Run with:  python app.py            (or the platform launcher / double-click hel
 from __future__ import annotations
 
 import argparse
+import asyncio
 import multiprocessing
 import os
 import re
 import socket
-import threading
 import webbrowser
 
 from nicegui import app, ui
@@ -37,6 +37,7 @@ from app_pages.scripts import scripts_page
 from app_pages.settings import settings_page
 from app_pages.stats import stats_page
 from app_pages.updates import _check_for_updates, _is_chart_cleaner, _update_startup  # noqa: F401
+from chartcleaner.clean_worker import WorkRequest, get_clean_worker, shutdown_clean_worker
 from chartcleaner.security_headers import SecurityHeaders
 
 
@@ -120,31 +121,21 @@ def _port_busy(port: int) -> bool:
 
 
 def _warm_nlp_engines() -> None:
-    """Kick off a best-effort background warmup of the Presidio/spaCy engines.
+    if os.environ.get("NICEGUI_USER_SIMULATION"):
+        return
 
-    The engines are cached module-level in chartcleaner.stage_nlp; pre-building
-    them at startup means the first Clean click skips the model-load tax.
-    ``warm`` builds them with the same key run_nlp() uses so the cache is reused.
-    """
-    def _work() -> None:
+    async def warm() -> None:
         try:
-            if os.environ.get("NICEGUI_USER_SIMULATION"):
-                return  # test harness: never pay model-load time
-            try:
-                from chartcleaner.abbreviations import _matcher
-                _matcher()  # the abbreviation matcher is built lazily; build it now
-            except Exception:
-                pass
             cfg = load_config(common.CONFIG_PATH)
-            if not bool((cfg.get("nlp_redaction") or {}).get("enabled", True)):
-                return
-            from chartcleaner.stage_nlp import warm
-
-            warm(cfg)  # same engine key as a clean, plus one tiny analysis
+            request = WorkRequest("startup-warm", "warm", {"cfg": cfg})
+            await get_clean_worker().run(request)
         except Exception:
-            pass  # warmup is best-effort; the Clean page surfaces real NLP errors
+            pass  # startup warm-up is best-effort; never leave an unhandled task
 
-    threading.Thread(target=_work, daemon=True, name="nlp-warmup").start()
+    try:
+        asyncio.get_running_loop().create_task(warm())
+    except Exception:
+        pass
 
 
 def _clipboard_startup() -> None:
@@ -169,6 +160,7 @@ app.on_startup(_warm_nlp_engines)
 app.on_startup(_update_startup)
 app.on_startup(_clipboard_startup)
 app.on_startup(_retention_startup)
+app.on_shutdown(shutdown_clean_worker)
 
 
 def main():

@@ -9,7 +9,7 @@ from nicegui.testing import User
 
 import app as cc_app
 from app_pages import batch as batch_mod, clean as clean_mod, common, review_workspace
-from chartcleaner import store
+from chartcleaner import clean_compute, store
 from chartcleaner.appstate import CLEAN_STATE
 from chartcleaner.engine import Pipeline
 from chartcleaner.review_state import release_decision
@@ -33,7 +33,7 @@ async def test_edit_validation_runs_off_loop_and_copy_waits(user: User, page, mo
     previous = CLEAN_STATE["result"]
     entered, resume = threading.Event(), threading.Event()
     main_thread = threading.get_ident()
-    real_audit = clean_mod.run_audit
+    real_audit = clean_compute.run_audit
     copied = []
 
     def audit(*args):
@@ -42,7 +42,7 @@ async def test_edit_validation_runs_off_loop_and_copy_waits(user: User, page, mo
         assert resume.wait(5)
         return real_audit(*args)
 
-    monkeypatch.setattr(clean_mod, "run_audit", audit)
+    monkeypatch.setattr(clean_compute, "run_audit", audit)
     monkeypatch.setattr(clean_mod, "copy_to_clipboard", lambda *args: copied.append(args))
     user.find(marker="edit-result").click()
     out = next(iter(user.find(marker="result-output").elements))
@@ -66,7 +66,7 @@ async def test_edit_worker_discards_a_stale_snapshot(user: User, page, monkeypat
     await _clean(user, "/perf-edit-stale", "Possible pneumonia.\n")
     previous = CLEAN_STATE["result"]
     entered, resume, finished = threading.Event(), threading.Event(), threading.Event()
-    real_audit = clean_mod.run_audit
+    real_audit = clean_compute.run_audit
 
     def audit(*args):
         entered.set()
@@ -74,7 +74,7 @@ async def test_edit_worker_discards_a_stale_snapshot(user: User, page, monkeypat
         finished.set()
         return real_audit(*args)
 
-    monkeypatch.setattr(clean_mod, "run_audit", audit)
+    monkeypatch.setattr(clean_compute, "run_audit", audit)
     user.find(marker="edit-result").click()
     out = next(iter(user.find(marker="result-output").elements))
     out.set_value("Pneumonia.\n")
@@ -123,7 +123,7 @@ async def test_optional_computation_is_lazy_and_off_loop(user: User, page, monke
     monkeypatch.setattr(clean_mod, "LAZY_TABS_MIN_CHARS", 0)
     calls = []
     main_thread = threading.get_ident()
-    diff, trends = common.review_diff_html, clean_mod.build_trends
+    diff, trends = clean_compute.review_diff_html, clean_compute.build_trends
 
     def build_diff(*args):
         calls.append(("diff", threading.get_ident()))
@@ -133,9 +133,8 @@ async def test_optional_computation_is_lazy_and_off_loop(user: User, page, monke
         calls.append(("trends", threading.get_ident()))
         return trends(*args)
 
-    monkeypatch.setattr(common, "review_diff_html", build_diff)
-    monkeypatch.setattr(clean_mod, "review_diff_html", build_diff)
-    monkeypatch.setattr(clean_mod, "build_trends", build_trends)
+    monkeypatch.setattr(clean_compute, "review_diff_html", build_diff)
+    monkeypatch.setattr(clean_compute, "build_trends", build_trends)
     await _clean(user, "/perf-lazy-work", "Plan: recheck K 4.1 tomorrow.\n")
     assert calls == []
     user.find(marker="review-tab").click()

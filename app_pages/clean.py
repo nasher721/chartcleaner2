@@ -12,8 +12,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import threading
 import time
+import uuid
 from pathlib import Path
 
 from app_pages import common
@@ -22,32 +22,22 @@ from app_pages.rule_builder_ui import open_rule_builder
 from app_pages import review_workspace
 from app_pages.workflow_ui import overflow_menu, workflow_section
 from app_pages.workspace_layout import bind_split_handle, set_mobile_view
+from chartcleaner import clean_compute
 from chartcleaner import edit_log, recent_charts, regression_set, rule_history, rule_inbox
 from chartcleaner import rule_builder, rule_meta, rule_shapes
 from chartcleaner import service as service_mod
+from chartcleaner.clean_worker import WorkRequest, WorkerError, get_clean_worker
 from chartcleaner.destinations import apply_destination, destination_options, get_destination
 from chartcleaner.engine import PipelineCancelled
 from chartcleaner.review_state import review_findings, review_status, redaction_candidates
 from chartcleaner.rule_preview import preview as preview_rule
 from chartcleaner.summarizer import PRESET_LABELS
-from chartcleaner.timeline import build as build_timeline
 from chartcleaner.trends import REFERENCE_RANGES
-from chartcleaner.trends import build as build_trends
-from chartcleaner.devices import build as build_devices
-from chartcleaner.micro import build as build_micro
-from chartcleaner.overnight import build as build_overnight
-from chartcleaner.problems import build as build_problems
-from chartcleaner.pending import build as build_pending
 from chartcleaner.bundle import ADDRESSED, MISSING, NOT_APPLICABLE, REVIEW
-from chartcleaner.bundle import build as build_bundle
 from chartcleaner.daily_note import build as build_daily_note
 from chartcleaner.safety import CHANGED as SAFETY_CHANGED
 from chartcleaner.safety import NOT_STATED as SAFETY_NOT_STATED
 from chartcleaner.safety import REMOVED as SAFETY_REMOVED
-from chartcleaner.safety import removed_lines
-from chartcleaner.safety import build as build_safety
-from chartcleaner.stale import build as build_stale
-from chartcleaner.conflicts import build as build_conflicts
 
 
 # Stages whose deletions the Clean page lists under "Removed" for review.
@@ -101,7 +91,6 @@ SPECULATION_STATS = {"hits": 0}
 # The in-flight speculative clean, app-wide (single user): a newer chart in any
 # tab, or a reload, stops a run whose page is gone instead of queueing behind it.
 SPECULATION: dict = {"task": None, "inputs": None}
-COMPUTE_LOCK = threading.Lock()
 LAZY_TABS_MIN_CHARS = 20_000  # charts this long build Review/Insights on first open
 UNDO_DEPTH = 30  # Clean-page edits Undo can step back through
 
@@ -118,7 +107,7 @@ def _custom_rules_fingerprint():
 
 async def clean_page():
     ui.add_head_html('<link rel="stylesheet" href="/static/clean/screen.css">')
-    state = {"running": False, "edited": 0.0, "speculated": 0.0}
+    state = {"running": False, "edited": 0.0, "speculated": 0.0, "job_id": None}
     edit_lock = asyncio.Lock()
     # stack: undo entries (newest last) — {"entry": rule journal entry or None,
     # "before"/"after": chart text, "label"}; collected: selections saved together.
@@ -129,6 +118,16 @@ async def clean_page():
     inbox_btn = None         # the "Suggestions" button; built in header_actions
 
     # ---- handlers (defined before the UI that references them) -------------
+    def work_request(kind: str, payload: dict, job_id: str | None = None) -> WorkRequest:
+        return WorkRequest(job_id or str(uuid.uuid4()), kind, payload)
+
+    def show_work_progress(event) -> None:
+        if state["job_id"] != event.job_id:
+            return
+        progress_label.set_text(
+            f"Stage {event.completed} of {event.total}: {event.stage_label} · "
+            f"{int(event.elapsed)} seconds elapsed")
+
     def set_running(flag: bool) -> None:
         state["running"] = flag
         clean_btn.set_enabled(not flag)
@@ -141,6 +140,10 @@ async def clean_page():
         else:
             input_shell.props(remove="inert").classes(remove="cc-busy")
         spinner.set_visibility(flag)
+        progress_label.set_visibility(flag)
+        if not flag:
+            state["job_id"] = None
+            progress_label.set_text("")
 
     def prepare(text: str, mode: str, destination: str, manual) -> tuple[dict, dict, str]:
         """The effective config of a clean, its note detection, and a digest of
@@ -165,60 +168,14 @@ async def clean_page():
             sort_keys=True, default=str).encode("utf-8")).hexdigest()
         return cfg, note_info, digest
 
-    def compute(text: str, mode: str, cfg: dict, stop=None):
-        """Everything a clean shows — ``(result, audit, extras, review)``. Pure:
-        writes nothing, so a speculative run can be thrown away; ``stop()``
-        abandons it between stages (:class:`PipelineCancelled`)."""
-        with COMPUTE_LOCK:  # one pipeline at a time (speculative and real)
-            if stop is not None and stop():
-                raise PipelineCancelled("before start")
-            cache = service_mod.result_cache()
-            if mode != "clean":
-                result = Pipeline(cfg, mode=mode).run(text, track_changes=True, cache=cache,
-                                                      stop=stop)
-                audit = None
-            else:
-                # Tracked changes stay in memory for the inspect tabs; history drops them.
-                result = Pipeline(cfg, custom_dir=common.CUSTOM_DIR).run(
-                    text, track_changes=True, cache=cache, stop=stop)
-                audit = run_audit(result.text, cfg)
-        if stop is not None and stop():
-            raise PipelineCancelled("after pipeline")
-        lazy = len(text) >= LAZY_TABS_MIN_CHARS
-        extras = extras_work(result.text, result.fact_check, stop=stop,
-                             only={"safety", "conflicts", "timeline"} if lazy else None) if mode == "clean" else {}
-        if stop is not None and stop():
-            raise PipelineCancelled("after insights")
-        extras["redactions"] = redaction_candidates(text, result.text)
-        # The Review diff is the slowest part of drawing a result; build it
-        # here, off the event loop, so the page stays responsive.
-        review = None if lazy else review_html(text, result, audit)
-        if stop is not None and stop():
-            raise PipelineCancelled("after presentation")
-        return result, audit, extras, review
-
-    def extras_work(cleaned: str, fact_report, *, stop=None, only=None):
-        out = {}
-        gone = removed_lines(fact_report)
-        for key, fn in (("delta", extract_note_deltas), ("trends", build_trends),
-                        ("timeline", build_timeline), ("problems", build_problems),
-                        ("devices", build_devices), ("micro", build_micro),
-                        ("overnight", build_overnight), ("pending", build_pending),
-                        ("bundle", build_bundle),
-                        ("safety", lambda t: build_safety(t, gone)), ("stale", build_stale),
-                        ("conflicts", build_conflicts)):
-            if stop is not None and stop():
-                raise PipelineCancelled("insights")
-            if only is not None and key not in only:
-                continue
-            try:
-                out[key] = fn(cleaned)
-            except Exception:
-                out[key] = None  # bonus views; never fail a clean over them
-        return out
-
     def clean_inputs(text: str) -> tuple:
         return (text, mode_sel.value, destination_sel.value, CLEAN_STATE.get("manual_note_type"))
+
+    def cancel_speculative_job() -> None:
+        job_id = spec.get("job_id")
+        if job_id is not None:
+            get_clean_worker().cancel(job_id)
+        spec.pop("job_id", None)
 
     def speculate(text: str) -> None:
         """Start cleaning a chart that has settled in the editor, before Clean.
@@ -234,8 +191,7 @@ async def clean_page():
             return
         if CLEAN_STATE.get("result") is not None and AUTO_LAST.get("text") == text:
             return  # already showing this chart's result
-        # Replacing spec["inputs"] is also what stops an older speculative run:
-        # its stop() turns true and it gives up at its next stage boundary.
+        cancel_speculative_job()
         spec["inputs"] = inputs
 
         def stop() -> bool:
@@ -244,7 +200,16 @@ async def clean_page():
         async def go():
             try:
                 cfg, _note, digest = await run.io_bound(prepare, *inputs)
-                return digest, await run.io_bound(compute, inputs[0], inputs[1], cfg, stop)
+                if stop():
+                    raise PipelineCancelled("before submit")
+                job_id = str(uuid.uuid4())
+                spec["job_id"] = job_id
+                request = work_request("compute", {
+                    "text": inputs[0], "mode": inputs[1], "cfg": cfg,
+                    "custom_dir": str(common.CUSTOM_DIR),
+                    "lazy": len(inputs[0]) >= LAZY_TABS_MIN_CHARS,
+                }, job_id)
+                return digest, await get_clean_worker().run(request)
             except Exception:
                 # Cancelled, or failed: the real clean runs normally and is the
                 # one that reports errors.
@@ -253,10 +218,11 @@ async def clean_page():
         spec["task"] = asyncio.get_running_loop().create_task(go())
 
     async def take_speculation(inputs: tuple, digest: str):
-        """The speculative ``compute`` output for these inputs, or None."""
+        """The speculative worker output for these inputs, or None."""
         task, same = spec.get("task"), spec.get("inputs") == inputs
         if task is None or not same:
-            spec.update(task=None, inputs=None)  # a stale run stops at its next stage
+            cancel_speculative_job()
+            spec.update(task=None, inputs=None)
             return None
         try:
             got = await task  # joining: inputs stay set, or the run would stop itself
@@ -265,6 +231,7 @@ async def clean_page():
         finally:
             if spec.get("task") is task:
                 spec.update(task=None, inputs=None)
+                spec.pop("job_id", None)
         if got is None or got[0] != digest:
             return None
         SPECULATION_STATS["hits"] += 1
@@ -281,10 +248,17 @@ async def clean_page():
             cfg, note_info, digest = prepared
             out = await take_speculation(inputs, digest)
             if out is None:
-                out = await run.io_bound(compute, text, mode, cfg)
+                request = work_request("compute", {
+                    "text": text, "mode": mode, "cfg": cfg,
+                    "custom_dir": str(common.CUSTOM_DIR),
+                    "lazy": len(text) >= LAZY_TABS_MIN_CHARS,
+                })
+                state["job_id"] = request.job_id
+                out = await get_clean_worker().run(request, show_work_progress)
             if out is None:
                 return
-            result, audit, extras, review = out
+            result, audit, extras = out.result, out.audit, out.extras
+            review, groups, finding_rows = out.review, out.groups, out.finding_rows
             tag = CLEAN_STATE.get("tag") or ""
 
             def persist() -> None:
@@ -316,6 +290,7 @@ async def clean_page():
             CLEAN_STATE.update(input=text, result_text=result.text, result=result, audit=audit,
                                review_html=(result, text, result.text, review[0], review[1]) if review else None,
                                redactions=(text, result.text, extras["redactions"]),
+                               groups=groups, finding_rows=finding_rows,
                                insights_ready=len(text) < LAZY_TABS_MIN_CHARS,
                                result_source=text, verification_baseline=result.fact_check,
                                summary=None, qa=[], result_mode=mode, delta=extras.get("delta"),
@@ -342,6 +317,9 @@ async def clean_page():
                 asyncio.get_running_loop().create_task(refresh_inbox())
         except ConfigError as e:
             ui.notify(str(e), type="negative")
+        except WorkerError as e:
+            if str(e) != "Cleaning worker was interrupted":
+                report_error("Cleaning failed", e)
         except Exception as e:
             report_error("Cleaning failed", e)
         finally:
@@ -363,41 +341,6 @@ async def clean_page():
         await do_clean_core(text, "editor")
 
     # ---- result pane ----------------------------------------------------------
-    def change_groups(result) -> list[dict]:
-        """Tracked changes grouped by rule — what the Review tab makes clickable."""
-        groups: dict[tuple, dict] = {}
-        for st in result.stages:
-            for c in st.details.get("changes") or []:
-                if st.id == "medical_abbreviations":
-                    key = ("abbr", c["rule"], c["after"])
-                    g = groups.setdefault(key, {"kind": "abbr", "sid": st.id, "stage": st.label,
-                                                "rule": c["rule"], "term": c["before"],
-                                                "after": c["after"], "count": 0,
-                                                "source": c.get("source", "bundled")})
-                    g["count"] += 1
-                    continue
-                if not c["before"].strip():
-                    continue
-                kind = "removal" if c["after"] == "" else "replace"
-                key = (kind, st.id, c["rule"])
-                g = groups.setdefault(key, {"kind": kind, "sid": st.id, "stage": st.label,
-                                            "rule": c["rule"], "befores": [], "afters": [],
-                                            "count": 0})
-                g["count"] += 1
-                if c["before"] not in g["befores"] and len(g["befores"]) < 30:
-                    g["befores"].append(c["before"])
-                    g["afters"].append(c["after"])
-        return list(groups.values())
-
-    def flagged_lines(audit) -> set[int]:
-        return {f.line for f in audit.findings} if audit is not None and not audit.skipped else set()
-
-    def review_html(before: str, result, audit) -> tuple[str, int]:
-        metadata = {}
-        html = review_diff_html(before, result.text, flagged_lines(audit),
-                                change_groups(result), metadata)
-        return html, metadata["change_count"]
-
     def result_source(result) -> str:
         ledger = getattr(result, "ledger", None)
         return ledger.source if ledger is not None else CLEAN_STATE.get("result_source", CLEAN_STATE["input"])
@@ -407,14 +350,9 @@ async def clean_page():
         cached = CLEAN_STATE.get("review_html")
         if cached and len(cached) >= 5 and cached[:3] == (result, source, output):
             return True
-        audit, groups = CLEAN_STATE.get("audit"), change_groups(result)
-
-        def work():
-            metadata = {}
-            html = common.review_diff_html(source, output, flagged_lines(audit), groups, metadata)
-            return html, metadata["change_count"]
-
-        built = await run.io_bound(work)
+        request = work_request("review", {
+            "source": source, "result": result, "audit": CLEAN_STATE.get("audit")})
+        built = await get_clean_worker().run(request)
         if built is None or CLEAN_STATE.get("result") is not result or result.text != output:
             return False
         CLEAN_STATE["review_html"] = (result, source, output, *built)
@@ -424,7 +362,9 @@ async def clean_page():
         if CLEAN_STATE.get("insights_ready"):
             return True
         output = result.text
-        extras = await run.io_bound(extras_work, output, result.fact_check)
+        request = work_request("insights", {
+            "cleaned": result.text, "fact_report": result.fact_check})
+        extras = await get_clean_worker().run(request)
         if extras is None or CLEAN_STATE.get("result") is not result or result.text != output:
             return False
         CLEAN_STATE.update(extras, insights_ready=True)
@@ -499,11 +439,15 @@ async def clean_page():
                 ui.label("Abbreviations expanded — other text and formatting preserved. "
                          "PHI has not been removed.").classes("text-xs cc-muted")
 
-            groups = change_groups(result)
+            groups = CLEAN_STATE.get("groups")
+            if groups is None:
+                groups = clean_compute.change_groups(result)  # tests that inject a result directly
             refs["groups"] = groups
-            finding_rows = review_workspace.build_finding_rows(
-                result, CLEAN_STATE.get("audit"), source=CLEAN_STATE["input"],
-                output=CLEAN_STATE.get("result_text") or result.text)
+            finding_rows = CLEAN_STATE.get("finding_rows")
+            if finding_rows is None:
+                finding_rows = review_workspace.build_finding_rows(
+                    result, CLEAN_STATE.get("audit"), source=CLEAN_STATE["input"],
+                    output=CLEAN_STATE.get("result_text") or result.text)
             issue_count = review_workspace.finding_count(finding_rows)
             with ui.tabs().props("dense align=left") as tabs:
                 t_out = ui.tab("Output", icon="description")
@@ -898,34 +842,14 @@ async def clean_page():
             baseline = CLEAN_STATE.get("verification_baseline") or result.fact_check
             CLEAN_STATE.update(fact_ack=False, release_ack=None)
 
-            def work():
-                from dataclasses import replace
-                from chartcleaner.fact_check import FactTracker
-                from chartcleaner.review_state import release_decision
-                tracker = FactTracker(source)
-                tracker.after_stage("edited_output", "Edited output", value)
-                report = tracker.report(value)
-                # Preserve pipeline attribution for losses the user did not create.
-                if baseline:
-                    attributed = []
-                    for loss in report.losses:
-                        remaining = loss.count
-                        for prior in baseline.losses:
-                            if prior.key == loss.key and remaining:
-                                count = min(remaining, prior.count)
-                                attributed.append(replace(prior, count=count))
-                                remaining -= count
-                        if remaining:
-                            attributed.append(replace(loss, count=remaining))
-                    report.losses = attributed
-                edited = replace(result, text=value, fact_check=report, edited_validation=None)
-                release_decision(edited, output_text=value, source=source)
-                audit = run_audit(value, load_config(common.CONFIG_PATH))
-                review = review_html(source, edited, audit) if len(source) < LAZY_TABS_MIN_CHARS else None
-                return edited, audit, review, redaction_candidates(source, value)
-
+            cfg = await run.io_bound(load_config, common.CONFIG_PATH)
+            request = work_request("edit", {
+                "source": source, "value": value, "result": result,
+                "baseline": baseline, "cfg": cfg,
+                "lazy": len(source) >= LAZY_TABS_MIN_CHARS,
+            })
             try:
-                checked = await run.io_bound(work)
+                checked = await get_clean_worker().run(request)
             except Exception as exc:
                 with results_col.client:
                     report_error("Could not check edited output", exc)
@@ -933,10 +857,13 @@ async def clean_page():
             if (checked is None or CLEAN_STATE.get("result") is not result
                     or out.value != value or state["running"]):
                 return False
-            edited, audit, review, candidates = checked
-            CLEAN_STATE.update(result=edited, result_text=value, audit=audit,
-                               redactions=(source, value, candidates), insights_ready=False,
-                               review_html=(edited, source, value, *review) if review else None)
+            edited, audit, review = checked.result, checked.audit, checked.review
+            candidates = checked.extras["redactions"]
+            CLEAN_STATE.update(
+                result=edited, result_text=value, audit=audit,
+                redactions=(source, value, candidates), insights_ready=False,
+                review_html=(edited, source, value, *review) if review else None,
+                groups=checked.groups, finding_rows=checked.finding_rows)
             # Previous insights describe the pre-edit text; do not display stale claims.
             for key in ("safety", "stale", "conflicts", "trends", "timeline", "problems", "devices",
                         "micro", "overnight", "pending", "bundle", "delta", "summary"):
@@ -2101,7 +2028,8 @@ async def clean_page():
             ui.notify(f"Clipboard error: {e}", type="negative")
 
     def clear_all() -> None:
-        CLEAN_STATE.update(input="", result=None, review_html=None, result_text="", summary=None, qa=[])
+        CLEAN_STATE.update(input="", result=None, review_html=None, result_text="", summary=None, qa=[],
+                           groups=None, finding_rows=None)
         AUTO_LAST["text"] = None
         input_area.set_value("")
         hide_selection_bar()
@@ -2168,6 +2096,7 @@ async def clean_page():
 
     def on_input_change(e) -> None:
         if e.value != CLEAN_STATE.get("input"):
+            cancel_speculative_job()
             spec.update(task=None, inputs=None)
             CLEAN_STATE.pop("manual_note_type", None)
         CLEAN_STATE.update(input=e.value)
@@ -2198,7 +2127,7 @@ async def clean_page():
     # ---- teach from a selection (the selection toolbar) -----------------------
     def invalidate_output() -> None:
         CLEAN_STATE.update(input=input_area.value, result=None, review_html=None, result_text="", audit=None,
-                           summary=None, qa=[], result_mode=None)
+                           summary=None, qa=[], result_mode=None, groups=None, finding_rows=None)
         AUTO_LAST["text"] = None
         render_results()
 
@@ -3486,6 +3415,8 @@ async def clean_page():
                     with spinner:
                         ui.element("div").classes("cc-spinner")
                         ui.label("Cleaning").classes("cc-mono text-xs cc-muted cc-pulse")
+                        progress_label = ui.label("").classes("text-xs cc-muted").mark("clean-progress")
+                        progress_label.set_visibility(False)
                     spinner.set_visibility(False)
                     ui.button("Paste", icon="content_paste", on_click=paste_clipboard).props("outline no-caps")
                     overflow_menu((("Sample", "science", load_sample, "load-sample"),

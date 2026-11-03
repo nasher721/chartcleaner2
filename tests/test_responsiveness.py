@@ -169,7 +169,7 @@ async def _clean(user: User, route: str, text: str) -> None:
     raise AssertionError("clean did not finish")
 
 
-@pytest.mark.parametrize("cancelled_step", ["prepare", "compute"])
+@pytest.mark.parametrize("cancelled_step", ["prepare", "execute_work"])
 @pytest.mark.parametrize("failure", [None, RuntimeError("worker failed")])
 async def test_interrupted_clean_preserves_previous_result(user: User, page, monkeypatch,
                                                           cancelled_step, failure):
@@ -200,6 +200,65 @@ async def test_interrupted_clean_preserves_previous_result(user: User, page, mon
     assert CLEAN_STATE["result"] is previous
     assert CLEAN_STATE["result_text"] == previous_text
     assert next(iter(user.find(marker="run-clean").elements)).enabled
+    assert "inert" not in next(iter(user.find(marker="input-shell").elements)).props
+
+
+async def test_clean_uses_worker_and_displays_stage_progress(user: User, page, monkeypatch):
+    from chartcleaner import clean_worker
+
+    events = []
+    started, release = asyncio.Event(), asyncio.Event()
+    real = clean_worker.InlineCleanWorker.run
+
+    async def observed(self, request, on_progress=None):
+        events.append(request)
+
+        def progress(event):
+            if on_progress is not None:
+                on_progress(event)
+            started.set()
+
+        job = asyncio.create_task(real(self, request, progress))
+        await started.wait()
+        await release.wait()  # keep the progress label visible for the assertion
+        return await job
+
+    monkeypatch.setattr(clean_worker.InlineCleanWorker, "run", observed)
+    CLEAN_STATE.update(input="Printed by Dr. Lee\nPlan: recheck K 4.1\n", mode="clean",
+                       result=None, result_text="", audit=None, summary=None, qa=[], tag="")
+    await _route(user, "/resp-worker-progress", cc_app.clean_page)
+    user.find(marker="run-clean").click()
+    await asyncio.wait_for(started.wait(), timeout=2)
+    await user.should_see(marker="clean-progress")
+    assert [request.kind for request in events] == ["compute"]
+    assert events[0].payload["lazy"] is False
+    release.set()
+    for _ in range(300):
+        if CLEAN_STATE.get("result") is not None:
+            break
+        await asyncio.sleep(0.02)
+    assert CLEAN_STATE.get("result") is not None
+
+
+async def test_failed_worker_preserves_previous_result_and_unlocks(user: User, page, monkeypatch):
+    from chartcleaner import clean_worker
+
+    await _clean(user, "/resp-worker-failure", "Plan: previous result\n")
+    previous = CLEAN_STATE["result"]
+
+    async def fail(self, request, on_progress=None):
+        raise clean_worker.WorkerError("synthetic worker failure")
+
+    monkeypatch.setattr(clean_worker.InlineCleanWorker, "run", fail)
+    monkeypatch.setattr(clean_mod, "report_error", lambda *args: None)
+    textarea = next(iter(user.find(marker="highlight-source").elements))
+    textarea.set_value("Plan: replacement chart\n")
+    user.find(marker="run-clean").click()
+    for _ in range(300):
+        if next(iter(user.find(marker="run-clean").elements)).enabled:
+            break
+        await asyncio.sleep(0.02)
+    assert CLEAN_STATE["result"] is previous
     assert "inert" not in next(iter(user.find(marker="input-shell").elements)).props
 
 
@@ -316,6 +375,8 @@ def test_pipeline_stop_abandons_the_run_between_stages():
 
 
 async def test_newer_text_cancels_a_stale_speculative_run(user: User, page, monkeypatch):
+    from chartcleaner import clean_worker
+
     monkeypatch.setattr(clean_mod, "SPECULATE", True)
     monkeypatch.setattr(clean_mod, "SPECULATE_PAUSE", 0.0)
     monkeypatch.setattr(clean_mod, "SPECULATE_MIN_CHARS", 1)
@@ -330,16 +391,27 @@ async def test_newer_text_cancels_a_stale_speculative_run(user: User, page, monk
     await _route(user, "/resp-spec-cancel", cc_app.clean_page)
     textarea = next(iter(user.find(marker="highlight-source").elements))
     first, second = "Plan: first chart\n", "Plan: second chart K 4.1\n"
-    # Hold the pipeline lock so the first speculative run is still waiting
-    # when newer text arrives: it must give up rather than clean stale text.
-    clean_mod.COMPUTE_LOCK.acquire()
-    try:
-        textarea.set_value(first)
-        await asyncio.sleep(0.8)
-        textarea.set_value(second)
-        await asyncio.sleep(0.8)
-    finally:
-        clean_mod.COMPUTE_LOCK.release()
+    active, release = asyncio.Event(), asyncio.Event()
+    real_io_bound = clean_worker.run.io_bound
+    real_execute = clean_worker.execute_work
+
+    async def gated_io_bound(callback, *args, **kwargs):
+        if (callback is real_execute and args
+                and isinstance(args[0], clean_worker.WorkRequest)
+                and args[0].payload.get("text") == first):
+            active.set()
+            await release.wait()
+        return await real_io_bound(callback, *args, **kwargs)
+
+    monkeypatch.setattr(clean_worker.run, "io_bound", gated_io_bound)
+    textarea.set_value(first)
+    await asyncio.wait_for(active.wait(), timeout=2)
+    textarea.set_value(second)
+    release.set()
+    for _ in range(300):
+        if ran:
+            break
+        await asyncio.sleep(0.02)
     user.find(marker="run-clean").click()
     for _ in range(300):
         if CLEAN_STATE.get("result") is not None:
