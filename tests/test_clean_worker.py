@@ -227,6 +227,66 @@ async def test_process_worker_persistent_transport_failure_has_exact_two_attempt
         await worker.close()
 
 
+async def test_process_worker_restarts_and_retries_after_inactivity_timeout(monkeypatch):
+    worker = ProcessCleanWorker(inactivity_timeout=0.05)
+    reads = 0
+    starts = 0
+    original_read = worker._read
+    original_start = worker._start
+
+    async def hang_once():
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            await asyncio.Future()
+        return await original_read()
+
+    async def counted_start():
+        nonlocal starts
+        starts += 1
+        await original_start()
+
+    monkeypatch.setattr(worker, "_read", hang_once)
+    monkeypatch.setattr(worker, "_start", counted_start)
+    try:
+        got = await asyncio.wait_for(worker.run(_request()), 10)
+        assert got.result.text
+        assert starts == 2
+    finally:
+        await worker.close()
+
+
+async def test_process_worker_persistent_inactivity_fails_after_exactly_two_attempts(monkeypatch):
+    worker = ProcessCleanWorker(inactivity_timeout=0.05)
+    reads = 0
+    starts = 0
+    original_read = worker._read
+    original_start = worker._start
+
+    async def hang_work_reads():
+        nonlocal reads
+        reads += 1
+        if reads % 2 == 0:
+            await asyncio.Future()
+        return await original_read()
+
+    async def counted_start():
+        nonlocal starts
+        starts += 1
+        await original_start()
+
+    monkeypatch.setattr(worker, "_read", hang_work_reads)
+    monkeypatch.setattr(worker, "_start", counted_start)
+    try:
+        with pytest.raises(WorkerError, match="Cleaning worker failed twice"):
+            await asyncio.wait_for(worker.run(_request()), 10)
+        assert starts == 2
+        assert worker._pending == set()
+        assert worker._active is None
+    finally:
+        await worker.close()
+
+
 async def test_restart_escalates_to_kill_after_join_timeout():
     class FakeProcess:
         pid = 123
@@ -255,6 +315,36 @@ async def test_restart_escalates_to_kill_after_join_timeout():
     assert process.terminates == 1
     assert process.kills == 1
     assert process.joins == 2
+    assert worker._process is None
+
+
+async def test_restart_join_still_runs_when_nicegui_offload_is_unavailable(monkeypatch):
+    from chartcleaner import clean_worker
+
+    class FakeProcess:
+        pid = 123
+        alive = True
+        joins = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            pass
+
+        def join(self, timeout):
+            self.joins += 1
+            self.alive = False
+
+    async def unavailable(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(clean_worker.run, "io_bound", unavailable)
+    worker = ProcessCleanWorker()
+    process = FakeProcess()
+    worker._process = process
+    await worker._restart()
+    assert process.joins == 1
     assert worker._process is None
 
 

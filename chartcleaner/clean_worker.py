@@ -155,7 +155,7 @@ def _child_main(conn, cancel_event) -> None:
 
 
 class ProcessCleanWorker:
-    def __init__(self):
+    def __init__(self, inactivity_timeout: float = 300.0):
         self._lock = asyncio.Lock()
         self._ctx = mp.get_context("spawn")
         self._cancel = self._ctx.Event()
@@ -165,6 +165,7 @@ class ProcessCleanWorker:
         self._pending: set[str] = set()
         self._cancelled: set[str] = set()
         self._closing = False
+        self._inactivity_timeout = inactivity_timeout
 
     def cancel(self, job_id: str) -> None:
         if job_id in self._pending:
@@ -209,14 +210,14 @@ class ProcessCleanWorker:
             if process is not None and process.pid is not None:
                 if process.is_alive():
                     process.terminate()
-                await run.io_bound(process.join, 10)
+                await asyncio.to_thread(process.join, 10)
                 if process.is_alive():
                     kill = getattr(process, "kill", None)
                     if kill is None:
                         process.terminate()
                     else:
                         kill()
-                    await run.io_bound(process.join, 10)
+                    await asyncio.to_thread(process.join, 10)
                 if process.is_alive():
                     raise WorkerTransportError("Cleaning worker did not exit")
         except WorkerTransportError:
@@ -243,7 +244,8 @@ class ProcessCleanWorker:
                         await self._start()
                         await self._write({"type": "work", "request": request})
                         while True:
-                            message = await self._read()
+                            message = await asyncio.wait_for(
+                                self._read(), timeout=self._inactivity_timeout)
                             kind = message.get("type") if isinstance(message, dict) else None
                             if not isinstance(kind, str):
                                 raise WorkerTransportError("Cleaning worker protocol failed")

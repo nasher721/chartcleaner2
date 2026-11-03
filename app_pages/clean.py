@@ -915,7 +915,7 @@ async def clean_page():
         shown_text = CLEAN_STATE.get("result_text") or result.text
         out = ui.textarea("", value=shown_text)
         out.props("outlined readonly aria-label='Cleaned chart text' input-style='min-height: 380px'").classes("w-full cc-mono cc-out")
-        out.mark("result-output")
+        out.mark("result-output").props("data-cc-marker=result-output")
         out.on("blur", lambda _: commit_edit())
         refs["output"] = out
         refs["editing"] = False

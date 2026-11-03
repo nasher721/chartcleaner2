@@ -249,8 +249,11 @@ async def test_clean_uses_worker_and_displays_stage_progress(user: User, page, m
 async def test_failed_worker_preserves_previous_result_and_unlocks(user: User, page, monkeypatch):
     from chartcleaner import clean_worker
 
+    history = []
+    monkeypatch.setattr(clean_mod.store, "append_run", lambda entry: history.append(entry))
     await _clean(user, "/resp-worker-failure", "Plan: previous result\n")
     previous, previous_text = CLEAN_STATE["result"], CLEAN_STATE["result_text"]
+    history.clear()
     requests, errors = [], []
     failed = asyncio.Event()
     failure = clean_worker.WorkerError("synthetic worker failure")
@@ -274,6 +277,7 @@ async def test_failed_worker_preserves_previous_result_and_unlocks(user: User, p
     assert errors == [("Cleaning failed", failure)]
     assert CLEAN_STATE["result"] is previous
     assert CLEAN_STATE["result_text"] == previous_text
+    assert history == []
     assert next(iter(user.find(marker="run-clean").elements)).enabled
     assert "inert" not in next(iter(user.find(marker="input-shell").elements)).props
 

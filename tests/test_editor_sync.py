@@ -49,6 +49,19 @@ async def test_clean_controls_expose_browser_dom_markers(user: User, page):
         assert element.props.get("data-cc-marker") == marker
 
 
+async def test_result_output_exposes_browser_dom_marker(user: User, page):
+    await _open(user, "/editor-result-dom-marker", "Plan: result marker\n")
+    user.find(marker="run-clean").click()
+    for _ in range(300):
+        if CLEAN_STATE.get("result") is not None:
+            break
+        await asyncio.sleep(0.02)
+    assert CLEAN_STATE.get("result") is not None
+    elements = [descendant for root in user.find().elements for descendant in root.descendants()]
+    output = next(element for element in elements if "result-output" in element._markers)
+    assert output.props.get("data-cc-marker") == "result-output"
+
+
 async def test_editor_has_no_unrevisioned_value_listener(user: User, page):
     await _open(user, "/editor-listeners")
     textarea = _textarea(user)

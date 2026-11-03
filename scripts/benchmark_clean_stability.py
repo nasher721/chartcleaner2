@@ -88,6 +88,31 @@ def remaining_ms(deadline, *, now=None):
     return max(0, int((deadline - current) * 1000))
 
 
+def wait_for_stage_progress(page, deadline) -> bool:
+    remaining = remaining_ms(deadline)
+    if remaining <= 0:
+        return False
+    try:
+        page.wait_for_function("""
+          () => {
+            const el = document.querySelector('[data-cc-marker="clean-progress"]');
+            return el && el.checkVisibility() && /^Stage \\d+ of \\d+: \\S/.test(el.textContent || '');
+          }
+        """, timeout=remaining)
+    except Exception:
+        return False
+    return True
+
+
+def verify_clean_result(page, cycle_marker: str) -> None:
+    errors = page.locator(".q-notification--negative, .q-dialog .text-red-600")
+    if errors.count():
+        raise AssertionError("Clean displayed an error")
+    output = page.locator('[data-cc-marker="result-output"]').input_value()
+    if cycle_marker not in output:
+        raise AssertionError(f"Clean result is missing {cycle_marker}")
+
+
 def assert_exclusive_editor_channel(page) -> None:
     value_listeners = page.evaluate("""
       () => Object.values(mounted_app.elements)
@@ -161,19 +186,12 @@ def measure(cycles: int, chars: int) -> dict:
                     progress_deadline = started + 1.0
                     page.locator('[data-cc-marker="run-clean"]').click()
                     progress = page.locator('[data-cc-marker="clean-progress"]')
-                    remaining = remaining_ms(progress_deadline)
-                    if remaining > 0:
-                        try:
-                            progress.wait_for(state="visible", timeout=remaining)
-                            progress_seen.append(True)
-                        except Exception:
-                            progress_seen.append(False)
-                    else:
-                        progress_seen.append(False)
+                    progress_seen.append(wait_for_stage_progress(page, progress_deadline))
                     progress.wait_for(state="hidden", timeout=120000)
                     page.wait_for_function(
                         "!document.querySelector('[data-cc-marker=\"run-clean\"]').disabled",
                         timeout=120000)
+                    verify_clean_result(page, f"Cycle {cycle}")
                 clean_ms.append((time.perf_counter() - started) * 1000)
             except Exception:
                 cycle_failed = True
