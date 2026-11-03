@@ -79,6 +79,15 @@ jobs:
           python scripts/benchmark_validation.py
           --sizes ${{ inputs.sizes || '100000 1000000 5000000' }}
           --report artifacts/benchmark.json
+      - name: Install browser for Clean stability benchmark
+        run: python -m playwright install --with-deps chromium
+      - name: Start Chart Cleaner
+        run: python app.py --port 8765 --no-browser &
+      - name: Clean-page stability benchmark
+        run: >
+          python scripts/benchmark_clean_stability.py
+          --cycles 10 --chars 100000 250000 500000
+          --report artifacts/clean-stability.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: accuracy-benchmark
