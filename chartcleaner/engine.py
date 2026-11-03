@@ -612,7 +612,8 @@ class Pipeline:
             track_changes: bool = False, fact_check: bool | None = None,
             cache: Any = None, provenance: bool = False,
             validation: str | None = None,
-            stop: Callable[[], bool] | None = None) -> RunResult:
+            stop: Callable[[], bool] | None = None,
+            progress: Callable[[str, str, int, int], None] | None = None) -> RunResult:
         """Execute all pipeline stages in sequence and return the RunResult.
 
         ``track_changes`` records each regex/abbreviation change in the
@@ -632,6 +633,8 @@ class Pipeline:
         ``stop()`` is polled between stages; when it returns true the run is
         abandoned with :class:`PipelineCancelled` (a speculative clean whose
         text has changed since it started).
+        ``progress(stage_id, stage_label, completed, total)`` is called after
+        each completed stage. It is observational and must not alter the run.
         """
         started = time.perf_counter()
         source_text = text
@@ -659,8 +662,13 @@ class Pipeline:
         # windowed, so large charts get the same checks with coverage reported.
         tracker = fact_check_mod.FactTracker(text) if fact_check else None
 
-        extra = {"stop": stop} if stop is not None else {}  # unchanged call for ordinary runs
-        text, stage_stats, warnings = self._execute_stages(text, ctx, tracker, cache, session, **extra)
+        extra = {}
+        if stop is not None:
+            extra["stop"] = stop
+        if progress is not None:
+            extra["progress"] = progress
+        text, stage_stats, warnings = self._execute_stages(
+            text, ctx, tracker, cache, session, **extra)
         text, wrapped, wrapper_stat = self._apply_wrapper(
             text, False if self.mode != "clean" else wrap)
         if wrapper_stat:
@@ -757,6 +765,7 @@ class Pipeline:
     def _execute_stages(
         self, text: str, ctx: CleanContext, tracker: Any = None, cache: Any = None, session: Any = None,
         stop: Callable[[], bool] | None = None,
+        progress: Callable[[str, str, int, int], None] | None = None,
     ) -> tuple[str, list[StageStat], list[str]]:
         stats: list[StageStat] = []
         warnings: list[str] = []
@@ -783,6 +792,8 @@ class Pipeline:
                 session.sync()
             if tracker is not None and text != before:
                 tracker.after_stage(spec.id, spec.label, text)
+            if progress is not None:
+                progress(spec.id, spec.label, len(stats), len(self.stages))
             if stop is not None and stop():
                 raise PipelineCancelled(spec.id)
         if session is not None:

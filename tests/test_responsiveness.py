@@ -425,3 +425,23 @@ def test_email_recognizer_never_downloads_the_suffix_list():
     stage_nlp._offline_tldextract()
     assert tldextract.extract.suffix_list_urls == ()
     assert tldextract.extract("jane@example.co.uk").suffix == "co.uk"
+
+
+def test_pipeline_reports_each_completed_stage_with_a_stable_total():
+    from chartcleaner.engine import Pipeline, load_default_config
+
+    cfg = load_default_config()
+    cfg["nlp_redaction"] = {"enabled": False}
+    pipe = Pipeline(cfg)
+    events = []
+    result = pipe.run(
+        "Plan:  recheck K 4.1 tomorrow\n",
+        progress=lambda *event: events.append(event),
+    )
+
+    assert result.text
+    assert len(events) == len(pipe.stages)
+    assert [event[2] for event in events] == list(range(1, len(pipe.stages) + 1))
+    assert {event[3] for event in events} == {len(pipe.stages)}
+    assert [event[0] for event in events] == [stage.id for stage in pipe.stages]
+    assert all(event[1] == stage.label for event, stage in zip(events, pipe.stages))
