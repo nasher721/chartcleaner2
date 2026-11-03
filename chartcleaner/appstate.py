@@ -8,7 +8,10 @@ cross-page glue here gives both namespaces the same objects.
 
 from __future__ import annotations
 
-__all__ = ["PENDING_RULE", "CLEAN_STATE", "AUTO_LAST", "PIPE_TEST"]
+__all__ = ["PENDING_RULE", "CLEAN_STATE", "AUTO_LAST", "PIPE_TEST", "WORKER_STATE"]
+
+# Process-wide Clean-page worker manager
+WORKER_STATE: dict = {"manager": None}
 
 # Draft rule handed from the Clean page / suggestion cards to the Pipeline editor
 PENDING_RULE: dict = {}
